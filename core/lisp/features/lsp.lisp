@@ -416,6 +416,19 @@ stopped if it has not ended within two seconds."
            (process-stop server))))
   nil)
 
+(defun lsp--killed ()
+  "nil, after sending every ready server shutdown and exit, and closing its
+input, without waiting for its answers: the editor is exiting."
+  ;; The exit waits a moment for a server whose input is closed, then stops it.
+  (dolist (server lsp--servers)
+    (when (eq (get server 'state) 'ready)
+      (put server 'asked-stop t)
+      (put server 'state 'stopping)
+      (lsp--request server "shutdown" nil 'lsp--shut)
+      (lsp--notify server "exit")
+      (process-close-input server)))
+  nil)
+
 (defun lsp--arm (server)
   "nil, after giving SERVER `lsp--stop-wait' milliseconds from now to end."
   (put server 'deadline (+ lsp--now lsp--stop-wait))
@@ -952,6 +965,7 @@ started at once when it is down, however often it fell."
 (add-hook 'lsp-mode "after-save-hook" 'lsp--saved)
 (add-hook nil "after-set-visited-file-name-hook" 'lsp--renamed)
 (add-hook nil "after-close-hook" 'lsp--closed)
+(add-hook nil "kill-editor-hook" 'lsp--killed)
 (add-hook nil "post-command-hook" 'lsp--after-command)
 
 (log "lsp loaded")

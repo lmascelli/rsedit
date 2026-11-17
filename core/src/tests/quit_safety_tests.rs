@@ -12,6 +12,7 @@ mod tests {
     use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::path::PathBuf;
     use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
     type Ctx = EditorState<GapBuffer>;
 
@@ -658,5 +659,102 @@ mod tests {
             run("'(outer inner)", &env, &ctx),
             "both answers ran, in order"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // kill-editor-hook
+    // ------------------------------------------------------------------
+
+    /// Long enough for any machine to start and end a `cat`, so that a test
+    /// that should not wait shows it by finishing well inside it.
+    const ROOMY: Duration = Duration::from_secs(10);
+
+    #[test]
+    fn the_exit_runs_the_kill_editor_hook_in_order() {
+        let (ctx, env) = editor();
+        run(
+            r#"(setq trail nil)
+               (defun my-first () (setq trail (append trail (list 'first))))
+               (defun my-second () (setq trail (append trail (list 'second))))
+               (add-hook nil "kill-editor-hook" 'my-first)
+               (add-hook nil "kill-editor-hook" 'my-second)"#,
+            &env,
+            &ctx,
+        );
+        ctx.exit(&env, Duration::from_millis(100));
+        assert_eq!(run("trail", &env, &ctx), run("'(first second)", &env, &ctx));
+    }
+
+    #[test]
+    fn a_failing_function_on_the_kill_editor_hook_does_not_stop_the_others() {
+        let (ctx, env) = editor();
+        run(
+            r#"(setq trail nil)
+               (defun my-broken () (car 1))
+               (defun my-after () (setq trail 'ran))
+               (add-hook nil "kill-editor-hook" 'my-broken)
+               (add-hook nil "kill-editor-hook" 'my-after)"#,
+            &env,
+            &ctx,
+        );
+        ctx.run_exit_hook(&env, ROOMY);
+        assert_eq!(run("trail", &env, &ctx), run("'ran", &env, &ctx));
+    }
+
+    #[test]
+    fn the_functions_left_when_the_time_is_up_do_not_run() {
+        // The time is looked at before each function: with none left, none
+        // runs, however quick it would have been.
+        let (ctx, env) = editor();
+        run(
+            r#"(setq trail nil)
+               (defun my-late () (setq trail 'ran))
+               (add-hook nil "kill-editor-hook" 'my-late)"#,
+            &env,
+            &ctx,
+        );
+        ctx.run_exit_hook(&env, Duration::ZERO);
+        assert!(run("trail", &env, &ctx).is_nil());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_exit_waits_for_a_process_told_to_finish_to_read_what_it_was_told() {
+        let sandbox = Sandbox::new("exit-hook-finish");
+        let path = sandbox.0.join("said.txt").display().to_string();
+        let (ctx, env) = editor();
+        run(
+            &format!(
+                r#"(process-start 'p "sh" (list "-c" "cat > {path}") (lambda (name kind value) nil))
+                   (defun my-bye () (process-send 'p "bye\n") (process-close-input 'p))
+                   (add-hook nil "kill-editor-hook" 'my-bye)"#
+            ),
+            &env,
+            &ctx,
+        );
+        let started = Instant::now();
+        ctx.run_exit_hook(&env, ROOMY);
+        assert!(started.elapsed() < ROOMY, "the wait ended with the process");
+        assert_eq!(sandbox.read("said.txt"), "bye\n");
+        ctx.shutdown(Duration::from_millis(100));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_process_not_told_to_finish_does_not_hold_the_exit_up() {
+        let (ctx, env) = editor();
+        run(
+            r#"(process-start 'p "sleep" (list "30") (lambda (name kind value) nil))"#,
+            &env,
+            &ctx,
+        );
+        let started = Instant::now();
+        ctx.run_exit_hook(&env, ROOMY);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the exit waited {:?} for a process whose input is open",
+            started.elapsed()
+        );
+        ctx.shutdown(Duration::from_millis(100));
     }
 }

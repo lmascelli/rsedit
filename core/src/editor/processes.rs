@@ -207,6 +207,12 @@ impl Exchange {
         locked(&self.status).clone()
     }
 
+    /// Returns whether the process has been told to finish, its input closed,
+    /// and has not ended yet.
+    fn is_finishing(&self) -> bool {
+        locked(&self.input).is_none() && self.status() == Status::Running
+    }
+
     /// Records that the process has been asked to stop.
     pub(crate) fn mark_stopped(&self) {
         self.stopped.store(true, Ordering::Relaxed);
@@ -279,6 +285,14 @@ impl<B: BufferTrait> EditorState<B> {
     /// Forgets the process called NAME: one whose reading thread never ran.
     pub(crate) fn forget_dialogue(&self, name: &str) {
         locked(&self.processes.table).remove(name);
+    }
+
+    /// Returns whether a process the editor talks with has had its input
+    /// closed and is still running: one the exit gives time to end by itself.
+    pub(crate) fn dialogue_finishing(&self) -> bool {
+        locked(&self.processes.table)
+            .values()
+            .any(|dialogue| dialogue.exchange.is_finishing())
     }
 
     /// Returns whether a delivery is waiting: what [`Self::callbacks_owed`]

@@ -1,13 +1,14 @@
 //! What every process the editor starts shares, whoever reads it: a group of
 //! its own, stopping it -- `TERM`, then `KILL` after a grace -- waiting for it
-//! without keeping a stop out, killing what is left at the editor's exit, and
-//! reading its output a piece at a time. `shell` and `processes` use it.
+//! without keeping a stop out, giving those told to finish a moment at the
+//! editor's exit and killing what is left, and reading its output a piece at
+//! a time. `shell` and `processes` use it.
 //!
 //! Design: `doc/architettura-editor.typ, <processi-figli>`.
 use crate::{BufferTrait, EditorState};
 use std::io::{ErrorKind, Read};
 use std::process::{Command, ExitStatus};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long a process asked to stop is given to go before it is killed.
 ///
@@ -117,6 +118,23 @@ pub(crate) fn stop_process(process: &Process) {
 pub(crate) fn kill_left_over<B: BufferTrait>(ctx: &EditorState<B>) {
     for process in ctx.child_processes() {
         kill(&process);
+    }
+}
+
+/// Waits, until UNTIL at the latest, for the processes of CTX whose input has
+/// been closed to end by themselves: at the start of [`EditorState::exit`],
+/// once `kill-editor-hook` has told them to finish, before the `TERM`. The
+/// others are not waited for: a shell command still running would hold up
+/// every exit for nothing.
+pub(crate) fn wait_for_finishing<B: BufferTrait>(ctx: &EditorState<B>, until: Instant) {
+    let mut pause = Duration::from_millis(1);
+    while ctx.dialogue_finishing() {
+        let now = Instant::now();
+        if now >= until {
+            return;
+        }
+        std::thread::sleep(pause.min(until - now));
+        pause = (pause * 2).min(Duration::from_millis(20));
     }
 }
 

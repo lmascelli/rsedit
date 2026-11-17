@@ -261,7 +261,6 @@ subito, un cliente che non è `lsp`.
   columns: (0.9cm, 4.2cm, 1fr),
   header: ([], [Facoltativo], [Perché non ora]),
   [N7], [applicare una lista di sostituzioni in un passo], [Il modulo lo fa in Lisp, dall'ultima alla prima. Diventa utile quando un secondo cliente lo vorrà.],
-  [N8], [un hook all'uscita dell'editor], [Darebbe `shutdown` ai server; `kill_left_over` li ferma comunque, e un server sopporta di essere fermato.],
   [N9], [un'unità in `finding-set`], [Il deposito farebbe i marcatori da colonne `utf-16` quando il file si apre. Con `utf-32` non serve, e con `utf-16` l'errore cade solo dopo i caratteri fuori dal piano di base.],
   [N10], [`after-close-hook` che dice quale buffer], [Il modulo confronta con `all-buffer-names`.],
 )

@@ -30,10 +30,11 @@ const LOG_FILE: &str = "rsedit.log";
 const SHUTDOWN_WAIT: Duration = Duration::from_millis(500);
 
 /// Shuts the editor's background work down when it is dropped, as `main`
-/// returns or a panic unwinds through it: the session is written, unless a
-/// panic is unwinding, every job is told, every dedicated thread is asked to
-/// stop, the log's last lines reach its file, and the shell commands still
-/// running are killed, so that none outlives the editor.
+/// returns or a panic unwinds through it: unless a panic is unwinding, the
+/// session is written and `kill-editor-hook` runs; then every job is told,
+/// every dedicated thread is asked to stop, the log's last lines reach its
+/// file, and the processes still running are killed, so that none outlives
+/// the editor.
 struct ShutDownOnExit<'a>(
     &'a EditorState<BufferType>,
     Arc<Env<EditorState<BufferType>>>,
@@ -43,17 +44,19 @@ impl Drop for ShutDownOnExit<'_> {
     fn drop(&mut self) {
         // A panic may have left a buffer half changed, and a second panic
         // here would abort before the log is written: the session of the
-        // run before stays instead.
-        if !std::thread::panicking() {
-            self.0.save_session(
-                &self.1,
-                app_dir(DirOptions {
-                    dir: AppDir::State,
-                    create: true,
-                }),
-            );
+        // run before stays instead, and the hook does not run.
+        if std::thread::panicking() {
+            self.0.shutdown(SHUTDOWN_WAIT);
+            return;
         }
-        self.0.shutdown(SHUTDOWN_WAIT);
+        self.0.save_session(
+            &self.1,
+            app_dir(DirOptions {
+                dir: AppDir::State,
+                create: true,
+            }),
+        );
+        self.0.exit(&self.1, SHUTDOWN_WAIT);
     }
 }
 

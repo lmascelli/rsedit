@@ -22,6 +22,15 @@ pub(crate) const SYNTAX_CHANGED: &str = "syntax-changed";
 /// panicking at every step does not run for ever.
 pub(crate) const RESTARTS: u32 = 3;
 
+/// The hook [`EditorState::exit`] runs: where a module tells the processes it
+/// talks with to finish, before they are stopped.
+pub(crate) const KILL_EDITOR_HOOK: &str = "kill-editor-hook";
+
+/// How long [`KILL_EDITOR_HOOK`], and the processes it tells to finish, have
+/// at the exit, together: a slow function or a slow process does not hold the
+/// exit up longer.
+pub(crate) const EXIT_HOOK_LIMIT: Duration = Duration::from_secs(1);
+
 impl<B: BufferTrait> EditorState<B> {
     /// Starts again, as MAKE makes it, one of the editor's own jobs that has
     /// left with a panic -- WHAT, in words, its colouring or its auto-saver --
@@ -199,9 +208,9 @@ impl<B: BufferTrait> EditorState<B> {
     /// Last, the processes still running -- shell commands, dialogues -- are
     /// killed, with their groups.
     ///
-    /// For the host to call once, as the editor exits -- also when it exits
-    /// by a panic, or the log loses its last lines, which are the ones that
-    /// say why. Nothing calls it on its own: the executor's thread holds a
+    /// For the host to call once, as the editor exits: through [`Self::exit`],
+    /// or by itself when it exits by a panic, or the log loses its last
+    /// lines, which are the ones that say why. Nothing calls it on its own: the executor's thread holds a
     /// copy of the editor, which holds the executor, and `Drop` cannot break
     /// that cycle.
     pub fn shutdown(&self, within: Duration) {
@@ -209,6 +218,49 @@ impl<B: BufferTrait> EditorState<B> {
         // What of the processes did not go on its `TERM` within the wait goes
         // now: their `KILL` would come after the editor has gone.
         crate::primitives::child_process::kill_left_over(self);
+    }
+
+    /// Exits the editor: runs `kill-editor-hook` and waits for the processes
+    /// it told to finish, both within a second, then [`Self::shutdown`]s,
+    /// giving the work WITHIN.
+    ///
+    /// For the host to call once, as the editor exits normally. In a panic
+    /// the host calls [`Self::shutdown`] alone: the hook would run Lisp on a
+    /// state the panic may have left half changed.
+    pub fn exit(&self, env: &Arc<Env<Self>>, within: Duration) {
+        self.run_exit_hook(env, EXIT_HOOK_LIMIT);
+        self.shutdown(within);
+    }
+
+    /// Runs the functions of [`KILL_EDITOR_HOOK`], those for every mode, in
+    /// order, as [`Self::run_hook_of`] runs a hook, until LIMIT has passed:
+    /// those left then are named in the log and not run. Then waits, within
+    /// what is left of LIMIT, for the processes whose input is closed.
+    ///
+    /// The time is looked at between one function and the next: one that is
+    /// running is not stopped, but by its fuel, since Lisp cannot be
+    /// interrupted. The primitives a function would call at the exit, writing
+    /// to a process or closing its input, never wait.
+    pub(crate) fn run_exit_hook(&self, env: &Arc<Env<Self>>, limit: Duration) {
+        let until = Instant::now() + limit;
+        let hooks = self.modes(|modes| modes.hooks_for("", &[], KILL_EDITOR_HOOK));
+        for (ran, hook) in hooks.iter().enumerate() {
+            if Instant::now() >= until {
+                self.log_diagnostic(&format!(
+                    "Hook {KILL_EDITOR_HOOK}: out of time, not run: {:?}",
+                    &hooks[ran..]
+                ));
+                break;
+            }
+            let hook_call = ELispExp::form(vec![hook.clone()]);
+            let _command = self.begin_command();
+            if let Err(e) = eval(&hook_call, env.clone(), self) {
+                self.log_diagnostic(&format!(
+                    "Hook {KILL_EDITOR_HOOK} ({hook:?}) execution failed: {e:?}"
+                ));
+            }
+        }
+        crate::primitives::child_process::wait_for_finishing(self, until);
     }
 
     /// Returns the WorkManager: for the primitives that start, stop and list

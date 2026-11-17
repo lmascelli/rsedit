@@ -111,8 +111,9 @@ WHEN A SERVER STOPS
     again, up to `lsp-restart-limit' times in three minutes. Past that it
     stays down, with a message, until `lsp-restart'. Closing its last
     buffer does not stop a server: the next file of the project would wait
-    for it to read the project again. Leaving the editor stops every server
-    still running.
+    for it to read the project again. Leaving the editor sends every
+    server that is ready shutdown and exit, and gives it a moment to end
+    by itself before stopping it; the others are stopped at once.
 
     A question to a server that has no answer within `lsp-request-timeout'
     seconds is dropped, with a message.

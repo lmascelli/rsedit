@@ -213,7 +213,8 @@ front-end usa sono pochi:
   [`tick(&env)`], [Il tempo è scaduto: esegue ciò che era in attesa (callback di sfondo, scorrimento durante il trascinamento).],
   [`on_background_change(sveglia)`], [Una funzione che il lavoro di sfondo chiama quando ha cambiato lo schermo: sveglia il ciclo del front-end (@utenti-sfondo).],
   [`is_running()`], [Falso dopo `quit`.],
-  [`shutdown(entro)`], [All'uscita, anche per un panic: ferma il lavoro di sfondo e scrive nel file le ultime righe del log.],
+  [`exit(&env, entro)`], [All'uscita normale: esegue `kill-editor-hook`, poi `shutdown` (@uscire).],
+  [`shutdown(entro)`], [All'uscita, da `exit` o da sola per un panic: ferma il lavoro di sfondo e scrive nel file le ultime righe del log.],
   [`start_log_file`, `enable_log_file`, `log_diagnostic`, `set_echo_message`, `take_backtrace_suffix`], [Diagnostica.],
 )
 
@@ -6747,6 +6748,22 @@ buffer viene guardato di nuovo, perché una risposta esegue del Lisp che può
 averlo salvato o chiuso. Salva `write_buffer`, in `files.rs`. `close-buffer`
 chiede con la stessa funzione. Uscire ferma soltanto il ciclo del front-end:
 la sessione la scrive `main.rs`, dopo (@memoria).
+
+Poi `main.rs` chiama `EditorState::exit`, che esegue `kill-editor-hook` prima
+di `shutdown`: lo stop dei lavori manda `TERM` ai processi e chiude il thread
+che ne scrive l'input, quindi ciò che l'hook vuole dire a un processo va detto
+prima. L'hook ha le sole funzioni globali e, con l'attesa che segue,
+`EXIT_HOOK_LIMIT` (un secondo). Il tempo si guarda tra una funzione e
+l'altra: il Lisp non si interrompe, e una funzione lenta la ferma soltanto il
+suo carburante; quelle rimaste al limite non girano, e il log le nomina.
+Dopo l'hook `wait_for_finishing` aspetta, nel tempo che resta, i processi
+dialoganti con l'input chiuso, cioè quelli a cui l'hook ha detto di finire;
+gli altri, un comando di shell per esempio, non trattengono l'uscita. Poi
+`shutdown` procede come sempre, e `kill_left_over` uccide ciò che resta
+(@processi-figli). In un panic `main.rs` chiama soltanto `shutdown`: l'hook
+eseguirebbe Lisp su uno stato forse lasciato a metà. Il modulo `lsp` manda da
+qui `shutdown` ed `exit` ai server pronti, senza aspettarne la risposta, e ne
+chiude l'input.
 
 === Le domande <domande>
 

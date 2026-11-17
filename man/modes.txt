@@ -322,6 +322,8 @@ HOOKS
         after-close-hook        a buffer has been closed
         minor-mode-hook         a minor mode has just been turned on, or
                                 off, in a buffer
+        kill-editor-hook        the editor is exiting, before the
+                                processes still running are stopped
 
     (add-hook 'rust-mode "find-file-hook" 'my-rust-setup) calls the function
     my-rust-setup, with no arguments, when a Rust file is opened; nil in
@@ -340,6 +342,14 @@ HOOKS
     except in before-save-hook, where the first error aborts the save.
     The first *scratch* is made before init.lisp is read, so the hooks of
     a new buffer that init.lisp adds do not run for it.
+
+    kill-editor-hook runs only the functions added with nil, and gives
+    them one second, together with the processes they tell to finish by
+    closing their input: the editor waits for those to end, and for no
+    others. Past the second the functions left do not run, and the
+    processes still there are stopped, as every other one is. A function
+    that is running is not cut short. The hook does not run when the
+    editor exits by a crash.
 
 LIMITS
     Loading a mode's file again makes the mode again, empty: the keys and
@@ -380,6 +390,14 @@ EXAMPLES
     And stop saying it:
 
         (remove-hook nil "find-file-hook" 'my-opened)
+
+    Tell a process started with `process-start' to finish when the
+    editor exits, rather than having it stopped:
+
+        (defun my-repl-bye ()
+          (process-send 'my-repl "(exit)\n")
+          (process-close-input 'my-repl))
+        (add-hook nil "kill-editor-hook" 'my-repl-bye)
 
     Break lines as you type in every C and C++ comment:
 
