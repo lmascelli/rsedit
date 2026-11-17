@@ -84,6 +84,19 @@ pub const SETTINGS: &[Setting] = &[
               \x20 (eq this-command 'newline)",
     },
     Setting {
+        name: CLOSED_BUFFER_NAME,
+        doc: "The name of the buffer just closed, while `after-close-hook' runs; nil \
+              otherwise. Set by the editor: setting it changes nothing.\n\n\
+              Example:\n\
+              \x20 (message \"closed %s\" closed-buffer-name)",
+    },
+    Setting {
+        name: CLOSED_BUFFER_FILE,
+        doc: "The file the buffer just closed was visiting, while `after-close-hook' runs; \
+              nil when it visited none, and otherwise. Set by the editor: setting it \
+              changes nothing.",
+    },
+    Setting {
         name: SCROLL_CONSERVATIVELY,
         doc: "How many lines a window scrolls to bring point back into view when it has \
               moved off the top or the bottom, as C-n on the last row does. When point went \
@@ -491,6 +504,14 @@ pub const DISPLAY_LINE_NUMBERS_TYPE: &str = "display-line-numbers-type";
 /// The name of the Lisp variable holding the command being run, which the
 /// hooks after it read.
 pub const THIS_COMMAND: &str = "this-command";
+
+/// The name of the Lisp variable holding the name of the buffer whose
+/// `after-close-hook` is running.
+pub const CLOSED_BUFFER_NAME: &str = "closed-buffer-name";
+
+/// The name of the Lisp variable holding the file of the buffer whose
+/// `after-close-hook` is running, or nil.
+pub const CLOSED_BUFFER_FILE: &str = "closed-buffer-file";
 
 /// The name of the Lisp variable holding how far point may leave a window
 /// and have it scroll just enough, rather than centre point's line.

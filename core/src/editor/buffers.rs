@@ -265,7 +265,8 @@ impl<B: BufferTrait> EditorState<B> {
     /// Every tiled window showing it shows instead the buffer most recently
     /// current, or `*scratch*`, and the buffer leaves the table, a fresh
     /// `*scratch*` taking the place of the last one. The work writing into it
-    /// stops, and its mode's `after-close-hook` runs. Its auto-save file is
+    /// stops, and its mode's `after-close-hook` runs, `closed-buffer-name` and
+    /// `closed-buffer-file` saying which buffer it was. Its auto-save file is
     /// deleted, unless it has unsaved changes, and where point was in its
     /// file is remembered.
     pub fn close_buffer(&self, name: &str, env: &Arc<Env<EditorState<B>>>) -> bool {
@@ -277,9 +278,9 @@ impl<B: BufferTrait> EditorState<B> {
             );
             return false;
         }
-        let Some((closing_mode, writer)) =
-            self.with_buffer(name, |buf| (buf.current_mode.clone(), buf.writer))
-        else {
+        let Some((closing_mode, writer, closing_file)) = self.with_buffer(name, |buf| {
+            (buf.current_mode.clone(), buf.writer, buf.file_path.clone())
+        }) else {
             return false;
         };
         let closing_minors = self.minor_modes_of(name);
@@ -389,7 +390,24 @@ impl<B: BufferTrait> EditorState<B> {
             self.work.cancel(writer);
         }
 
+        // What the hook is told of the buffer gone, put back afterwards: a
+        // hook that closes another buffer leaves the outer one's in place.
+        let told = [
+            (CLOSED_BUFFER_NAME, ELispExp::string(name.to_string())),
+            (
+                CLOSED_BUFFER_FILE,
+                closing_file.map_or_else(ELispExp::nil, ELispExp::string),
+            ),
+        ];
+        let before = told.map(|(variable, value)| {
+            let before = env.get_variable(variable).unwrap_or_else(ELispExp::nil);
+            crate::feature::minibuffer::setq(env, variable, value);
+            (variable, before)
+        });
         self.run_hook_of(&closing_mode, &closing_minors, "after-close-hook", env);
+        for (variable, value) in before {
+            crate::feature::minibuffer::setq(env, variable, value);
+        }
         true
     }
 

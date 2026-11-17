@@ -380,4 +380,93 @@ mod tests {
             other => panic!("remove-hook should say so too, got {other:?}"),
         }
     }
+    #[test]
+    fn after_close_hook_is_told_the_closed_buffers_name_and_file() {
+        let (ctx, env) = editor();
+        let path =
+            std::env::temp_dir().join(format!("rsedit-closed-{}.hooktest", std::process::id()));
+        run(
+            &format!(
+                r#"(write-file {:?})
+                   (setq expected-file (buffer-file-name))
+                   (defun note-closed ()
+                     (setq seen (cons (list closed-buffer-name closed-buffer-file) seen)))
+                   (add-hook nil "after-close-hook" 'note-closed)
+                   (setq seen nil)"#,
+                path.to_str().unwrap()
+            ),
+            &env,
+            &ctx,
+        );
+        let name = ctx.get_current_buffer_name();
+        run(&format!("(close-buffer {name:?})"), &env, &ctx);
+        assert_eq!(
+            run("seen", &env, &ctx),
+            run(&format!("(list (list {name:?} expected-file))"), &env, &ctx)
+        );
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn closed_buffer_file_is_nil_for_a_buffer_visiting_none() {
+        let (ctx, env) = editor();
+        run(
+            r#"(defvar seen nil)
+               (defun note-closed ()
+                 (setq seen (list closed-buffer-name closed-buffer-file)))
+               (add-hook nil "after-close-hook" 'note-closed)
+               (buffer-create "no-file")
+               (close-buffer "no-file")"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            run("seen", &env, &ctx),
+            run(r#"(list "no-file" nil)"#, &env, &ctx)
+        );
+    }
+
+    #[test]
+    fn closed_buffer_variables_are_nil_outside_after_close_hook() {
+        let (ctx, env) = editor();
+        assert_eq!(
+            run("(list closed-buffer-name closed-buffer-file)", &env, &ctx),
+            run("(list nil nil)", &env, &ctx)
+        );
+        run(
+            r#"(defun note-closed () nil)
+               (add-hook nil "after-close-hook" 'note-closed)
+               (buffer-create "gone")
+               (close-buffer "gone")"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            run("(list closed-buffer-name closed-buffer-file)", &env, &ctx),
+            run("(list nil nil)", &env, &ctx)
+        );
+    }
+
+    /// A buffer closed from inside the hook gets its own run, and the outer
+    /// run still sees its own buffer afterwards.
+    #[test]
+    fn a_close_inside_after_close_hook_leaves_the_outer_buffers_name() {
+        let (ctx, env) = editor();
+        run(
+            r#"(buffer-create "inner")
+               (buffer-create "outer")
+               (defvar seen nil)
+               (defun note-closed ()
+                 (if (equal closed-buffer-name "outer") (close-buffer "inner"))
+                 (setq seen (cons closed-buffer-name seen)))
+               (add-hook nil "after-close-hook" 'note-closed)
+               (close-buffer "outer")"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            run("seen", &env, &ctx),
+            run(r#"(list "outer" "inner")"#, &env, &ctx)
+        );
+    }
 }

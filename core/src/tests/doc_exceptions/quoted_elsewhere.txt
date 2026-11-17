@@ -12,6 +12,7 @@ setq
 yield
 
 # Hooks, which add-hook takes by name
+after-close-hook
 after-revert-hook
 after-save-hook
 before-save-hook

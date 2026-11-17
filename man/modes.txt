@@ -15,6 +15,8 @@ SYNOPSIS
     (minor-mode-enable MODE &optional MAJOR)
     (minor-mode-disable MODE &optional MAJOR)
     (minor-mode-wanted-p MODE ARG)
+    closed-buffer-name
+    closed-buffer-file
     (risp-refresh-vocabulary)
     risp-special-forms
     risp-constants
@@ -319,7 +321,8 @@ HOOKS
         after-set-visited-file-name-hook
                                 C-x C-w has written the buffer to a file
                                 it was not visiting
-        after-close-hook        a buffer has been closed
+        after-close-hook        a buffer has been closed; closed-buffer-name
+                                and closed-buffer-file say which
         minor-mode-hook         a minor mode has just been turned on, or
                                 off, in a buffer
         kill-editor-hook        the editor is exiting, before the
@@ -332,7 +335,9 @@ HOOKS
     added: the major mode's own, then those of each minor mode on in the
     buffer, then those for every mode, with the buffer concerned current;
     after-close-hook runs those of the closed buffer's modes, once it has
-    gone. A minor mode's minor-mode-hook runs for that mode alone, and
+    gone: no buffer is the closed one then, so closed-buffer-name holds its
+    name and closed-buffer-file the file it visited, or nil, while the hook
+    runs. A minor mode's minor-mode-hook runs for that mode alone, and
     (minor-mode-p) inside it says which way it went. A function added
     twice runs once.
 
@@ -398,6 +403,13 @@ EXAMPLES
           (process-send 'my-repl "(exit)\n")
           (process-close-input 'my-repl))
         (add-hook nil "kill-editor-hook" 'my-repl-bye)
+
+    Say which file a closed buffer was visiting:
+
+        (defun my-closed ()
+          (when closed-buffer-file
+            (message "%s was %s" closed-buffer-name closed-buffer-file)))
+        (add-hook nil "after-close-hook" 'my-closed)
 
     Break lines as you type in every C and C++ comment:
 

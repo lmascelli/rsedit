@@ -887,18 +887,12 @@ saved, when the server wants to know."
   nil)
 
 (defun lsp--closed ()
-  "nil, after closing the documents whose buffer has gone."
-  (when lsp--servers
-    (let ((live (all-buffer-names)))
-      (setq lsp--waiting
-            (let ((kept nil))
-              (dolist (buffer lsp--waiting)
-                (if (member buffer live) (setq kept (cons buffer kept))))
-              kept))
-      (dolist (server lsp--servers)
-        (dolist (document (get server 'documents))
-          (unless (member (car document) live)
-            (lsp--close server document))))))
+  "nil, after closing the document of the buffer `closed-buffer-name'."
+  (setq lsp--waiting (lsp--without closed-buffer-name lsp--waiting))
+  (dolist (server lsp--servers)
+    (dolist (document (get server 'documents))
+      (if (equal (car document) closed-buffer-name)
+          (lsp--close server document))))
   nil)
 
 (defun lsp--after-command ()
