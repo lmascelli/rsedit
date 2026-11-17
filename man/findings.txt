@@ -2,7 +2,7 @@ NAME
     findings - what tools have said about files, kept, drawn and listed
 
 SYNOPSIS
-    (finding-set PRODUCER FILE ENTRIES)
+    (finding-set PRODUCER FILE ENTRIES &optional UNIT)
     (finding-clear PRODUCER &optional FILE)
     (findings-for-file FILE)
     (findings-of-producer PRODUCER)
@@ -47,11 +47,19 @@ A FINDING
 
     A property is read with memq and nth: (nth 1 (memq :message f)).
 
-    Lines count from 1 and columns from 0, in characters, as the producer
-    counted them. A producer is named by a symbol or a string: 'my-lint
-    and "my-lint" are the same producer. A file is named as C-x C-f names
-    one: a relative name is read in the current directory, and is kept as
-    an absolute one.
+    Lines count from 1 and columns from 0, as the producer counted them.
+    The columns count characters, unless `finding-set' is given a UNIT:
+    utf-16 for UTF-16 code units, or utf-8 for bytes. UTF-16 differs from
+    characters only after a character outside the basic plane, such as
+    an emoji, two units; UTF-8 after any that is not ASCII: an é is two
+    bytes, an emoji four. The editor keeps the columns as they came and
+    reads them in their unit where the text of the file is: in an open
+    file, and in one opened later.
+
+    A producer is named by a symbol or a string: 'my-lint and "my-lint"
+    are the same producer. A file is named as C-x C-f names one: a
+    relative name is read in the current directory, and is kept as an
+    absolute one.
 
 REPLACING
     A producer never adds or removes one finding: `finding-set' replaces
@@ -77,16 +85,18 @@ ASKING
     file. A directory is a whole name: /src/app holds /src/app/main.c,
     not /src/application.c.
 
-    Each finding comes back as it went in, with three more properties:
-    :file, the absolute name of the file; :producer, as a symbol; and
-    :stale, described below.
+    Each finding comes back as it went in, with four more properties:
+    :file, the absolute name of the file; :producer, as a symbol; :unit,
+    what its columns count, char, utf-16 or utf-8; and :stale, described
+    below. `line-column-to-position' takes the :unit as it is.
 
 IN AN OPEN FILE
     When the file is open, in a buffer, each finding follows its text: a
     line added above it moves it down, as it moves the places of a list
     of results (`compile'). This holds whether the file was opened before
     the findings came or after: opening it places them. The places asked
-    for are then where the text is now, not where the producer said.
+    for are then where the text is now, not where the producer said, and
+    their columns count characters: :unit is char.
 
     Once the buffer's text has changed since the producer spoke, every
     finding of that producer about the file has :stale t: it was right
@@ -155,6 +165,11 @@ LIMITS
     A place past the end of its line stops at the end of the line, and a
     line past the end of the file at the file's end.
 
+    The list M-g f makes reads every column as characters. In a file not
+    open whose findings came in utf-16 or utf-8, a step to one lands a
+    little past it when its line has, before it, a character that takes
+    more than one unit.
+
     A buffer that comes to visit a file by being saved under its name,
     with C-x C-w, does not take that file's findings: they are placed the
     next time the file is opened.
@@ -177,6 +192,14 @@ EXAMPLES
           '((:start (12 . 4) :end (12 . 9) :severity error
              :message "undefined name" :code "E1")
             (:start (30 . 0) :severity hint :message "line is long")))
+
+    A producer that counts columns in UTF-16: here the span is the word
+    after an emoji, units 3 to 8.
+
+        (finding-set 'my-checker "~/src/app/main.c"
+          '((:start (5 . 3) :end (5 . 8) :severity warning
+             :message "unused"))
+          'utf-16)
 
     The errors about the file in the current buffer, as messages.
 

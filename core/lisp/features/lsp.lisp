@@ -384,7 +384,7 @@ with SERVER down, when it could not start."
           t))))
 
 (defun lsp--unit (encoding)
-  "The unit of `position-to-line-column' for the position ENCODING a server chose."
+  "The unit of `finding-set' for the position ENCODING a server chose."
   (cond ((equal encoding "utf-32") 'char)
         ((equal encoding "utf-8") 'utf-8)
         (t 'utf-16)))
@@ -670,21 +670,18 @@ known are let by."
   (line-column-to-position (+ 1 (map-elt position "line"))
                            (map-elt position "character") unit))
 
-(defun lsp--place (position unit here)
-  "The (LINE . COLUMN) of the LSP POSITION for a finding: read in the current
-buffer when HERE, else with the server's columns as they are."
-  (if here
-      (let ((place (position-to-line-column (lsp--position position unit))))
-        (cons (car place) (nth 1 place)))
-      (cons (+ 1 (map-elt position "line")) (map-elt position "character"))))
+(defun lsp--place (position)
+  "The (LINE . COLUMN) of the LSP POSITION for a finding, its column as the
+server counts it."
+  (cons (+ 1 (map-elt position "line")) (map-elt position "character")))
 
-(defun lsp--finding (diagnostic unit here)
-  "The finding DIAGNOSTIC makes, its places read as `lsp--place' reads them."
+(defun lsp--finding (diagnostic)
+  "The finding DIAGNOSTIC makes."
   (let* ((range (map-elt diagnostic "range"))
          (code (map-elt diagnostic "code"))
          (message (map-elt diagnostic "message"))
-         (finding (list :start (lsp--place (map-elt range "start") unit here)
-                        :end (lsp--place (map-elt range "end") unit here)
+         (finding (list :start (lsp--place (map-elt range "start"))
+                        :end (lsp--place (map-elt range "end"))
                         :severity (lsp--severity (map-elt diagnostic "severity"))
                         :message (if (stringp message) message ""))))
     (if (or (stringp code) (numberp code))
@@ -717,15 +714,9 @@ publishDiagnostics, says; one about a text that is no longer there is dropped."
                                 (map-insert (or (get server 'raw) (make-map)) file
                                             (map-elt params "diagnostics"))
                                 (map-delete (or (get server 'raw) (make-map)) file)))
-           (let ((entries
-                  (if (and buffer (not (eq unit 'char)))
-                      (with-current-buffer
-                       buffer
-                       (lambda () (mapcar (lambda (item) (lsp--finding item unit t)) items)))
-                      (mapcar (lambda (item) (lsp--finding item unit nil)) items))))
-             (condition-case why
-                 (finding-set server file entries)
-               (error (lsp--log server (format "findings refused: %s" why))))))))
+           (condition-case why
+               (finding-set server file (mapcar 'lsp--finding items) unit)
+             (error (lsp--log server (format "findings refused: %s" why)))))))
   nil)
 
 ;; ---------------------------------------------------------------------------

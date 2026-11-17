@@ -97,9 +97,9 @@ THE FINDINGS
 
     Columns are counted in characters when the server agrees to, which
     the common servers do. With a server that counts in UTF-16, as the
-    protocol has it by default, the columns of an open file are read in its
-    text, and those of a file not open are right but after a character
-    outside the basic plane, such as an emoji.
+    protocol has it by default, its findings keep its columns and say so,
+    and are placed right in the text of a file open or opened later (see
+    findings).
 
 WHEN A SERVER STOPS
     `lsp-shutdown' stops the server of the current buffer, asking it to

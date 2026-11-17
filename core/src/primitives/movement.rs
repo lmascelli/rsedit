@@ -476,7 +476,7 @@ fn whole_number<B: BufferTrait>(
 }
 
 /// Returns ARG as what a column counts: characters when it is absent or nil.
-fn column_unit<B: BufferTrait>(
+pub(super) fn column_unit<B: BufferTrait>(
     arg: Option<&ELispExp<B>>,
 ) -> Result<Unit, EvalError<EditorState<B>>> {
     let expected = "char, utf-16 or utf-8";

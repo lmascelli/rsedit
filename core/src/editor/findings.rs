@@ -9,6 +9,7 @@
 
 use super::*;
 use crate::managers::{Finding, Found, LineColumn, Placed, Severity};
+use crate::text::positions::{self, Unit};
 use crate::ui::{BufferFindings, FindingMark, FindingMarks};
 
 /// The name of the minor mode that draws the findings about a buffer's file,
@@ -60,6 +61,7 @@ fn buffer_findings(sets: Vec<Found>) -> BufferFindings {
                 markers: ids.as_ref().map(|ids| ids[at]),
                 start: line_column(finding.start),
                 end: line_column(finding.end),
+                unit: finding.unit,
                 rank,
                 face,
                 sign,
@@ -90,16 +92,19 @@ pub(crate) struct Located {
 }
 
 /// Returns the offset in TEXT of a producer's line, from 1, and column,
-/// both kept within the text.
-fn offset_of<B: BufferTrait>(text: &B, (line, column): LineColumn) -> usize {
+/// counted in UNIT, both kept within the text.
+fn offset_of<B: BufferTrait>(text: &B, (line, column): LineColumn, unit: Unit) -> usize {
     let line = line
         .saturating_sub(1)
         .min(text.line_count().saturating_sub(1));
+    if unit != Unit::Char {
+        return positions::position(text, line, column, unit);
+    }
     let column = column.min(crate::primitives::movement::line_length(text, line));
     text.cursor_2d_to_1d(line, column)
 }
 
-/// Returns the producer's line, from 1, and column of OFFSET in TEXT.
+/// Returns the line, from 1, and column, in characters, of OFFSET in TEXT.
 fn line_column_of<B: BufferTrait>(text: &B, offset: usize) -> LineColumn {
     let (line, column) = text.cursor_1d_to_2d(offset.min(text.len()));
     (line + 1, column)
@@ -111,8 +116,8 @@ fn make_markers<B: BufferTrait>(buf: &mut Buffer<B>, findings: &[Finding]) -> Pl
     let markers = findings
         .iter()
         .map(|finding| {
-            let start = offset_of(&buf.text, finding.start);
-            let end = offset_of(&buf.text, finding.end).max(start);
+            let start = offset_of(&buf.text, finding.start, finding.unit);
+            let end = offset_of(&buf.text, finding.end, finding.unit).max(start);
             (buf.markers.add(start), buf.markers.add(end))
         })
         .collect();
@@ -287,8 +292,9 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// Returns each finding of SETS where it is now: at its markers in the
-    /// buffer visiting its file, when they are there, and where its producer
-    /// said otherwise.
+    /// buffer visiting its file, when they are there, with its columns in
+    /// characters, and where its producer said otherwise, in the producer's
+    /// unit.
     pub(crate) fn locate_findings(&self, sets: Vec<Found>) -> Vec<Located> {
         let mut located = Vec::new();
         for found in sets {
@@ -322,6 +328,7 @@ impl<B: BufferTrait> EditorState<B> {
                 if let Some(&(start, end)) = places.as_ref().and_then(|places| places.get(at)) {
                     finding.start = start;
                     finding.end = end;
+                    finding.unit = Unit::Char;
                 }
                 located.push(Located {
                     file: file.clone(),

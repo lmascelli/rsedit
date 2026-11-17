@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use crate::buffer::{Buffer, BufferTrait};
 use crate::managers::Buffers;
+use crate::text::positions::{self, Unit};
 use crate::ui::Face;
 use crate::ui::layout::BufferHighlight;
 use crate::ui::windows::{Rect, Window};
@@ -27,6 +28,8 @@ pub struct FindingMark {
     /// column: where it is drawn when the buffer has not both markers.
     pub start: (usize, usize),
     pub end: (usize, usize),
+    /// What the columns of `start` and `end` count.
+    pub unit: Unit,
     /// How much it matters, 0 the most: on a line, and at point, the one
     /// that matters most is shown.
     pub rank: u8,
@@ -63,10 +66,13 @@ impl FindingMarks {
     }
 }
 
-/// Returns the offset of LINE, from 0, and COLUMN in TEXT, both kept within
-/// the text.
-fn offset_of<B: BufferTrait>(text: &B, (line, column): (usize, usize)) -> usize {
+/// Returns the offset of LINE, from 0, and COLUMN, counted in UNIT, in
+/// TEXT, both kept within the text.
+fn offset_of<B: BufferTrait>(text: &B, (line, column): (usize, usize), unit: Unit) -> usize {
     let line = line.min(text.line_count().saturating_sub(1));
+    if unit != Unit::Char {
+        return positions::position(text, line, column, unit);
+    }
     let length = text
         .get_lines(line, line + 1)
         .first()
@@ -88,8 +94,8 @@ fn spans<'a, B: BufferTrait>(
             .and_then(|(start, end)| Some((buf.markers.get(start)?, buf.markers.get(end)?)));
         let (start, end) = placed.unwrap_or_else(|| {
             (
-                offset_of(&buf.text, mark.start),
-                offset_of(&buf.text, mark.end),
+                offset_of(&buf.text, mark.start, mark.unit),
+                offset_of(&buf.text, mark.end, mark.unit),
             )
         });
         let start = start.min(buf.text.len());

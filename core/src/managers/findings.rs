@@ -7,6 +7,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use crate::text::positions::Unit;
+
 /// How much a finding matters, from most to least.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
@@ -43,7 +45,7 @@ impl Severity {
     }
 }
 
-/// A line, from 1, and a column, from 0, in characters.
+/// A line, from 1, and a column, from 0, counted in its finding's unit.
 pub type LineColumn = (usize, usize);
 
 /// One thing a producer said about a file, where the producer said it.
@@ -54,6 +56,8 @@ pub struct Finding {
     pub severity: Severity,
     pub message: String,
     pub code: Option<String>,
+    /// What the columns of `start` and `end` count.
+    pub unit: Unit,
 }
 
 /// The markers that follow a set of findings in the buffer visiting their

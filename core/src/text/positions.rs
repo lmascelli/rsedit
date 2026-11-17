@@ -27,6 +27,15 @@ impl Unit {
             Unit::Utf8 => c.len_utf8(),
         }
     }
+
+    /// Returns the name Lisp gives the unit.
+    pub fn name(self) -> &'static str {
+        match self {
+            Unit::Char => "char",
+            Unit::Utf16 => "utf-16",
+            Unit::Utf8 => "utf-8",
+        }
+    }
 }
 
 /// Returns the line of POS in TEXT, counted from 0, and its column, counted

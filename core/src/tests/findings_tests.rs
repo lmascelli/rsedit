@@ -9,6 +9,7 @@ mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
     use crate::managers::{Finding, Findings, Placed, Severity};
+    use crate::text::positions::Unit;
     use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -97,6 +98,7 @@ mod tests {
             severity: Severity::Warning,
             message: message.into(),
             code: None,
+            unit: Unit::Char,
         }
     }
 
@@ -486,5 +488,134 @@ mod tests {
             &ctx,
         ));
         assert_eq!(place(&found[0], ":start"), (2.0, 0.0));
+    }
+
+    /// A face outside the Basic Multilingual Plane before `count`: two
+    /// UTF-16 code units and four UTF-8 bytes, but one character.
+    const FACE_LINE: &str = "a \u{1F600} count\n";
+
+    /// `count` as a producer measuring in UTF-16 says where it is.
+    const COUNT_IN_UTF16: &str =
+        r#"'((:start (1 . 5) :end (1 . 10) :severity error :message "m")) 'utf-16"#;
+
+    #[test]
+    fn utf16_columns_after_a_face_mark_the_text_the_producer_meant() {
+        let sandbox = Sandbox::new("utf16-open");
+        let path = sandbox.file("a.c", FACE_LINE);
+        let (ctx, env) = editor();
+        open(&path, &env, &ctx);
+        run(
+            &format!(r#"(finding-set 'checker"{path}" {COUNT_IN_UTF16})"#),
+            &env,
+            &ctx,
+        );
+        let found = list(&run(
+            &format!(r#"(findings-for-file "{path}")"#),
+            &env,
+            &ctx,
+        ));
+        // Read from the markers, so counted in characters.
+        assert_eq!(place(&found[0], ":start"), (1.0, 4.0));
+        assert_eq!(place(&found[0], ":end"), (1.0, 9.0));
+        assert_eq!(text(&get(&found[0], ":unit")), "char");
+    }
+
+    #[test]
+    fn utf8_columns_after_a_face_are_placed_when_the_file_is_opened() {
+        let sandbox = Sandbox::new("utf8-opened-after");
+        let path = sandbox.file("a.c", FACE_LINE);
+        let (ctx, env) = editor();
+        run(
+            &format!(
+                r#"(finding-set 'lint "{path}"
+                     '((:start (1 . 7) :end (1 . 12) :severity error :message "m")) 'utf-8)"#
+            ),
+            &env,
+            &ctx,
+        );
+        open(&path, &env, &ctx);
+        let found = list(&run(
+            &format!(r#"(findings-for-file "{path}")"#),
+            &env,
+            &ctx,
+        ));
+        assert_eq!(place(&found[0], ":start"), (1.0, 4.0));
+        assert_eq!(place(&found[0], ":end"), (1.0, 9.0));
+    }
+
+    #[test]
+    fn a_file_not_open_gives_the_columns_back_in_the_producers_unit() {
+        let sandbox = Sandbox::new("utf16-closed");
+        let path = sandbox.file("a.c", FACE_LINE);
+        let (ctx, env) = editor();
+        run(
+            &format!(r#"(finding-set 'checker"{path}" {COUNT_IN_UTF16})"#),
+            &env,
+            &ctx,
+        );
+        let found = list(&run(
+            &format!(r#"(findings-for-file "{path}")"#),
+            &env,
+            &ctx,
+        ));
+        assert_eq!(place(&found[0], ":start"), (1.0, 5.0));
+        assert_eq!(text(&get(&found[0], ":unit")), "utf-16");
+    }
+
+    #[test]
+    fn columns_without_a_unit_count_characters() {
+        let (ctx, env) = editor();
+        let found = list(&run(
+            &format!(
+                r#"(finding-set 'lint "/tmp/rsedit-no-unit.c" {ONE_FINDING})
+                   (findings-for-file "/tmp/rsedit-no-unit.c")"#
+            ),
+            &env,
+            &ctx,
+        ));
+        assert_eq!(text(&get(&found[0], ":unit")), "char");
+    }
+
+    #[test]
+    fn a_unit_that_is_not_char_utf16_or_utf8_is_refused() {
+        let (ctx, env) = editor();
+        let refused = try_run(
+            &format!(r#"(finding-set 'lint "/tmp/rsedit-bad-unit.c" {ONE_FINDING} 'latin-1)"#),
+            &env,
+            &ctx,
+        );
+        assert!(matches!(refused, Err(EvalError::WrongArgumentType { .. })));
+    }
+
+    #[test]
+    fn a_finding_drawn_without_its_markers_reads_its_columns_in_its_unit() {
+        let sandbox = Sandbox::new("utf16-drawn");
+        let path = sandbox.file("a.c", FACE_LINE);
+        let (ctx, env) = editor();
+        // The module that turns `findings-mode' on where a file is open.
+        for source in [
+            include_str!("../../lisp/base/commands.lisp"),
+            include_str!("../../lisp/base/debug.lisp"),
+            include_str!("../../lisp/features/findings.lisp"),
+        ] {
+            try_run(source, &env, &ctx).expect("loading the shipped lisp");
+        }
+        let name = open(&path, &env, &ctx);
+        run(
+            &format!(r#"(finding-set 'checker"{path}" {COUNT_IN_UTF16})"#),
+            &env,
+            &ctx,
+        );
+        let mut marks = ctx.finding_marks().expect("the buffer is shown");
+        for mark in &mut marks.buffers.get_mut(&name).expect("its findings").marks {
+            mark.markers = None;
+        }
+        let message_at = |point: usize| {
+            run(&format!("(goto-char {point})"), &env, &ctx);
+            ctx.buffers(|buffers| crate::ui::finding_message_at(buffers, &name, Some(&marks)))
+        };
+        // On the `c` of `count`, character 4, and not on the space before it.
+        assert!(message_at(4).is_some());
+        assert!(message_at(3).is_none());
     }
 }

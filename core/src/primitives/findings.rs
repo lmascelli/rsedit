@@ -7,6 +7,7 @@ use super::*;
 use crate::editor::findings::Located;
 use crate::managers::{Finding, LineColumn, Severity};
 use crate::primitives::args;
+use crate::text::positions::Unit;
 
 /// Returns the wrong-type error for GOT, which should have been EXPECTED.
 fn wrong<B: BufferTrait>(expected: &str, got: &ELispExp<B>) -> EvalError<EditorState<B>> {
@@ -44,8 +45,12 @@ fn line_column<B: BufferTrait>(exp: &ELispExp<B>) -> Result<LineColumn, EvalErro
     }
 }
 
-/// Returns ENTRY, a finding's property list, as a finding.
-fn finding<B: BufferTrait>(entry: &ELispExp<B>) -> Result<Finding, EvalError<EditorState<B>>> {
+/// Returns ENTRY, a finding's property list with its columns in UNIT, as a
+/// finding.
+fn finding<B: BufferTrait>(
+    entry: &ELispExp<B>,
+    unit: Unit,
+) -> Result<Finding, EvalError<EditorState<B>>> {
     let (items, tail) = entry.split_list();
     if items.is_empty() || !tail.is_nil() {
         return Err(wrong("a property list", entry));
@@ -86,6 +91,7 @@ fn finding<B: BufferTrait>(entry: &ELispExp<B>) -> Result<Finding, EvalError<Edi
         severity,
         message,
         code,
+        unit,
     })
 }
 
@@ -124,6 +130,8 @@ fn plist<B: BufferTrait>(located: Located) -> ELispExp<B> {
             .code
             .map(ELispExp::string)
             .unwrap_or_else(ELispExp::nil),
+        key(":unit"),
+        key(finding.unit.name()),
         key(":stale"),
         if stale {
             ELispExp::t()
@@ -170,10 +178,11 @@ fn arity<B: BufferTrait>(
     Ok(())
 }
 
-pub const FINDING_SET_DOC: &str = "(finding-set PRODUCER FILE ENTRIES): Replace what PRODUCER, \
-         a symbol or a string, says about FILE with ENTRIES, and return how many there are now. \
-         Each entry is a property list with :start and :end, (LINE . COLUMN) with lines from 1 \
-         and columns from 0 in characters, :end being :start unless given; :severity, one of \
+pub const FINDING_SET_DOC: &str = "(finding-set PRODUCER FILE ENTRIES &optional UNIT): Replace \
+         what PRODUCER, a symbol or a string, says about FILE with ENTRIES, and return how many \
+         there are now. Each entry is a property list with :start and :end, (LINE . COLUMN) with \
+         lines from 1 and columns from 0 in UNIT: char, the default, utf-16 or utf-8, as \
+         `line-column-to-position' counts them; :end being :start unless given; :severity, one of \
          `error', `warning', `info', `hint'; :message, a string; and :code, optional. nil \
          ENTRIES forgets FILE. In an open file the entries follow the edits.\n\n\
          Example:\n\
@@ -181,15 +190,19 @@ pub const FINDING_SET_DOC: &str = "(finding-set PRODUCER FILE ENTRIES): Replace 
            '((:start (3 . 4) :end (3 . 9) :severity warning :message \"unused\" :code \"W1\")))";
 
 primitive!(finding_set, args, _env, ctx, {
-    arity(args, 3, 3)?;
+    arity(args, 3, 4)?;
     let producer = args::name(args.first())?;
     let file = path_argument(ctx, args, 1)?;
     let (entries, tail) = args[2].split_list();
     if !tail.is_nil() {
         return Err(wrong("a list of property lists", &args[2]));
     }
+    let unit = super::movement::column_unit(args.get(3))?;
     ctx.consume_fuel(u32::try_from(entries.len()).unwrap_or(u32::MAX))?;
-    let findings = entries.iter().map(finding).collect::<Result<Vec<_>, _>>()?;
+    let findings = entries
+        .iter()
+        .map(|entry| finding(entry, unit))
+        .collect::<Result<Vec<_>, _>>()?;
     let count = findings.len();
     ctx.set_findings(&producer, &file, findings);
     Ok(ELispExp::number(count as f64))
@@ -213,8 +226,8 @@ primitive!(finding_clear, args, _env, ctx, {
 
 pub const FINDINGS_FOR_FILE_DOC: &str = "(findings-for-file FILE): Return the findings about \
          FILE, by producer: property lists with :file, :producer, :start, :end, :severity, \
-         :message, :code and :stale, t when the file's text has changed since the producer \
-         spoke.\n\n\
+         :message, :code, :unit, what the columns count, and :stale, t when the file's text has \
+         changed since the producer spoke.\n\n\
          Example:\n\
          (findings-for-file (buffer-file-name))";
 

@@ -94,7 +94,7 @@ segnati come tali.
   [R3 JSON], [`json-parse-string`: oggetti in mappe con chiavi stringa, array in vettori, `true` in `t`, `false` e `null` nei simboli `false` e `null`, numeri in float. `json-serialize`: il contrario, con le chiavi ordinate; rifiuta nil e le liste.], [Legge ogni corpo e scrive ogni messaggio. Un campo assente si omette, un array vuoto è `[]`, un booleano falso è `false`: nil non entra mai in un messaggio, perché `json-serialize` lo rifiuterebbe. Gli id delle richieste sono interi piccoli, esatti come float.],
   [C7 processi], [`process-start` con la forma `messages`: la cornice `Content-Length` letta e scritta in Rust; consegne tra un comando e l'altro, una chiamata `(FUNCTION NOME TIPO VALORE)` ciascuna, `exit` sempre per ultima; `process-send`, che non aspetta e risponde nil quando la coda dell'ingresso è piena; `process-stop`, `process-status`.], [Un processo per server. La funzione di consegna smista le risposte, le richieste del server e le notifiche; lo stderr va nel registro del server. Ciò che `process-send` non accetta resta in una coda del modulo, nell'ordine, e si riprova (manuale, `<mod-lsp>`).],
   [C8 posizioni], [`position-to-line-column` e `line-column-to-position`, con l'unità `char`, `utf-16` o `utf-8`; righe da 1. `track-changes-begin` e `track-changes-end`: che cosa è cambiato da quando si guarda, come `(START REMOVED INSERTED)`.], [Converte ogni posizione che entra o esce (@unita). Sa che cosa mandare a `didChange` (@intero-tratti), una volta che il nucleo ha i pezzi che mancano (@mancano).],
-  [C5 deposito], [`finding-set PRODUCER FILE ENTRIES` sostituisce in blocco; `finding-clear`; le domande per file, produttore, directory. Posizioni del produttore e marcatori quando il file è aperto.], [Un produttore per server. Ogni `publishDiagnostics` diventa un `finding-set` per quel file (manuale, `<mod-lsp>`).],
+  [C5 deposito], [`finding-set PRODUCER FILE ENTRIES &optional UNIT` sostituisce in blocco; `finding-clear`; le domande per file, produttore, directory. Posizioni del produttore e marcatori quando il file è aperto.], [Un produttore per server. Ogni `publishDiagnostics` diventa un `finding-set` per quel file (manuale, `<mod-lsp>`).],
   [C6 schermo], [`findings-mode`, acceso ovunque dal modulo `findings`: intervallo, segno, conteggio, messaggio al punto; `M-g f` e `M-g n`.], [Niente: le segnalazioni di un server si vedono come quelle di `compile`.],
 )
 
@@ -261,7 +261,6 @@ subito, un cliente che non è `lsp`.
   columns: (0.9cm, 4.2cm, 1fr),
   header: ([], [Facoltativo], [Perché non ora]),
   [N7], [applicare una lista di sostituzioni in un passo], [Il modulo lo fa in Lisp, dall'ultima alla prima. Diventa utile quando un secondo cliente lo vorrà.],
-  [N9], [un'unità in `finding-set`], [Il deposito farebbe i marcatori da colonne `utf-16` quando il file si apre. Con `utf-32` non serve, e con `utf-16` l'errore cade solo dopo i caratteri fuori dal piano di base.],
   [N10], [`after-close-hook` che dice quale buffer], [Il modulo confronta con `all-buffer-names`.],
 )
 

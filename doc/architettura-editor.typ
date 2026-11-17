@@ -5544,8 +5544,9 @@ modifiche comprese.
 )
 
 Il posto di una segnalazione è quello dei suoi marcatori quando il buffer li
-ha entrambi, e quello del produttore altrimenti, tenuto dentro il testo come
-fanno le domande al deposito. Fra la copia e i lock può arrivare una
+ha entrambi, e quello del produttore altrimenti, letto nella sua unità, che il
+`FindingMark` porta, e tenuto dentro il testo come fanno le domande al
+deposito. Fra la copia e i lock può arrivare una
 sostituzione, che toglie i marcatori vecchi: per un fotogramma l'insieme di
 prima si disegna al posto che il produttore aveva detto, e il successivo
 disegna il nuovo.
@@ -6657,7 +6658,7 @@ primitive `primitives/findings.rs`.
 #ref-table(
   columns: (3.4cm, 1fr),
   header: ([Struttura], [Contenuto]),
-  [`Finding`], [`start` e `end`, riga da 1 e colonna da 0 in caratteri, come il produttore li ha detti; `severity`, uno fra `Error`, `Warning`, `Info`, `Hint`; `message`; `code`, facoltativo, come testo.],
+  [`Finding`], [`start` e `end`, riga da 1 e colonna da 0, come il produttore li ha detti; `severity`, uno fra `Error`, `Warning`, `Info`, `Hint`; `message`; `code`, facoltativo, come testo; `unit`, ciò che contano le colonne, un `Unit` di @posizioni-unita.],
   [`Set`], [Le segnalazioni di un produttore per un file, nell'ordine dato; `generation`, il numero della sostituzione che le ha fatte; `placed`, i marcatori, quando il file è aperto; `edited`, se il buffer è stato chiuso dopo una modifica.],
   [`Placed`], [Una coppia di marcatori, inizio e fine, per segnalazione, e la `version` del buffer quando sono stati fatti.],
   [`Findings`], [`by_file`, un `BTreeMap` dal file a un `BTreeMap` dal produttore al suo `Set`; `by_producer`, i file di ogni produttore; il prossimo numero di generazione.],
@@ -6679,7 +6680,12 @@ spostano con il testo. Una domanda risponde con il posto dei marcatori quando
 ci sono tutti, e con quello del produttore altrimenti, e con `:stale` vero
 quando la `version` del buffer non è più quella in cui i marcatori sono stati
 fatti: il testo è cambiato da quando il produttore ha parlato. Una sostituzione
-nuova fa marcatori nuovi, e la segnalazione torna fresca. I marcatori si fanno
+nuova fa marcatori nuovi, e la segnalazione torna fresca. Le colonne restano
+nell'unità del produttore e si convertono dove c'è il testo, con
+`positions::position`: quando si fanno i marcatori (`make_markers`) e quando lo
+schermo disegna una segnalazione che non li ha. Il posto letto dai marcatori,
+invece, ha le colonne in caratteri, e la risposta lo dice con `:unit`
+`char`. I marcatori si fanno
 in due momenti: quando arriva una sostituzione e un buffer visita il file, e
 quando il file si apre (`new_buffer`, `new_file_buffer`, con `place_findings`
 prima degli hook). Quando il buffer si chiude, `unplace_findings` dimentica i
@@ -7392,6 +7398,19 @@ dell'utente li descrive.
   indovinare se la modifica l'ha risolta. Scartati: gli offset soli, che per un
   file chiuso il produttore non ha, e il ricalcolo dal contenuto, che costa una
   lettura del file per una risposta che resta un'ipotesi.
++ *Le colonne restano nell'unità del produttore, e le converte il deposito.*
+  Un produttore che conta in unità UTF-16 o in byte può convertire da sé solo
+  nel testo di un file aperto: per uno chiuso darebbe colonne che, aperto il
+  file, farebbero i marcatori al posto sbagliato dopo un carattere che occupa
+  più di un'unità. Il deposito converte dove c'è il
+  testo, qualunque sia il momento in cui il file si apre. L'unità sta in ogni
+  `Finding` e non nel `Set`, perché serve a leggere `start` ed `end` e una
+  `Finding` viaggia anche da sola, in un `Located` o in un `FindingMark`;
+  `finding-set` la prende una volta per chiamata, così un produttore non ne
+  mescola due. Il posto letto dai marcatori si dà in caratteri, perché la
+  lista e `M-g n` leggono così le colonne. Scartati: l'unità nel `Set`, che
+  `Located` e `FindingMark` avrebbero dovuto portare a parte, e una per voce,
+  che permetterebbe di mescolarle.
 + *Il lock delle segnalazioni non si tiene mai con quello di un buffer.*
   Prenderli insieme avrebbe messo `findings` nell'ordine dei lock, prima o dopo
   i buffer, e ogni percorso futuro avrebbe dovuto rispettarlo. Le operazioni
@@ -8125,11 +8144,9 @@ comando), e `C-x C-w`, seguito da un `didOpen` del nome nuovo.
 
 *Le segnalazioni.* Una voce per diagnostica: `:start` e `:end` dalla `range`,
 `:severity` da 1--4 in `error`, `warning`, `info`, `hint` (assente: `error`),
-`:message`, `:code` se c'è, in stringa. Il deposito vuole righe da 1 e colonne
-in caratteri: con `char` è la riga più uno; con un'altra unità, in un file
-aperto, `lsp--position` traduce la posizione LSP in un offset del buffer con
-`line-column-to-position`, e `position-to-line-column` la rilegge in
-caratteri; in un file non aperto la colonna resta quella del server. Un
+`:message`, `:code` se c'è, in stringa. La riga è quella LSP più uno, la
+colonna quella del server, e `finding-set` riceve l'unità del server: le
+converte il deposito, nel file aperto ora o più tardi (@segnalazioni). Un
 elenco vuoto toglie le segnalazioni del file. L'elenco arrivato si tiene anche
 com'è, in `raw`, per le code action che verranno.
 
@@ -8179,10 +8196,12 @@ e i documenti si riaprono presso il nuovo come versione 1, al più
 + *`utf-32` prima di `utf-16`, `utf-8` mai.* Il client offre in
   `general.positionEncodings` `utf-32`, che conta i caratteri come l'editor:
   nessuna conversione, e le colonne dei file non aperti sono giuste anche
-  senza il loro testo. `utf-16` è l'obbligo del protocollo, e sbaglia solo
+  senza il loro testo. `utf-16` è l'obbligo del protocollo: le segnalazioni
+  le converte il deposito, e resta da sbagliare solo dove il testo non c'è,
   dopo un carattere fuori dal piano di base. Scartato: offrire `utf-8`, che
-  sbaglia ogni colonna dopo una lettera accentata dove il testo non c'è. Le
-  posizioni entrano da una funzione sola, `lsp--position`.
+  dove il testo non c'è sbaglia ogni colonna dopo una lettera accentata. Le
+  posizioni lette nel testo di un buffer entrano da una funzione sola,
+  `lsp--position`.
 + *Le segnalazioni di una versione vecchia si scartano.* Il deposito prende
   le posizioni del produttore come vere per il testo di adesso; una
   `publishDiagnostics` con una `version` diversa da quella del documento lo
