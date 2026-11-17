@@ -75,7 +75,7 @@ Come usarli
   separati).
 - I punti facoltativi (N7-N10, in fondo) non servono alla prima versione:
   si fanno quando serve, ciascuno dopo il punto indicato nel suo titolo.
-- Da eseguire: N10
+- Da eseguire: M3c
 
 
 PREAMBOLO

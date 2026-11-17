@@ -1,7 +1,9 @@
 //! The `lsp` module against a server made for the tests: a shell script that
 //! keeps a log of every message it is sent, answers initialize and shutdown,
-//! reports one finding for each version of a document it hears of, and falls
-//! when a change brings the word "fall".
+//! reports one finding for each version of a document it hears of, falls
+//! when a change brings the word "fall", and gives places in `target.txt`:
+//! the definition at line 0 in a Location, at line 1 in a LocationLink, none
+//! below; two references.
 //!
 //! Design: `doc/architettura-editor.typ, <mod-lsp>`.
 #[cfg(all(test, unix))]
@@ -31,13 +33,24 @@ while IFS= read -r line; do
       id=$(printf '%s' "$body" | sed -n 's/^{"id":\([0-9]*\),.*/\1/p')
       case "$body" in
         *'"method":"initialize"'*)
-          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":{\"capabilities\":{\"positionEncoding\":\"$encoding\",\"textDocumentSync\":{\"change\":1,\"openClose\":true,\"save\":true}}}}" ;;
+          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":{\"capabilities\":{\"definitionProvider\":true,\"positionEncoding\":\"$encoding\",\"textDocumentSync\":{\"change\":1,\"openClose\":true,\"save\":true},\"referencesProvider\":true}}}" ;;
         *'"method":"shutdown"'*)
           send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":null}" ;;
         *'"method":"exit"'*)
           exit 0 ;;
         *'"method":"textDocument/didChange"'*fall*)
           exit 3 ;;
+        *'"method":"textDocument/definition"'*)
+          target="file://${log%/*}/target.txt"
+          case $(printf '%s' "$body" | sed -n 's/.*"line":\([0-9]*\).*/\1/p') in
+            0) result="{\"range\":{\"end\":{\"character\":5,\"line\":1},\"start\":{\"character\":2,\"line\":1}},\"uri\":\"$target\"}" ;;
+            1) result="[{\"targetRange\":{\"end\":{\"character\":0,\"line\":3},\"start\":{\"character\":0,\"line\":2}},\"targetSelectionRange\":{\"end\":{\"character\":3,\"line\":2},\"start\":{\"character\":2,\"line\":2}},\"targetUri\":\"$target\"}]" ;;
+            *) result=null ;;
+          esac
+          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":$result}" ;;
+        *'"method":"textDocument/references"'*)
+          target="file://${log%/*}/target.txt"
+          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":[{\"range\":{\"end\":{\"character\":2,\"line\":0},\"start\":{\"character\":1,\"line\":0}},\"uri\":\"$target\"},{\"range\":{\"end\":{\"character\":4,\"line\":2},\"start\":{\"character\":3,\"line\":2}},\"uri\":\"$target\"}]}" ;;
         *'"method":"textDocument/didOpen"'*|*'"method":"textDocument/didChange"'*)
           uri=$(printf '%s' "$body" | sed -n 's/.*"uri":"\([^"]*\)".*/\1/p')
           version=$(printf '%s' "$body" | sed -n 's/.*"version":\([0-9]*\).*/\1/p')
@@ -592,6 +605,125 @@ done
         run("(lsp--after-command)", &env, &ctx);
         assert!(run("lsp--waiting", &env, &ctx).is_nil());
         finding_says(&file, "version 1", &env, &ctx);
+    }
+
+    /// The file the server's places are in.
+    const TARGET: &str = "zero\n  one\n\u{1F600}x two\n";
+
+    /// The character at point in the current buffer, once it visits FILE.
+    fn at_point_in(file: &str, wanted: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
+        tick_until(
+            &format!(
+                r#"(and (equal (buffer-file-name) "{file}")
+                        (equal (buffer-substring (point) (+ (point) 1)) "{wanted}"))"#
+            ),
+            env,
+            ctx,
+        );
+    }
+
+    #[test]
+    fn a_definition_in_one_place_is_gone_to_and_lsp_go_back_returns() {
+        let sandbox = Sandbox::new("definition");
+        let file = sandbox.file("a.fake", "\u{1F600}ab\nsecond\n");
+        let target = sandbox.file("target.txt", TARGET);
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let name = open(&file, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        run("(goto-char (point-min)) (forward-char 2)", &env, &ctx);
+        let here = run("(point)", &env, &ctx);
+        run("(lsp-find-definition)", &env, &ctx);
+        logged(
+            &sandbox,
+            &[
+                r#""method":"textDocument/definition""#,
+                r#""position":{"character":2,"line":0}"#,
+                &format!(r#""uri":"file://{file}""#),
+            ],
+            &env,
+            &ctx,
+        );
+        at_point_in(&target, "o", &env, &ctx);
+        run("(lsp-go-back)", &env, &ctx);
+        assert_eq!(text(&run("(current-buffer)", &env, &ctx)), name);
+        assert_eq!(run("(point)", &env, &ctx), here);
+    }
+
+    #[test]
+    fn a_definition_is_asked_and_gone_to_in_the_columns_of_the_server() {
+        let sandbox = Sandbox::new("definition-utf16");
+        let file = sandbox.file("a.fake", "first\n\u{1F600}ab\n");
+        let target = sandbox.file("target.txt", TARGET);
+        let (ctx, env) = editor(&sandbox, "utf-16");
+        open(&file, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        run("(goto-line 2) (forward-char 2)", &env, &ctx);
+        run("(lsp-find-definition)", &env, &ctx);
+        logged(
+            &sandbox,
+            &[r#""position":{"character":3,"line":1}"#],
+            &env,
+            &ctx,
+        );
+        // The LocationLink's selection, two UTF-16 units into its line: the
+        // character after the emoji.
+        at_point_in(&target, "x", &env, &ctx);
+    }
+
+    #[test]
+    fn references_in_more_than_one_place_are_listed_for_next_error() {
+        let sandbox = Sandbox::new("references");
+        let file = sandbox.file("a.fake", "abc\n");
+        let target = sandbox.file("target.txt", TARGET);
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        open(&file, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        run("(lsp-find-references)", &env, &ctx);
+        logged(
+            &sandbox,
+            &[
+                r#""method":"textDocument/references""#,
+                r#""context":{"includeDeclaration":true}"#,
+            ],
+            &env,
+            &ctx,
+        );
+        tick_until(
+            r#"(equal (results-count "*lsp locations*") 2)"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            text(&run(
+                r#"(with-current-buffer "*lsp locations*" (lambda () (buffer-string)))"#,
+                &env,
+                &ctx
+            )),
+            "--- 2 references ---\ntarget.txt:1:2\ntarget.txt:3:4\n"
+        );
+        run("(next-error)", &env, &ctx);
+        at_point_in(&target, "e", &env, &ctx);
+        run("(next-error)", &env, &ctx);
+        at_point_in(&target, "t", &env, &ctx);
+    }
+
+    #[test]
+    fn no_definition_moves_nothing_and_leaves_nothing_to_go_back_to() {
+        let sandbox = Sandbox::new("no-definition");
+        let file = sandbox.file("a.fake", "a\nb\nc\n");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let name = open(&file, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        run("(goto-line 3)", &env, &ctx);
+        run("(lsp-find-definition)", &env, &ctx);
+        logged(&sandbox, &[r#""position":{"character":0,"line":2}"#], &env, &ctx);
+        tick_until(
+            &format!("(null (get {} 'requests))", server(&sandbox)),
+            &env,
+            &ctx,
+        );
+        assert_eq!(text(&run("(current-buffer)", &env, &ctx)), name);
+        assert!(!run("lsp--places", &env, &ctx).is_truthy());
     }
 
     #[test]

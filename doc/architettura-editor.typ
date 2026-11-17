@@ -8041,10 +8041,10 @@ del nucleo che non sanno nulla di LSP: i processi dialoganti nella forma
 (`json-parse-string`, `json-serialize`), il deposito delle segnalazioni
 (@segnalazioni) e il loro disegno (@segnalazioni-schermo), le righe e colonne
 in altre unità (@posizioni-unita), `buffer-modified-tick` (@due-porte), i modi
-minori (@modi-minori) e `project-root` (@mod-project). Il nucleo non lo nomina,
-e un plugin può sostituirlo. Questa prima versione fa le segnalazioni; il
-completamento, la definizione e le code action, con ciò che manca ancora al
-nucleo, sono in `doc/progetto-lsp.typ`.
+minori (@modi-minori), `project-root` (@mod-project), `find-file` e le liste
+di risultati (@risultati). Il nucleo non lo nomina, e un plugin può
+sostituirlo. Fa le segnalazioni e la definizione; il completamento e le code
+action, con ciò che manca ancora al nucleo, sono in `doc/progetto-lsp.typ`.
 
 `lsp-mode`, acceso in un buffer che visita un file, cerca in `lsp-servers` la
 voce del suo modo maggiore, `(MODE NOME (PROGRAMMA ARGOMENTI...) . PROPRIETÀ)`,
@@ -8150,6 +8150,22 @@ converte il deposito, nel file aperto ora o più tardi (@segnalazioni). Un
 elenco vuoto toglie le segnalazioni del file. L'elenco arrivato si tiene anche
 com'è, in `raw`, per le code action che verranno.
 
+*La definizione.* `lsp--find` chiede al server del buffer, se la sua capacità
+lo dichiara, un metodo che risponde posti --- `textDocument/definition` per
+`lsp-find-definition`, `textDocument/references`, con `includeDeclaration`,
+per `lsp-find-references` --- alla posizione del punto, con scadenza e solo
+per il testo di adesso. La risposta --- una `Location`, un elenco di
+`Location` o di `LocationLink`, o null --- diventa un elenco di
+`(FILE . POSIZIONE)`, la `targetSelectionRange` di un `LocationLink` prima
+della sua `targetRange`. Nessun posto è un messaggio. Uno solo: il buffer e il
+punto da cui si era chiesto vanno in cima a `lsp--places`, `find-file` apre il
+file e `lsp--position` porta il punto, nell'unità del server; `lsp-go-back`
+toglie dalla cima e torna, se il buffer c'è ancora. Più d'uno: il buffer
+`*lsp locations*`, in `lsp-locations-mode`, ha un'intestazione e una riga per
+posto, e `results-put` gli dà una voce `("file" FILE RIGA COLONNA)` per riga,
+che `M-g n` percorre. La colonna è in caratteri per un file che è un documento
+del server, letta nel suo buffer; altrimenti è quella del server.
+
 *L'arresto.* `lsp-shutdown` manda `shutdown`; alla risposta `exit`, e chiude
 l'ingresso. Se dopo due secondi la consegna `exit` non è arrivata,
 `process-stop`. Alla consegna `exit` il modulo toglie le segnalazioni del
@@ -8210,8 +8226,9 @@ e i documenti si riaprono presso il nuovo come versione 1, al più
 + *Le capacità dichiarate sono quelle onorate.* Un server che crede il
   client capace di qualcosa glielo manda: il client dichiara le unità,
   `didSave`, `publishDiagnostics.versionSupport`, `workspace.configuration`,
-  `workspaceFolders` e `window.workDoneProgress`, e niente registrazione
-  dinamica né `applyEdit`. Ogni funzione nuova aggiunge le sue.
+  `workspaceFolders`, `window.workDoneProgress`, `definition.linkSupport` e
+  `references`, e niente registrazione dinamica né `applyEdit`. Ogni funzione
+  nuova aggiunge le sue.
 + *Un messaggio non si scavalca.* `process-send` non aspetta mai; ciò che non
   prende resta nella coda del server, che si svuota nell'ordine a ogni invio e
   a ogni consegna. Un `didChange` perso lascerebbe il server con un altro
@@ -8246,6 +8263,24 @@ e i documenti si riaprono presso il nuovo come versione 1, al più
   All'entrata si leggono anche le sequenze UTF-8 in `%XX`: l'interprete non ha
   una funzione dal codice al carattere, e il modulo le fa diventare escape
   `\u` che `json-parse-string` legge.
++ *Le posizioni che escono da una funzione sola.* Come quelle che entrano
+  passano da `lsp--position`, quelle che il client manda --- il punto di una
+  definizione, e poi di un completamento o di una code action --- passano da
+  `lsp--position-at`, che usa `position-to-line-column` nell'unità del
+  server e toglie uno alla riga. Altrove non si converte.
++ *La pila dei posti nel modulo.* L'editor non ha un anello dei mark, e solo
+  `lsp` salta per ora: la pila è sua, `lsp--places`, con buffer e punto, che
+  le modifiche successive possono spostare. Quando un secondo modulo vorrà
+  tornare da un salto --- una ricerca dei tag, un `grep` --- la pila diventerà
+  un modulo Lisp suo. Scartato: un anello dei mark nel nucleo, per un solo
+  utente.
++ *Un posto solo si raggiunge, più d'uno si elenca.* È ciò che fanno gli
+  editor che parlano LSP, e `references` dà quasi sempre una lista; la lista
+  è quella di `results-put`, così `M-g n` la percorre come un `grep` e il
+  modulo non ha un suo modo di camminare. Le domande che rispondono
+  posti --- `definition`, `declaration`, `typeDefinition`, `implementation`,
+  `references` --- passano da `lsp--find`: le altre si aggiungono con un
+  comando di una riga e la loro capacità.
 + *`lsp-mode` dice perché si spegne.* In un buffer senza file, o in un modo
   senza voce, il modo si spegne da sé dal suo `minor-mode-hook`; il messaggio
   del comando, che arriva dopo, coprirebbe il motivo, che il corpo del comando

@@ -5,6 +5,10 @@ SYNOPSIS
     (lsp-mode &optional ARG)
     (lsp-shutdown)
     (lsp-restart)
+    (lsp-find-definition)
+    (lsp-find-references)
+    (lsp-go-back)
+    (lsp-locations-goto)
     lsp-servers
     lsp-root-function
     lsp-request-timeout
@@ -101,6 +105,23 @@ THE FINDINGS
     and are placed right in the text of a file open or opened later (see
     findings).
 
+GOING TO A DEFINITION
+    M-. asks the server where what is at point is defined, and goes
+    there, opening the file if need be. M-, goes back to where you were;
+    after several M-. in a row, each M-, goes back one more.
+
+    When the server gives more than one place, they are listed instead,
+    in the buffer *lsp locations*, one line per place, and M-g n and M-g p
+    walk them as they walk the matches of a grep. <ret> on a line goes to
+    its place, q puts the list away.
+
+    M-? lists the places that use what is at point, its declaration
+    among them; a single one is gone to, as by M-.
+
+    A server that does not say it can answer is not asked, and the
+    message says so. An answer that comes after the buffer has changed is
+    not believed: ask again.
+
 WHEN A SERVER STOPS
     `lsp-shutdown' stops the server of the current buffer, asking it to
     first; one that has not gone two seconds later is stopped outright.
@@ -124,8 +145,13 @@ THE LOG
     It keeps the last `lsp-log-limit' characters. C-x b goes to it.
 
 LIMITS
-    Only findings, for now: no completion, no going to a definition, no
-    fixes offered by the server.
+    Findings and definitions, for now: no completion, no fixes offered by
+    the server.
+
+    In the list of places, the column in a file that was not open when
+    the list was made is the server's: with a server that counts in
+    UTF-16, it is one too many for each character outside the basic plane
+    before it on its line.
 
     The whole text is sent after every change, which costs the size of the
     file at each command that writes; on a file of some megabytes that
@@ -167,5 +193,20 @@ EXAMPLES
 
         (lsp-restart)
 
+    The references on C-c r, in every buffer where lsp-mode is on:
+
+        (define-key 'lsp-mode "C-c r" 'lsp-find-references)
+
+KEYS IN LSP MODE
+    M-.                     lsp-find-definition
+    M-,                     lsp-go-back
+    M-?                     lsp-find-references
+
+KEYS IN LSP LOCATIONS MODE
+    <ret>                   lsp-locations-goto
+    n                       next-line
+    p                       previous-line
+    q                       results-quit
+
 SEE ALSO
-    findings, project, processes, modes, configuration
+    searching, findings, project, processes, modes, configuration

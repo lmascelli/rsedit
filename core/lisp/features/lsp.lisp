@@ -2,8 +2,9 @@
 ;;;
 ;;; lsp-mode, on in a buffer visiting a file, starts the server `lsp-servers'
 ;;; gives for its major mode at the file's root, keeps the server's copy of
-;;; the text in step with the buffer, and reports what the server says as
-;;; findings. User manual: the `lsp' page.
+;;; the text in step with the buffer, reports what the server says as
+;;; findings, and goes to the definitions it gives. User manual: the `lsp'
+;;; page.
 ;;; Design: `doc/architettura-editor.typ, <mod-lsp>`.
 
 (require 'commands)
@@ -341,7 +342,9 @@ buffer has the same text; :timed, it is dropped after `lsp-request-timeout';
                                                "willSave" 'false
                                                "willSaveWaitUntil" 'false
                                                "didSave" t)
-                   "publishDiagnostics" (make-map "versionSupport" t))
+                   "publishDiagnostics" (make-map "versionSupport" t)
+                   "definition" (make-map "linkSupport" t)
+                   "references" (make-map))
    "workspace" (make-map "configuration" t "workspaceFolders" t
                          "applyEdit" 'false)
    "window" (make-map "workDoneProgress" t))
@@ -670,6 +673,11 @@ known are let by."
   (line-column-to-position (+ 1 (map-elt position "line"))
                            (map-elt position "character") unit))
 
+(defun lsp--position-at (offset unit)
+  "The LSP position of OFFSET in the current buffer, its column in UNIT."
+  (let ((place (position-to-line-column offset unit)))
+    (make-map "line" (- (car place) 1) "character" (nth 1 place))))
+
 (defun lsp--place (position)
   "The (LINE . COLUMN) of the LSP POSITION for a finding, its column as the
 server counts it."
@@ -910,6 +918,126 @@ lsp-mode with its major mode closed."
   (lsp--flush-all))
 
 ;; ---------------------------------------------------------------------------
+;; Going to a definition
+;; ---------------------------------------------------------------------------
+
+(make-mode 'lsp-locations-mode)
+
+(defvar lsp--places nil
+  "Where `lsp-find-definition' went from, the latest first: (BUFFER . POINT).")
+
+(defconst lsp--locations-buffer "*lsp locations*"
+  "The buffer a list of the places a server gave is shown in.")
+
+(defconst lsp--locations-height 12
+  "How many rows the window showing a list of places takes.")
+
+(defun lsp--location (item)
+  "(FILE . POSITION) for ITEM, a Location or a LocationLink, POSITION the LSP
+position of its start; nil when ITEM is neither."
+  (let* ((link (and (mapp item) (map-elt item "targetUri")))
+         (uri (if link link (and (mapp item) (map-elt item "uri"))))
+         (range (cond (link (or (map-elt item "targetSelectionRange")
+                                (map-elt item "targetRange")))
+                      ((mapp item) (map-elt item "range"))))
+         (file (and (stringp uri) (lsp--file uri))))
+    (if (and file (mapp range) (mapp (map-elt range "start")))
+        (cons file (map-elt range "start"))
+        nil)))
+
+(defun lsp--locations (result)
+  "The places RESULT, an answer to definition or references, gives, as
+`lsp--location' makes them."
+  (let ((places nil))
+    (dolist (item (cond ((mapp result) (list result))
+                        ((vectorp result) (lsp--list result))
+                        (t nil)))
+      (let ((place (lsp--location item)))
+        (if place (setq places (cons place places)))))
+    (reverse places)))
+
+(defun lsp--jump (server place from)
+  "nil, after going to PLACE, (FILE . POSITION) with POSITION in SERVER's unit,
+and remembering FROM, (BUFFER . POINT), for `lsp-go-back'."
+  (condition-case why
+      (progn
+        (find-file (car place))
+        (setq lsp--places (cons from lsp--places))
+        (goto-char (lsp--position (cdr place) (get server 'unit))))
+    (error (message "Cannot open %s: %s" (car place) why)))
+  nil)
+
+(defun lsp--entry-of (server place)
+  "The entry of a list of results for PLACE, (FILE . POSITION): its column in
+characters when FILE is one of SERVER's documents, the server's otherwise."
+  (let* ((position (cdr place))
+         (line (+ 1 (map-elt position "line")))
+         (buffer (car (lsp--document server (car place))))
+         (column (if (and buffer (member buffer (all-buffer-names)))
+                     (with-current-buffer
+                      buffer
+                      (lambda ()
+                        (nth 1 (position-to-line-column
+                                (lsp--position position (get server 'unit))))))
+                     (map-elt position "character"))))
+    (list "file" (car place) line column)))
+
+(defun lsp--show-places (server what places)
+  "nil, after listing PLACES, the (FILE . POSITION) WHAT names, for M-g n to
+walk, and showing the list."
+  (let ((root (get server 'root))
+        (entries (mapcar (lambda (place) (lsp--entry-of server place)) places)))
+    (buffer-create lsp--locations-buffer 'lsp-locations-mode)
+    (with-current-buffer
+     lsp--locations-buffer
+     (lambda ()
+       (set-buffer-read-only nil)
+       (clear-buffer)
+       (insert "--- " (number-to-string (length entries)) " " what " ---\n")
+       (dolist (entry entries)
+         (let ((file (nth 1 entry)))
+           (insert (if (string-prefix-p root file) (substring file (length root)) file)
+                   ":" (number-to-string (nth 2 entry))
+                   ;; From 1, as a compiler writes it.
+                   ":" (number-to-string (+ (nth 3 entry) 1)) "\n")))
+       ;; Written by the list, not by you: nothing to save.
+       (set-buffer-modified-p nil)
+       (set-buffer-read-only t)
+       (results-put what root entries lsp--locations-buffer)))
+    (results-display lsp--locations-buffer lsp--locations-height t)
+    (goto-line 1))
+  nil)
+
+(defun lsp--found (server result what from)
+  "nil, after going to the one place RESULT gives, or listing them when more,
+or saying none was found; WHAT names them, FROM is (BUFFER . POINT)."
+  (let ((places (lsp--locations result)))
+    (cond ((null places) (message "No %s found" what))
+          ((null (cdr places)) (lsp--jump server (car places) from))
+          (t (lsp--show-places server what places))))
+  nil)
+
+(defun lsp--find (method provider what &optional context)
+  "nil, after asking the server of the current buffer METHOD at point, a
+question its capability PROVIDER says it answers with places; WHAT names
+them, CONTEXT is the request's context, if any."
+  (let ((server (lsp--server-here))
+        (from (cons (current-buffer) (point))))
+    (cond ((null server) (message "No language server for this buffer"))
+          ((not (eq (get server 'state) 'ready))
+           (message "%s is not ready" (lsp--label server)))
+          ((not (lsp--true-p (map-elt (get server 'capabilities) provider)))
+           (message "%s does not give %s" (lsp--label server) what))
+          (t
+           (let ((params (make-map "textDocument" (make-map "uri" (buffer-get 'lsp-uri))
+                                   "position" (lsp--position-at (point) (get server 'unit)))))
+             (lsp--request server method
+                           (if context (map-insert params "context" context) params)
+                           (lambda (server result) (lsp--found server result what from))
+                           :buffer (current-buffer) :timed t :replace t)))))
+  nil)
+
+;; ---------------------------------------------------------------------------
 ;; The mode and the commands
 ;; ---------------------------------------------------------------------------
 
@@ -945,6 +1073,46 @@ started at once when it is down, however often it fell."
           (t (put server 'restart t)
              (lsp--stop server)
              (message "Restarting %s" (lsp--label server))))))
+
+(defcommand lsp-find-definition () nil
+  "Go to the definition of what is at point, as the language server of this
+buffer says; with more than one, list them for M-g n. `lsp-go-back' returns."
+  (lsp--find "textDocument/definition" "definitionProvider" "definition"))
+
+(defcommand lsp-find-references () nil
+  "List the places that use what is at point, its declaration included, as
+the language server of this buffer says, for M-g n to walk."
+  (lsp--find "textDocument/references" "referencesProvider" "references"
+             (make-map "includeDeclaration" t)))
+
+(defcommand lsp-go-back () nil
+  "Go back to where the last `lsp-find-definition' went from."
+  (let ((from (car lsp--places)))
+    (setq lsp--places (cdr lsp--places))
+    (cond ((null from) (message "No place to go back to"))
+          ((not (member (car from) (all-buffer-names)))
+           (message "%s is closed" (car from)))
+          (t (switch-to-buffer (car from))
+             (goto-char (cdr from))))))
+
+(defcommand lsp-locations-goto () nil
+  "Go to the place on the cursor's line of a list the language server gave."
+  ;; Counted, not parsed: a path with a colon reads two ways.
+  (let ((index (- (line-number-at-point) 2)))
+    (if (and (>= index 0) (< index (or (results-count (current-buffer)) 0)))
+        (results-visit index (current-buffer))
+        (message "No place on this line"))))
+
+(define-key 'lsp-mode "M-." 'lsp-find-definition)
+(define-key 'lsp-mode "M-?" 'lsp-find-references)
+(define-key 'lsp-mode "M-," 'lsp-go-back)
+
+(define-key 'lsp-locations-mode "<ret>" 'lsp-locations-goto)
+(define-key 'lsp-locations-mode "n" 'next-line)
+(define-key 'lsp-locations-mode "p" 'previous-line)
+(define-key 'lsp-locations-mode "q" 'results-quit)
+
+(add-syntax-rule 'lsp-locations-mode "^--- .* ---$" 'comment)
 
 (add-hook 'lsp-mode "minor-mode-hook" 'lsp--toggled)
 (add-hook 'lsp-mode "after-save-hook" 'lsp--saved)
