@@ -139,14 +139,10 @@ mod setting_tests {
         env
     }
 
-    /// `1` followed by three hundred and nine zeros: larger than an `f64` can
-    /// hold, so the reader's own `parse` hands back infinity.
-    ///
-    /// Spelled out rather than written `1e309` because this reader has no
-    /// exponent notation -- `1e309` is read as a *symbol*, and a test using it
-    /// fails with `UnboundVariable` while appearing to be about durations.
+    /// A form that evaluates to infinity: the reader refuses a number too
+    /// large for an `f64`, so it is made by a product that overflows.
     fn too_large_for_a_float() -> String {
-        format!("1{}", "0".repeat(309))
+        "(* 1e308 10)".into()
     }
 
     /// Infinity, negative infinity and NaN are all numbers and none of them is
