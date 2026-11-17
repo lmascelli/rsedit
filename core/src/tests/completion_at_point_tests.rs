@@ -486,6 +486,141 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Offering later: `completion-offer'
+    // -----------------------------------------------------------------------
+
+    /// An editor whose `took` records what ON-CHOSEN was called with.
+    fn offering() -> (Ctx, Arc<Env<Ctx>>) {
+        let (ctx, env) = plain();
+        run(
+            "(setq *got* 'never) (defun took (item) (setq *got* item))",
+            &env,
+            &ctx,
+        );
+        (ctx, env)
+    }
+
+    #[test]
+    fn an_offered_candidate_alone_is_put_in_and_handed_to_on_chosen() {
+        let (ctx, env) = offering();
+        typed(&ctx, "ab");
+        assert_eq!(
+            run(
+                "(completion-offer 0 2 '((\"abcd\" . \"one\")) 'took)",
+                &env,
+                &ctx
+            ),
+            LispExp::t()
+        );
+        assert_eq!(contents(&ctx), "abcd");
+        assert_eq!(point(&ctx), 4);
+        assert_eq!(
+            run("(equal *got* '(\"abcd\" . \"one\"))", &env, &ctx),
+            LispExp::t(),
+            "ON-CHOSEN gets the candidate as offered, description and all"
+        );
+    }
+
+    #[test]
+    fn offered_candidates_are_matched_against_what_is_typed() {
+        let (ctx, env) = offering();
+        typed(&ctx, "ab");
+        run(
+            "(completion-offer 0 2 '(\"xyz\" \"abc\") 'took)",
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            contents(&ctx),
+            "abc",
+            "the one that matches is the one alone"
+        );
+        assert_eq!(run("*got*", &env, &ctx), LispExp::string("abc".into()));
+    }
+
+    #[test]
+    fn a_choice_among_offered_candidates_hands_the_chosen_one_to_on_chosen() {
+        let (ctx, env) = offering();
+        typed(&ctx, "ab");
+        run(
+            "(setq *seen* nil)\
+             (defun present (items choose) (setq *seen* items))\
+             (setq *completion-read-function* 'present)",
+            &env,
+            &ctx,
+        );
+        run(
+            "(completion-offer 0 2 '((\"abcd\" . \"one\") (\"abce\" . \"two\")) 'took)",
+            &env,
+            &ctx,
+        );
+        assert_eq!(strings(&run("*seen*", &env, &ctx)), vec!["abcd", "abce"]);
+        assert_eq!(run("*got*", &env, &ctx), LispExp::symbol("never".into()));
+
+        run("(completion-at-point-choose \"abce\")", &env, &ctx);
+        assert_eq!(contents(&ctx), "abce");
+        assert_eq!(
+            run("(equal *got* '(\"abce\" . \"two\"))", &env, &ctx),
+            LispExp::t()
+        );
+    }
+
+    #[test]
+    fn on_chosen_is_not_called_when_nothing_is_chosen() {
+        let (ctx, env) = offering();
+        typed(&ctx, "ab");
+        assert_eq!(
+            run(
+                "(completion-offer 0 2 '(\"abcd\" \"abce\") 'took)",
+                &env,
+                &ctx
+            ),
+            LispExp::nil()
+        );
+        assert_eq!(
+            contents(&ctx),
+            "abc",
+            "without a presenter, what they share"
+        );
+        assert_eq!(echo(&ctx), "2 completions");
+        run("(completion-offer 0 3 '(\"xyz\") 'took)", &env, &ctx);
+        assert_eq!(contents(&ctx), "abc");
+        assert_eq!(run("*got*", &env, &ctx), LispExp::symbol("never".into()));
+    }
+
+    #[test]
+    fn a_later_completion_does_not_call_the_on_chosen_of_an_earlier_offer() {
+        let (ctx, env) = offering();
+        typed(&ctx, "ab");
+        define_source(&env, &ctx, "capf-many", 0, 2, &["abcd", "abce"]);
+        use_sources(&env, &ctx, &["capf-many"]);
+        run(
+            "(defun present (items choose) nil) (setq *completion-read-function* 'present)",
+            &env,
+            &ctx,
+        );
+        run(
+            "(completion-offer 0 2 '(\"abx\" \"aby\") 'took)",
+            &env,
+            &ctx,
+        );
+        run("(completion-at-point)", &env, &ctx);
+        run("(completion-at-point-choose \"abce\")", &env, &ctx);
+        assert_eq!(contents(&ctx), "abce");
+        assert_eq!(run("*got*", &env, &ctx), LispExp::symbol("never".into()));
+    }
+
+    #[test]
+    fn completion_offer_refuses_text_that_is_not_in_the_buffer() {
+        let (ctx, env) = offering();
+        typed(&ctx, "ab");
+        assert!(eval_str("(completion-offer 0 9 '(\"abcd\"))", &env, &ctx).is_err());
+        assert!(eval_str("(completion-offer 2 1 '(\"abcd\"))", &env, &ctx).is_err());
+        assert!(eval_str("(completion-offer 0 2)", &env, &ctx).is_err());
+        assert_eq!(contents(&ctx), "ab");
+    }
+
+    // -----------------------------------------------------------------------
     // It is an edit like any other
     // -----------------------------------------------------------------------
 

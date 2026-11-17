@@ -6900,6 +6900,16 @@ più d'uno vanno al presentatore, `*completion-read-function*`, che chiama
 `completion-at-point-choose` con quello scelto, e senza un presentatore si mette
 quanto hanno in comune e se ne dice il numero.
 
+Ciò che viene dopo le fonti è una funzione sola, `offer`, e
+`completion-offer` la offre a chi ha i candidati più tardi, quando il comando
+è finito: una fonte non può aspettare una risposta che arriva tra un comando e
+l'altro. Le dà il testo e i candidati, e una funzione da chiamare con il
+candidato messo, così come è stato offerto. Con un candidato solo la chiama
+subito; con il presentatore la funzione e i candidati si aggiungono a
+`*completion-at-point-region*`, e `completion-at-point-choose`, dopo aver
+sostituito, cerca tra i candidati quello con il valore scelto e glielo passa.
+Che il buffer e il punto siano ancora quelli lo controlla chi chiama.
+
 Il presentatore può scegliere qualche tasto dopo, quando il comando che ha
 offerto è finito. Ciò che la scelta sostituisce sta quindi alla radice
 dell'ambiente, in `*completion-at-point-region*`, come `(START END LENGTH)`, con
@@ -7245,6 +7255,14 @@ dell'utente li descrive.
   errore. La fine segue ciò che si scrive nel frattempo, spostata della
   differenza di lunghezza del buffer: senza, scegliere `abce` dopo aver scritto
   `e` dietro `ab` lascerebbe `abcee`.
++ *Chi offre più tardi riceve il candidato offerto, non il testo messo.* Ciò
+  che serve dopo la scelta --- una modifica in più altrove nel buffer, un
+  dettaglio da mostrare --- è nella coppia `(VALUE . DESCRIPTION)` che si è
+  offerta, e il testo solo costringerebbe chi chiama a tenersi una tabella dai
+  valori alle voci. Il candidato si ritrova per valore perché il presentatore
+  risponde con il valore. Scartato: chiamare la funzione anche senza una
+  scelta, con nil: chi la scrive dovrebbe distinguere «niente» da «non
+  ancora».
 + *Il punteggio premia gli inizi di parola e i caratteri vicini.* Sono ciò che fa
   vincere un'abbreviazione delle parti su una dispersione casuale delle stesse
   lettere: `cap` è fatto degli inizi di `completion-at-point`. Il modello intero

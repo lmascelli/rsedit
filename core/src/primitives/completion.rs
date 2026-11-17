@@ -7,6 +7,7 @@ use super::*;
 use crate::editor::{COMPLETION_FILTER_FUNCTION, COMPLETION_READ_FUNCTION};
 use crate::primitives::edits::{delete_range, edited, insert_text};
 use risp::call_callable;
+use std::sync::Arc;
 
 /// Where the text being completed begins, while a presenter is handed the
 /// candidates, and only for that long. A presenter reads it once, as it
@@ -17,8 +18,9 @@ const START_VAR: &str = "*completion-at-point-start*";
 /// The text a choice replaces, between offering the candidates and hearing
 /// which was chosen: `(START END LENGTH)`, LENGTH being how long the buffer
 /// was when they were offered, so that END can follow what is typed in the
-/// meantime. Bound at the root: the choice comes keystrokes later, after the
-/// command that offered and its caller have returned.
+/// meantime, followed by `ON-CHOSEN CANDIDATES` when `completion-offer` was
+/// given a function to call. Bound at the root: the choice comes keystrokes
+/// later, after the command that offered and its caller have returned.
 const REGION_VAR: &str = "*completion-at-point-region*";
 
 /// Returns the text ITEM, a candidate, completes to: the string or symbol
@@ -329,7 +331,21 @@ primitive!(completion_at_point, _args, env, ctx, {
         ctx.set_echo_message("No completion source has anything here");
         return Ok(ELispExp::nil());
     };
+    offer(start, end, candidates, None, env.clone(), ctx)
+});
 
+/// Offers CANDIDATES for START to END of the current buffer: matches them
+/// against what is typed there, drops repeated values, and puts one in or
+/// hands several to the presenter. ON_CHOSEN, when given, is called with the
+/// candidate as offered once one has been put in.
+fn offer<B: BufferTrait>(
+    start: usize,
+    end: usize,
+    candidates: Vec<ELispExp<B>>,
+    on_chosen: Option<ELispExp<B>>,
+    env: Arc<Env<EditorState<B>>>,
+    ctx: &EditorState<B>,
+) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
     let pattern = text_between(ctx, start, end);
     let matching = match env.get_variable(COMPLETION_FILTER_FUNCTION) {
         Some(filter) if filter.is_truthy() => args::list(&call_callable(
@@ -367,6 +383,9 @@ primitive!(completion_at_point, _args, env, ctx, {
         }
         1 => {
             if replace_region(ctx, start, end, &values[0]) {
+                if let Some(on_chosen) = on_chosen {
+                    call_callable(&on_chosen, &[unique[0].clone()], env.clone(), ctx)?;
+                }
                 Ok(ELispExp::t())
             } else {
                 // Through the same reporter every refused edit goes through,
@@ -379,14 +398,16 @@ primitive!(completion_at_point, _args, env, ctx, {
                 && present.is_truthy()
             {
                 let length = ctx.with_current_buffer(|buf| buf.text.len());
-                env.set_root_variable(
-                    REGION_VAR.into(),
-                    ELispExp::proper_list(vec![
-                        ELispExp::number(start as f64),
-                        ELispExp::number(end as f64),
-                        ELispExp::number(length as f64),
-                    ]),
-                );
+                let mut recorded = vec![
+                    ELispExp::number(start as f64),
+                    ELispExp::number(end as f64),
+                    ELispExp::number(length as f64),
+                ];
+                if let Some(on_chosen) = on_chosen {
+                    recorded.push(on_chosen);
+                    recorded.push(ELispExp::proper_list(unique.clone()));
+                }
+                env.set_root_variable(REGION_VAR.into(), ELispExp::proper_list(recorded));
                 env.set_root_variable(START_VAR.into(), ELispExp::number(start as f64));
                 let presented = call_callable(
                     &present,
@@ -416,13 +437,57 @@ primitive!(completion_at_point, _args, env, ctx, {
             Ok(ELispExp::nil())
         }
     }
+}
+
+pub const COMPLETION_OFFER_DOC: &str = "(completion-offer START END CANDIDATES &optional \
+         ON-CHOSEN): Offer CANDIDATES for the text from START to END of the current buffer, as \
+         `completion-at-point' offers what its sources answer: matched against what is typed, \
+         one put in, several handed to `*completion-read-function*'. ON-CHOSEN is then called \
+         with the candidate put in, as offered. For a source that answers later; the caller \
+         checks that buffer and point are still the ones it asked about.\n\n\
+         Example:\n\
+         (completion-offer 0 2 '(\"abcd\" \"abce\") 'message)";
+
+primitive!(completion_offer, args, env, ctx, {
+    if !(3..=4).contains(&args.len()) {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: if args.len() < 3 { 3 } else { 4 },
+            got: args.len(),
+        });
+    }
+    let length = ctx.with_current_buffer(|buf| buf.text.len());
+    let within = |exp: &ELispExp<B>| position(exp).filter(|at| *at <= length);
+    let Some(start) = within(&args[0]) else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "a position in the current buffer".into(),
+            got: args[0].clone(),
+        });
+    };
+    let Some(end) = within(&args[1]).filter(|end| *end >= start) else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "a position in the current buffer, not before START".into(),
+            got: args[1].clone(),
+        });
+    };
+    let on_chosen = args.get(3).filter(|f| f.is_truthy()).cloned();
+    // A new offer, as in `completion_at_point': whatever the last one left
+    // describes nothing anybody is choosing for.
+    env.set_root_variable(REGION_VAR.into(), ELispExp::nil());
+    offer(
+        start,
+        end,
+        args::list(&args[2]),
+        on_chosen,
+        env.clone(),
+        ctx,
+    )
 });
 
 pub const COMPLETION_AT_POINT_CHOOSE_DOC: &str = "(completion-at-point-choose VALUE): Put VALUE \
-         in place of the text `completion-at-point' offered to complete, and of what has been \
-         typed into it since. Return VALUE, or nil when no completion is in progress. The \
-         function `*completion-read-function*' is given to call with the candidate chosen in a \
-         buffer.";
+         in place of the text `completion-at-point' or `completion-offer' offered to complete, \
+         and of what has been typed into it since, then call the function given to \
+         `completion-offer', if any. Return VALUE, or nil when no completion is in progress. \
+         `*completion-read-function*' is given it to call with the candidate chosen in a buffer.";
 
 primitive!(completion_at_point_choose, args, env, ctx, {
     let Some(value) = args.first().and_then(candidate_value) else {
@@ -452,7 +517,20 @@ primitive!(completion_at_point_choose, args, env, ctx, {
     if !replace_region(ctx, start, end, &value) {
         return Ok(edited(ctx, false));
     }
+    // Consumed before ON-CHOSEN runs, so that it may offer again.
     env.set_root_variable(REGION_VAR.into(), ELispExp::nil());
+    if let Some(on_chosen) = region.get(3).filter(|f| f.is_truthy()) {
+        // The candidate as offered, description and all, when the presenter
+        // answered with one of them; what it answered otherwise.
+        let offered = region
+            .get(4)
+            .map(args::list)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|item| candidate_value(item).as_deref() == Some(value.as_str()))
+            .unwrap_or_else(|| args[0].clone());
+        call_callable(on_chosen, &[offered], env.clone(), ctx)?;
+    }
     Ok(args[0].clone())
 });
 
@@ -468,6 +546,7 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         &[],
         COMPLETION_AT_POINT_DOC,
     );
+    into.function("completion-offer", completion_offer, COMPLETION_OFFER_DOC);
     into.function(
         "completion-at-point-choose",
         completion_at_point_choose,

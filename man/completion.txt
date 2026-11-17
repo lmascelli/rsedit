@@ -11,6 +11,7 @@ SYNOPSIS
     (all-commands)
     (completion-at-point)
     (completion-at-point-choose VALUE)
+    (completion-offer START END CANDIDATES &optional ON-CHOSEN)
     (add-completion-function MODE FUNCTION)
     (set-completion-functions MODE FUNCTIONS)
     (completion-functions &optional MODE)
@@ -127,6 +128,24 @@ WRITING A SOURCE
     the word is. `add-completion-function' adds one, for a mode or for every
     buffer.
 
+OFFERING CANDIDATES LATER
+    A source answers at once, inside C-M-i. Candidates that come later --
+    from a program that answers between keys, or a search that takes a
+    while -- are offered with `completion-offer': START and END are the
+    text they would replace in the current buffer, CANDIDATES the same
+    list a source returns. They are matched against what is typed and
+    treated as C-M-i treats what its sources offer: one is put in at once,
+    several open the strip. Positions outside the buffer are an error.
+
+    ON-CHOSEN, when given, is called with the candidate that was put in,
+    as it was offered, (VALUE . DESCRIPTION) pair and all: one put in at
+    once, or the one taken from the strip. It is not called when nothing
+    is chosen -- no match, the strip put away, or no strip and only what
+    the candidates share put in -- nor once a newer completion has
+    started. The buffer and the cursor may have moved on by the time the
+    candidates arrive: checking that they are still the ones asked about
+    is up to whoever calls.
+
 REPLACING THE STRIP
     The strip is the completion module. Without it, Tab at a prompt puts the
     first candidate in, and each Tab after it the next one.
@@ -166,6 +185,16 @@ EXAMPLES
                 (list (nth 0 bounds) (nth 1 bounds)
                       '("crimson" "cyan" "cornflower")))))
         (add-completion-function nil 'capf-colours)
+
+    Offer two candidates for the word at the cursor, and say which one
+    was taken:
+
+        (let ((bounds (bounds-of-thing-at-point)))
+          (if bounds
+              (completion-offer (nth 0 bounds) (nth 1 bounds)
+                                '(("crimson" . "red") ("cyan" . "blue"))
+                                (lambda (item)
+                                  (message (completion-description item))))))
 
     Match from the start, as the editor does without the module:
 
