@@ -192,11 +192,49 @@ fn minor_and_buffer<B: BufferTrait>(
 
 pub const MINOR_MODE_ON_DOC: &str = "(minor-mode-on MODE &optional BUFFER): Turn the minor mode \
          MODE on in BUFFER, the current one by default, and run its \"minor-mode-hook\" there. \
-         Return t, or nil when it was on already.";
+         Return t, or nil when it was on already or BUFFER's role does not admit it, which \
+         `minor-mode-refusal' explains.";
 
 primitive!(minor_mode_on, args, env, ctx, {
     let (minor, buffer) = minor_and_buffer(args, ctx)?;
-    Ok(ELispExp::boolean(ctx.minor_mode_on(&buffer, &minor, &env)))
+    Ok(ELispExp::boolean(
+        ctx.minor_mode_on(&buffer, &minor, &env).turned_on(),
+    ))
+});
+
+pub const MINOR_MODE_REFUSAL_DOC: &str = "(minor-mode-refusal MODE &optional BUFFER): Return \
+         nil when the role of BUFFER, the current one by default, admits the minor mode MODE, \
+         and otherwise a sentence that says why it does not: what `minor-mode-on' would refuse. \
+         Whether MODE is on already does not matter.\n\n\
+         Example:\n\
+         (minor-mode-refusal 'hl-line-mode)";
+
+primitive!(minor_mode_refusal, args, _env, ctx, {
+    let (minor, buffer) = minor_and_buffer(args, ctx)?;
+    Ok(ctx
+        .minor_mode_refusal(&buffer, &minor)
+        .map_or_else(ELispExp::nil, |refusal| ELispExp::string(refusal.reason())))
+});
+
+pub const BUFFER_ROLE_DOC: &str = "(buffer-role &optional BUFFER): Return what BUFFER, the \
+         current one by default, is for, as a symbol: editing, prompt, completion, view or \
+         document-view. A buffer's role is given when it is made and never changes; it decides \
+         which minor modes the buffer admits. nil when there is no such buffer.";
+
+primitive!(buffer_role, args, _env, ctx, {
+    if args.len() > 1 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    let buffer = match args.first() {
+        Some(ELispExp::String(name)) if !name.is_empty() => name.to_string(),
+        _ => ctx.get_current_buffer_name(),
+    };
+    Ok(ctx
+        .with_buffer(&buffer, |buf| buf.role())
+        .map_or_else(ELispExp::nil, |role| ELispExp::symbol(role.name().into())))
 });
 
 pub const MINOR_MODE_OFF_DOC: &str = "(minor-mode-off MODE &optional BUFFER): Turn the minor \
@@ -299,6 +337,12 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.function("make-minor-mode", make_minor_mode, MAKE_MINOR_MODE_DOC);
     into.function("minor-mode-on", minor_mode_on, MINOR_MODE_ON_DOC);
     into.function("minor-mode-off", minor_mode_off, MINOR_MODE_OFF_DOC);
+    into.function(
+        "minor-mode-refusal",
+        minor_mode_refusal,
+        MINOR_MODE_REFUSAL_DOC,
+    );
+    into.function("buffer-role", buffer_role, BUFFER_ROLE_DOC);
     into.function("minor-mode-p", minor_mode_p, MINOR_MODE_P_DOC);
     into.function("minor-modes", minor_modes, MINOR_MODES_DOC);
     into.function(

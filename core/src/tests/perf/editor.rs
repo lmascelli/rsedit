@@ -442,35 +442,11 @@ fn layout(report: &mut Report) {
     let mut buffers = Buffers::default();
     for id in 1..=4 {
         let name = format!("buf{id}");
-        buffers.insert(
-            &name.clone(),
-            Buffer {
-                text: GapBuffer::from("some buffer content\n"),
-                name,
-                current_mode: "fundamental".into(),
-                file_path: None,
-                directory: None,
-                coding: Default::default(),
-                is_modified: false,
-                undo: Default::default(),
-                mark: None,
-                overlays: Default::default(),
-                virtual_text: Default::default(),
-                markers: Default::default(),
-                touched: Default::default(),
-                version: 0,
-                scan: Default::default(),
-                syntax: Default::default(),
-                file_stamp: None,
-                stale: false,
-                auto_saved_at: None,
-                auto_save_failing: false,
-                data: Default::default(),
-                changed: Default::default(),
-                writer: None,
-                minor_modes: Vec::new(),
-            },
-        );
+        buffers.insert(&name.clone(), {
+            let mut buf = Buffer::<GapBuffer>::from_text(&name, "some buffer content\n");
+            buf.current_mode = "fundamental".into();
+            buf
+        });
     }
 
     let screen = Rect {

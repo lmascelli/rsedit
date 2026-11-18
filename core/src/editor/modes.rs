@@ -5,10 +5,33 @@
 //! Design: `doc/architettura-editor.typ, <coppie>`.
 
 use super::*;
+use crate::buffer::BufferRole;
+use crate::managers::{Admission, PolicyOrigin, Refusal};
 
 /// The hook a minor mode runs, with the buffer current, each time it is
 /// turned on or off there.
 pub(crate) const MINOR_MODE_HOOK: &str = "minor-mode-hook";
+
+/// What asking for a minor mode in a buffer came to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum MinorModeOn {
+    /// Turned on, and its hook run.
+    TurnedOn,
+    /// On already: nothing done.
+    AlreadyOn,
+    /// The buffer's role does not admit it: nothing done, and why.
+    Refused(Refusal),
+    /// No such buffer, or no such minor mode.
+    Missing,
+}
+
+impl MinorModeOn {
+    /// Returns whether the mode came on now: what `minor-mode-on` answers t
+    /// for.
+    pub(crate) fn turned_on(&self) -> bool {
+        *self == MinorModeOn::TurnedOn
+    }
+}
 
 impl<B: BufferTrait> EditorState<B> {
     /// Makes MODE the major mode of the buffer NAME, keeping what the buffer
@@ -44,18 +67,43 @@ impl<B: BufferTrait> EditorState<B> {
     // ------------------------------------------------------------------
 
     /// Turns the minor mode MINOR on in the buffer NAME, last of those on, and
-    /// runs its `minor-mode-hook` with NAME current. Returns false, doing
-    /// nothing, when MINOR is on there already, or NAME or MINOR is not
-    /// there.
+    /// runs its `minor-mode-hook` with NAME current, once every lock is given
+    /// back. Does nothing, and says why, when MINOR is on there already, when
+    /// the buffer's role does not admit it -- the one place that is asked, for
+    /// a command, a rule of `minor-mode-enable` and a global mode alike -- or
+    /// when NAME or MINOR is not there.
     pub(crate) fn minor_mode_on(
         &self,
         name: &str,
         minor: &str,
         env: &Arc<Env<EditorState<B>>>,
-    ) -> bool {
-        let Some(lighter) = self.modes(|modes| modes.lighter_of(minor)) else {
-            return false;
+    ) -> MinorModeOn {
+        // The buffer's lock and the registry's one after the other, never one
+        // inside the other: the role does not change, so reading it first
+        // cannot go out of date.
+        let Some((role, on)) =
+            self.with_buffer(name, |buf| (buf.role(), buf.minor_mode_enabled(minor)))
+        else {
+            return MinorModeOn::Missing;
         };
+        let Some((lighter, decision)) = self.modes(|modes| {
+            modes
+                .lighter_of(minor)
+                .map(|lighter| (lighter, modes.minor_decision(role, minor)))
+        }) else {
+            return MinorModeOn::Missing;
+        };
+        if on {
+            return MinorModeOn::AlreadyOn;
+        }
+        if !decision.admitted {
+            return MinorModeOn::Refused(Refusal {
+                minor: minor.to_string(),
+                buffer: name.to_string(),
+                role,
+                by: decision.by,
+            });
+        }
         let turned = self.with_buffer_mut(name, |buf| {
             if buf.minor_modes.iter().any(|on| on.name == minor) {
                 return false;
@@ -66,11 +114,62 @@ impl<B: BufferTrait> EditorState<B> {
             });
             true
         });
-        if turned == Some(true) {
-            self.run_minor_mode_hook(name, minor, env);
-            return true;
+        match turned {
+            Some(true) => {
+                self.run_minor_mode_hook(name, minor, env);
+                MinorModeOn::TurnedOn
+            }
+            Some(false) => MinorModeOn::AlreadyOn,
+            None => MinorModeOn::Missing,
         }
-        false
+    }
+
+    /// Returns why the buffer NAME would not admit the minor mode MINOR, or
+    /// `None` when it would, or there is no such buffer: what
+    /// [`Self::minor_mode_on`] asks, for a caller that wants to know before
+    /// asking for it, or to say why.
+    pub(crate) fn minor_mode_refusal(&self, name: &str, minor: &str) -> Option<Refusal> {
+        let role = self.with_buffer(name, |buf| buf.role())?;
+        let decision = self.modes(|modes| modes.minor_decision(role, minor));
+        (!decision.admitted).then(|| Refusal {
+            minor: minor.to_string(),
+            buffer: name.to_string(),
+            role,
+            by: decision.by,
+        })
+    }
+
+    /// Makes ORIGIN say RULE of the minor mode MINOR in the buffers of ROLE,
+    /// or nothing when RULE is `None`, and returns whether that changed
+    /// anything. A permit counts from the next time MINOR is asked for; where
+    /// MINOR is on and is no longer admitted -- in ROLE or in a role that
+    /// derives from it -- it is turned off, with its `minor-mode-hook` run as
+    /// for any other way off.
+    ///
+    /// Not reached from Lisp yet: the tests are its only callers for now.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn set_minor_policy(
+        &self,
+        role: BufferRole,
+        minor: &str,
+        origin: PolicyOrigin,
+        rule: Option<Admission>,
+        env: &Arc<Env<EditorState<B>>>,
+    ) -> bool {
+        let changed = self.modes_mut(|modes| match rule {
+            Some(admission) => modes.set_minor_policy(role, minor, origin, admission),
+            None => modes.clear_minor_policy(role, minor, origin),
+        });
+        if !changed {
+            return false;
+        }
+        for name in self.buffer_names() {
+            let on = self.with_buffer(&name, |buf| buf.minor_mode_enabled(minor));
+            if on == Some(true) && self.minor_mode_refusal(&name, minor).is_some() {
+                self.minor_mode_off(&name, minor, env);
+            }
+        }
+        true
     }
 
     /// Turns the minor mode MINOR off in the buffer NAME, and runs its
@@ -104,13 +203,15 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// Turns on in the buffer NAME every minor mode `minor-mode-enable` asks
-    /// for in its major mode.
+    /// for in its major mode and the buffer's role admits. One the role keeps
+    /// out is passed over without a word: nobody asked for it in this buffer.
     pub(crate) fn apply_minor_rules(&self, name: &str, env: &Arc<Env<EditorState<B>>>) {
         let Some(major) = self.with_buffer(name, |buf| buf.current_mode.clone()) else {
             return;
         };
         for minor in self.modes(|modes| modes.minors_for(&major)) {
-            self.minor_mode_on(name, &minor, env);
+            // Refused or on already, it is all the same here.
+            let _ = self.minor_mode_on(name, &minor, env);
         }
     }
 

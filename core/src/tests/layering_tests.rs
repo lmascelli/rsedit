@@ -85,6 +85,10 @@ mod tests {
         ("managers/loader.rs", include_str!("../managers/loader.rs")),
         ("managers/log.rs", include_str!("../managers/log.rs")),
         ("managers/macros.rs", include_str!("../managers/macros.rs")),
+        (
+            "managers/minor_policies.rs",
+            include_str!("../managers/minor_policies.rs"),
+        ),
         ("managers/modes.rs", include_str!("../managers/modes.rs")),
         (
             "managers/runtime.rs",
@@ -113,6 +117,7 @@ mod tests {
         ("buffer/mark.rs", include_str!("../buffer/mark.rs")),
         ("buffer/markers.rs", include_str!("../buffer/markers.rs")),
         ("buffer/overlay.rs", include_str!("../buffer/overlay.rs")),
+        ("buffer/role.rs", include_str!("../buffer/role.rs")),
         ("buffer/scan.rs", include_str!("../buffer/scan.rs")),
         ("buffer/syntax.rs", include_str!("../buffer/syntax.rs")),
         ("buffer/touched.rs", include_str!("../buffer/touched.rs")),

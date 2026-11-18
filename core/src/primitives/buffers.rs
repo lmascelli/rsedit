@@ -80,7 +80,8 @@ primitive!(read_only_mode, args, env, ctx, {
     };
     let mode = crate::buffer::READ_ONLY_MODE;
     if wanted {
-        ctx.minor_mode_on(&buffer, mode, &env);
+        // Every role admits it: see `MinorPolicies::decide`.
+        let _ = ctx.minor_mode_on(&buffer, mode, &env);
     } else {
         ctx.minor_mode_off(&buffer, mode, &env);
     }

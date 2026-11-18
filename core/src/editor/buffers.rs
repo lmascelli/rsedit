@@ -5,6 +5,7 @@
 //! Design: `doc/architettura-editor.typ, <coppie>`.
 
 use super::*;
+use crate::buffer::BufferRole;
 
 impl<B: BufferTrait> EditorState<B> {
     /// Makes a buffer NAME in START_MODE: empty, or holding the text of the
@@ -19,10 +20,24 @@ impl<B: BufferTrait> EditorState<B> {
         start_mode: Option<String>,
         env: &Arc<Env<EditorState<B>>>,
     ) -> Option<String> {
+        self.new_buffer_as(name, path, start_mode, BufferRole::Editing, env)
+    }
+
+    /// Makes the buffer NAME as [`Self::new_buffer`] does, for ROLE: given
+    /// before the buffer joins the table, so that its first hook already
+    /// runs in it, and kept for the buffer's whole life.
+    pub(crate) fn new_buffer_as(
+        &self,
+        name: &str,
+        path: Option<&str>,
+        start_mode: Option<String>,
+        role: BufferRole,
+        env: &Arc<Env<EditorState<B>>>,
+    ) -> Option<String> {
         if let Some(file_path) = path {
             match crate::buffer::coding::read_stable(file_path) {
                 Ok((content, coding, stamp)) => {
-                    let mut new_buf = Buffer::from_text(name, &content);
+                    let mut new_buf = Buffer::from_text(name, &content).with_role(role);
                     new_buf.coding = coding;
                     // A mode asked for wins; otherwise the file's name decides,
                     // which is how a language's mode is ever chosen.
@@ -58,7 +73,7 @@ impl<B: BufferTrait> EditorState<B> {
                 }
             }
         } else {
-            let mut new_buf = Buffer::new(name);
+            let mut new_buf = Buffer::new(name).with_role(role);
             if let Some(mode_name) = start_mode {
                 new_buf.current_mode = mode_name;
             }

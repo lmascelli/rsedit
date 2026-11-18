@@ -14,6 +14,7 @@ mod kill_yank;
 mod loader;
 mod log;
 mod macros;
+mod minor_policies;
 mod modes;
 mod runtime;
 mod visits;
@@ -29,6 +30,9 @@ pub use kill_yank::KillYank;
 pub use loader::{FeatureState, Loader, Plugin};
 pub use log::Log;
 pub use macros::Macros;
+pub use minor_policies::{Admission, PolicyOrigin, Refusal};
+#[cfg(test)]
+pub(crate) use minor_policies::{DecidedBy, MinorPolicies};
 pub use modes::{Binding, BindingSource, Modes};
 pub use runtime::Runtime;
 #[cfg(test)]

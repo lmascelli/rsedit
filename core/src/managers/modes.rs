@@ -4,9 +4,10 @@
 //! file-name patterns. Every accessor copies Lisp out.
 //!
 //! Design: `doc/architettura-editor.typ, <compartimenti>`.
+use super::minor_policies::{Admission, Decision, MinorPolicies, PolicyOrigin};
 use crate::{
     ELispExp,
-    buffer::BufferTrait,
+    buffer::{BufferRole, BufferTrait},
     input::{KeyEvent, Keymap, OnUnbound, TransientKeymap, describe_keys},
     modes::{MajorMode, SyntaxTable},
 };
@@ -91,6 +92,8 @@ pub struct Modes<B: BufferTrait> {
     /// or `None` for every one, and the minor mode, in the order they were
     /// asked for.
     minor_rules: Vec<(Option<String>, String)>,
+    /// Which minor modes each buffer role admits.
+    policies: MinorPolicies,
 }
 
 impl<B: BufferTrait> Modes<B> {
@@ -105,6 +108,7 @@ impl<B: BufferTrait> Modes<B> {
             repeat_keys: HashMap::new(),
             global_hooks: HashMap::new(),
             minor_rules: Vec::new(),
+            policies: MinorPolicies::default(),
         }
     }
 
@@ -224,6 +228,51 @@ impl<B: BufferTrait> Modes<B> {
             }
         }
         minors
+    }
+
+    // ------------------------------------------------------------------
+    // What each role admits
+    // ------------------------------------------------------------------
+
+    /// Returns whether a buffer of ROLE admits the minor mode MINOR, and why:
+    /// see [`MinorPolicies::decide`].
+    pub fn minor_decision(&self, role: BufferRole, minor: &str) -> Decision {
+        self.policies.decide(role, minor)
+    }
+
+    /// Records that ORIGIN says ADMISSION of MINOR in ROLE; returns whether
+    /// that changed anything. The buffers it now keeps MINOR out of are the
+    /// caller's: see `EditorState::set_minor_policy`.
+    pub fn set_minor_policy(
+        &mut self,
+        role: BufferRole,
+        minor: &str,
+        origin: PolicyOrigin,
+        admission: Admission,
+    ) -> bool {
+        self.policies.set(role, minor, origin, admission)
+    }
+
+    /// Forgets what ORIGIN said of MINOR in ROLE; returns whether it had
+    /// said anything.
+    pub fn clear_minor_policy(
+        &mut self,
+        role: BufferRole,
+        minor: &str,
+        origin: PolicyOrigin,
+    ) -> bool {
+        self.policies.clear(role, minor, origin)
+    }
+
+    /// Returns what ORIGIN says of MINOR in ROLE itself, nothing inherited.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn minor_policy(
+        &self,
+        role: BufferRole,
+        minor: &str,
+        origin: PolicyOrigin,
+    ) -> Option<Admission> {
+        self.policies.rule(role, minor, origin)
     }
 
     /// Returns MODE's own keymap, when it has one.

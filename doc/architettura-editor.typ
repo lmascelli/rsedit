@@ -3700,6 +3700,43 @@ Le decisioni:
   fa, il modo non c'è e non è acceso in nessun buffer: il nucleo da solo non
   disegna coppie né spazi, e non pulisce.
 
+== I ruoli dei buffer <ruoli>
+
+Un buffer ha, oltre al modo maggiore, un ruolo (`buffer/role.rs`,
+`BufferRole`): `editing`, `prompt`, `completion`, `view` e `document-view`,
+che deriva da `view`. Il ruolo è indipendente dal modo maggiore: lo si dà con
+`Buffer::with_role`, che prende il buffer per valore e quindi solo prima che
+entri nella tabella, cioè prima di ogni suo hook (`new_buffer_as`), e resta
+lo stesso per tutta la vita del buffer. Il campo è privato; `buffer-role` lo
+legge.
+
+Il ruolo decide quali modi minori il buffer ammette. Le regole stanno in
+`Modes`, nel registro `MinorPolicies` (`managers/minor_policies.rs`): per
+ogni coppia (ruolo, modo minore) una regola distribuita e una dell'utente,
+ognuna `Permit` o `Revoke`.
+
+#ref-table(
+  columns: (3.8cm, 1fr),
+  header: ([Dove conta], [Come]),
+  [La risposta], [`MinorPolicies::decide` cerca la regola nel ruolo e poi in quelli da cui deriva (`BufferRole::lineage`): vince il ruolo più vicino che ne ha una, e in quel ruolo la regola dell'utente su quella distribuita. Senza regole decide la radice: `editing` è aperto, gli altri ammettono solo ciò che è permesso. `read-only-mode` è sempre ammesso (`DecidedBy::Core`).],
+  [Il controllo], [Solo `EditorState::minor_mode_on`, che legge il ruolo sotto il lock del buffer e poi, rilasciato, la decisione sotto quello di `modes`, e risponde con `MinorModeOn`: `TurnedOn`, `AlreadyOn`, `Refused(Refusal)` o `Missing`. La primitiva `minor-mode-on` risponde ancora `t` o `nil`; `minor-mode-refusal` dà il motivo.],
+  [Le richieste automatiche], [`apply_minor_rules` passa oltre un rifiuto senza messaggi, in `initialize_buffer` e in `change_major_mode`. `define-globalized-minor-mode` chiede `minor-mode-refusal` prima di TURN-ON, nei buffer aperti (`NOME--apply`) e in quelli nuovi (`NOME--enter-buffer`); lo spegnimento globale resta in tutti i buffer.],
+  [I comandi], [Il comando di `define-minor-mode`, se il ruolo rifiuta, scrive il motivo nell'area dell'eco e salta il corpo; spegnere non è mai rifiutato.],
+  [Permessi e revoche], [`EditorState::set_minor_policy` cambia il registro e poi, senza lock, spegne con `minor_mode_off`, e quindi con il suo hook, il modo dove è acceso e non è più ammesso. Un permesso non accende nulla: vale dalla richiesta successiva.],
+)
+
+Le decisioni:
+
++ *Un solo punto di controllo.* Comando, regola e modo globale passano tutti
+  da `minor_mode_on`, così non possono rispondere in modo diverso. Il
+  controllo in Lisp prima di TURN-ON serve solo a non chiamarlo, perché
+  TURN-ON può usare il comando del modo, che parlerebbe.
++ *Il ruolo letto prima, fuori dal lock del registro.* Il ruolo non cambia,
+  quindi leggerlo prima della decisione non lo rende vecchio, e i due lock
+  non si annidano (@ordine-lock).
++ *`read-only-mode` fuori dalle regole.* Protegge il buffer e non è una
+  funzione del buffer: una vista lo deve poter avere senza permessi.
+
 == Due lessici sullo stesso testo <lessici>
 
 Il testo di un buffer viene letto in due modi diversi, per due domande diverse.

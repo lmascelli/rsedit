@@ -55,3 +55,97 @@ Comandi di testo
 - [ ] Altri linguaggi: Markdown, JSON, YAML, Zig, MATLAB.
 - [ ] Mouse support. Right click menu
 - [ ] GUI e TUI top menubar
+
+------------------------------------------------------------
+
+
+PROMPT 0 — CONTRATTO COMUNE
+
+Implementa i ruoli dei buffer in rsedit. Esegui una fase per volta.
+Un ruolo è indipendente dal major mode, si assegna prima degli hook
+e resta fisso per la vita del buffer. I ruoli iniziali sono editing
+(aperto ai modi minori), prompt, completion e view (opt-in).
+document-view deriva da view e serve per le viste testuali di lettura.
+
+Usa la regola più vicina nella gerarchia. A parità di ruolo la
+configurazione utente prevale sul valore distribuito. Un permesso
+rende il modo ammissibile alla prossima richiesta. Una revoca spegne
+le istanze diventate incompatibili con il normale hook di uscita.
+
+Mantieni le chiamate Lisp posizionali esistenti, la sola lettura del
+core, la precedenza delle keymap e lo spegnimento globale attuale.
+Lavora in locale. A fine fase riporta modifiche essenziali, test ed
+eventuali decisioni aperte. Attendi il numero della fase.
+
+PROMPT 1 — REGISTRO E CONTROLLO CENTRALE
+
+Aggiungi il ruolo a Buffer e il registro delle politiche a Modes.
+Applica la stessa politica in EditorState::minor_mode_on, nelle
+regole automatiche e prima dei TURN-ON della macro globale, sia
+sui buffer aperti sia negli hook dei buffer futuri.
+
+Mantieni il ritorno t/nil della primitiva Lisp minor-mode-on.
+Distingui internamente il rifiuto da “già attivo”. Su rifiuto,
+define-minor-mode spiega il motivo e salta il corpo. Le richieste
+automatiche saltano il buffer senza messaggi. Esegui gli hook fuori
+dai lock. Verifica questi percorsi anche al cambio del major mode.
+
+PROMPT 2 — API DI CREAZIONE E MIGRAZIONE DEI BUFFER
+
+Aggiungi forme a keyword alle API di creazione, con :role e :mode
+dove pertinenti. Preserva le forme posizionali. Valida prima di
+creare buffer, finestre o stato del prompt. Se buffer-create trova
+un buffer esistente, un ruolo esplicito incompatibile è un errore.
+
+Assegna i ruoli nei costruttori, anche per questi modi esistenti:
+- editing: file, scratch, buffer ordinari e REPL Risp.
+- prompt: minibuffer normale e flottante, anche con isearch-mode
+  o altri major mode forniti dal chiamante.
+- completion: la lista dei candidati, anche per completion-at-point.
+- document-view: help-mode e manpage-mode.
+- view: Dired, buffer-list, theme-list, findings-list, risultati
+  Occur/Grep, compilazione, output shell, log e locations LSP,
+  Messages e Backtrace.
+
+Permetti minibuffer-read PROMPT ON-CONFIRM :role ROLE con prompt
+o un suo derivato nei reader distribuiti. Mantieni il protocollo
+posizionale dei reader personalizzati. Se un reader non può onorare
+un ruolo esplicito, segnala l’errore prima di aprire il prompt.
+Verifica il ruolo effettivo attraverso i normali punti d’ingresso.
+
+PROMPT 3 — ADATTAMENTO DEI MODI DISTRIBUITI
+
+Rimuovi l’esclusione per completion-mode in visual-line.lisp.
+Sposta il movimento visivo nei comandi usati dai binding ordinari.
+Archi, C-p/C-n, Home/End e C-a/C-e devono scegliere il movimento
+visivo quando il contesto usa i binding ordinari. Mantieni logici
+i comandi Lisp esistenti come next-line e lascia prevalere i binding
+di cronologia e selezione. Correggi “Archi” in “Frecce” se copi testo
+nei manuali.
+
+Ammetti show-paren-mode in prompt e visual-line-mode in document-view
+come scelte distribuite. Gli altri modi ordinari ereditano editing,
+inclusi electric-indent, electric-pair, whitespace, auto-revert,
+findings, hl-line, numeri di riga, fill, overwrite, subword e LSP.
+Mantieni i controlli LSP già presenti sul file e sul server.
+
+Adatta Vim nel suo percorso di attivazione. Usa editing come ambito
+automatico, conservando i filtri utente come restrizioni aggiuntive.
+Mantieni l’attivazione manuale nelle viste e impedisci che Vim installi
+la sua keymap in prompt o completion.
+
+PROMPT 4 — CONFIGURAZIONE, MANUALE E TEST
+
+Esponi define-buffer-role NAME :parent ROLE,
+set-minor-mode-policy MODE POLICY :role ROLE, buffer-role e
+minor-mode-allowed-p. POLICY accetta allow, deny e inherit.
+La ridefinizione identica di un ruolo è idempotente. Rifiuta genitori
+o modi sconosciuti, ridefinizioni incompatibili e keyword duplicate
+prima di qualsiasi modifica. Documenta l’esempio log-view.
+
+Prova M-x via eventi di tastiera, con wrapping globale acceso, nel
+prompt normale e flottante. Verifica cronologia con frecce e C-p/C-n,
+navigazione nella lista aperta e ritorno alla cronologia alla chiusura.
+Copri storia dei reader legacy, isearch, ruoli derivati, revoca su un
+modo attivo, Vim e movimento logico/visivo in editing. Esegui
+cargo test --locked -p rsedit_core e riporta il risultato.

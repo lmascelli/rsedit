@@ -5,6 +5,7 @@ mod balance_point_tests;
 mod buffer_conformance_tests;
 mod buffer_data_tests;
 mod buffer_list_tests;
+mod buffer_role_tests;
 mod bug_fix_tests;
 mod cell_tests;
 mod char_quote_tests;

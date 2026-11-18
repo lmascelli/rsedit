@@ -85,6 +85,8 @@ pub(crate) use directory::{DirectoryScope, scoped_directory};
 pub(crate) use frame::TURN_INTERVAL;
 pub use keys::KEY_CAPTURE_FUNCTION;
 pub(crate) use loader::MODULE_KINDS;
+#[cfg(test)]
+pub(crate) use modes::MinorModeOn;
 pub(crate) use replace::REPLACE_QUESTION;
 pub(crate) use runtime::ChildProcess;
 pub use settings::*;

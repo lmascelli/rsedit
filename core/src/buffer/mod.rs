@@ -12,6 +12,7 @@ pub(crate) mod io_status;
 pub mod mark;
 pub mod markers;
 pub mod overlay;
+pub mod role;
 pub mod scan;
 pub mod syntax;
 pub mod touched;
@@ -24,6 +25,7 @@ pub use disk::{FileStamp, OnDisk};
 pub use mark::Mark;
 pub use markers::Markers;
 pub use overlay::OverlayTable;
+pub use role::BufferRole;
 pub use touched::Watchers;
 pub use undo::UndoHistory;
 pub use virtual_text::VirtualTextTable;
@@ -129,6 +131,10 @@ pub struct Buffer<B: BufferTrait> {
     pub writer: Option<WorkId>,
     /// The minor modes on in this buffer, in the order they were turned on.
     pub minor_modes: Vec<ActiveMinor>,
+    /// What this buffer is for: given with [`Buffer::with_role`] before the
+    /// buffer joins the table, and read with [`Buffer::role`]. Private, so
+    /// that nothing changes it once the buffer is behind its lock.
+    role: BufferRole,
 }
 
 /// The name of the minor mode a buffer that refuses to have its text changed
@@ -190,6 +196,18 @@ impl<B: BufferTrait> Buffer<B> {
         result
     }
 
+    /// Returns what this buffer is for. The same for the buffer's whole life.
+    pub fn role(&self) -> BufferRole {
+        self.role
+    }
+
+    /// Returns this buffer with the role ROLE: taken by value, so that a role
+    /// is given only to a buffer not yet in the table, before its hooks run.
+    pub fn with_role(mut self, role: BufferRole) -> Self {
+        self.role = role;
+        self
+    }
+
     /// Creates an empty buffer called NAME, in `fundamental-mode`.
     pub fn new(name: &str) -> Self {
         Self {
@@ -217,6 +235,7 @@ impl<B: BufferTrait> Buffer<B> {
             changed: Topic::detached(),
             writer: None,
             minor_modes: Vec::new(),
+            role: BufferRole::Editing,
         }
     }
 
@@ -326,6 +345,7 @@ impl<B: BufferTrait> Buffer<B> {
             changed: Topic::detached(),
             writer: None,
             minor_modes: Vec::new(),
+            role: BufferRole::Editing,
         }
     }
 }

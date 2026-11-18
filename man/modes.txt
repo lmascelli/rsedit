@@ -11,6 +11,8 @@ SYNOPSIS
     (minor-mode-on MODE &optional BUFFER)
     (minor-mode-off MODE &optional BUFFER)
     (minor-mode-p MODE &optional BUFFER)
+    (minor-mode-refusal MODE &optional BUFFER)
+    (buffer-role &optional BUFFER)
     (minor-modes &optional BUFFER)
     (minor-mode-enable MODE &optional MAJOR)
     (minor-mode-disable MODE &optional MAJOR)
@@ -161,6 +163,32 @@ A MINOR MODE IN EVERY BUFFER
     buffers of that mode made from then on. While it is on, a buffer can still
     turn the mode off for itself, and has it back with its next major mode, or
     the next time the global mode is turned on.
+
+BUFFER ROLES
+    Besides its major mode, every buffer has a role, which says what the
+    buffer is for: editing, for a file or *scratch*; prompt, for the line a
+    question is answered on; completion, for the list of candidates; view,
+    for something to look at; and document-view, for a text to read, which
+    is a view. A buffer gets its role when it is made, before any of its
+    hooks runs, and keeps it whatever its major mode becomes. (buffer-role)
+    says which it is.
+
+    The role decides which minor modes the buffer admits. An editing
+    buffer admits every one; the other roles admit only those permitted
+    for them, and document-view, where it has no rule of its own, those
+    permitted for view. Of two rules for the same role, the one in your
+    configuration wins over the one the editor ships with. read-only-mode
+    goes in every role.
+
+    A minor mode the role does not admit is not turned on: its command
+    says why in the echo area and does nothing else, `minor-mode-on'
+    returns nil, as it does for a mode on already, and
+    `minor-mode-refusal' returns the reason, or nil where the mode is
+    admitted. A rule of `minor-mode-enable' and a global mode pass such a
+    buffer over without a word, and a global mode does not call its
+    TURN-ON there. A mode permitted later is admitted from the next time
+    it is asked for; one no longer admitted is turned off in the buffers
+    where it was on, running its hook as for any other way off.
 
 WHICH MODE A FILE GETS
         rust-mode           .rs

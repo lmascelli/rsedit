@@ -40,23 +40,32 @@ on, zero, a negative number or a lone - for off."
 on, and as a command of the same name, documented by DOC, that turns it on or
 off in the current buffer and then runs BODY: with no argument the other way
 from how it is, with a positive one on, with zero or a negative one off.
+Where the buffer's role does not admit NAME, the command says why, and
+neither turns it on nor runs BODY.
 
 Example:
   (define-minor-mode shout-mode \"Shout\"
     \"Upcase the words typed in this buffer.\")
   (add-hook 'shout-mode \"post-self-insert-hook\" 'my-upcase-last-word)"
   ;; The symbol through `list': an unquote inside a quote is data before the
-  ;; backquote is expanded, as in `defcommand'.
+  ;; backquote is expanded, as in `defcommand'. The two locals have names of
+  ;; their own, so that BODY cannot mean a variable of its own by them.
   `(progn
      (make-minor-mode ,(list 'quote name) ,lighter)
      (defun ,name (&optional arg)
        ,doc
-       (if (minor-mode-wanted-p ,(list 'quote name) arg)
-           (minor-mode-on ,(list 'quote name))
-           (minor-mode-off ,(list 'quote name)))
-       (message "%s %s" ,(symbol-name name)
-                (if (minor-mode-p ,(list 'quote name)) "on" "off"))
-       ,@body)
+       (let ((minor-mode--wanted (minor-mode-wanted-p ,(list 'quote name) arg)))
+         (let ((minor-mode--refusal
+                (if minor-mode--wanted (minor-mode-refusal ,(list 'quote name)))))
+           (if minor-mode--refusal
+               (progn (message "%s" minor-mode--refusal) nil)
+               (progn
+                 (if minor-mode--wanted
+                     (minor-mode-on ,(list 'quote name))
+                     (minor-mode-off ,(list 'quote name)))
+                 (message "%s %s" ,(symbol-name name)
+                          (if (minor-mode-p ,(list 'quote name)) "on" "off"))
+                 ,@body)))))
      (register-command ,(symbol-name name) (list "P"))))
 
 (defmacro define-globalized-minor-mode (global mode turn-on doc &optional on)
@@ -65,8 +74,9 @@ MODE on in every buffer, those open and those to come, or off in all of them:
 with no argument the other way from how it is, with a positive one on, with
 zero or a negative one off. TURN-ON names a function of no arguments, called
 with a buffer current, that turns MODE on there or leaves it off; nil is for
-every buffer. The variable GLOBAL says whether it is on; ON non-nil starts it
-on, without a message.
+every buffer. A buffer whose role does not admit MODE is passed over, without
+a word and without calling TURN-ON. The variable GLOBAL says whether it is
+on; ON non-nil starts it on, without a message.
 
 Example:
   (define-globalized-minor-mode global-auto-fill-mode auto-fill-mode nil
@@ -76,9 +86,14 @@ Example:
   (let ((enter (intern (concat (symbol-name global) "--enter-buffer")))
         (apply-all (intern (concat (symbol-name global) "--apply")))
         (quoted (list 'quote mode))
-        (turn (if turn-on
-                  (list 'funcall (list 'quote turn-on))
-                  (list 'minor-mode-on (list 'quote mode)))))
+        ;; Asked of the buffer's role first, as the rules are: a buffer that
+        ;; does not admit MODE is passed over without a word, and TURN-ON,
+        ;; which may call MODE's command, is not called there.
+        (turn (list 'if (list 'minor-mode-refusal (list 'quote mode))
+                    nil
+                    (if turn-on
+                        (list 'funcall (list 'quote turn-on))
+                        (list 'minor-mode-on (list 'quote mode))))))
     `(progn
        ;; Through `list', so that the tests that read this file for the
        ;; variables it defines do not take the unquote for a name.
