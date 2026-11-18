@@ -4,7 +4,7 @@
 //!
 //! Design: `doc/architettura-editor.typ, <due-porte>`.
 use super::*;
-use crate::buffer::{Buffer, Mark, Touched, undo};
+use crate::buffer::{Buffer, Mark, undo};
 use crate::primitives::args::movement_count;
 use std::cell::Cell;
 
@@ -60,9 +60,7 @@ pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to:
         buf.text.slice(start, end)
     };
     buf.undo.record_delete(start, removed, point);
-    if let Some(touched) = buf.touched.as_mut() {
-        touched.note(&buf.text, start, end);
-    }
+    buf.touched.note(&buf.text, start, end);
     buf.mark = deactivated(buf.mark);
     buf.overlays.adjust_for_delete(start, end);
     buf.virtual_text.adjust_for_delete(start, end);
@@ -96,9 +94,7 @@ pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, conten
     let point = buf.text.cursor_pos_1d();
     let inserted = content.chars().count();
     buf.undo.record_insert(at, inserted, point);
-    if let Some(touched) = buf.touched.as_mut() {
-        touched.note(&buf.text, at, at);
-    }
+    buf.touched.note(&buf.text, at, at);
     buf.mark = deactivated(buf.mark);
     // Before the text moves, each by its table's own rule (`buffer::overlay`,
     // `buffer::virtual_text`).
@@ -175,18 +171,14 @@ pub(crate) fn replay<B: BufferTrait>(buf: &mut Buffer<B>, way: Replay) -> Replay
             overlays.adjust_for_insert(at, len);
             virtual_text.adjust_for_insert(at, len);
             markers.adjust_for_insert(at, len);
-            if let Some(touched) = touched.as_mut() {
-                touched.note_unread(at, at, length);
-            }
+            touched.note_unread(at, at, length);
             length += len;
         }
         undo::Step::Delete { from, to } => {
             overlays.adjust_for_delete(from, to);
             virtual_text.adjust_for_delete(from, to);
             markers.adjust_for_delete(from, to);
-            if let Some(touched) = touched.as_mut() {
-                touched.note_unread(from, to, length);
-            }
+            touched.note_unread(from, to, length);
             length -= to.saturating_sub(from).min(length);
         }
     };
@@ -450,42 +442,60 @@ primitive!(delete_char, args, _env, ctx, {
     Ok(edited(ctx, happened))
 });
 
-pub const TRACK_CHANGES_BEGIN_DOC: &str = "(track-changes-begin): Start watching what the edits \
-         to the current buffer reach, from now, forgetting what was watched before. Watching keeps \
-         the text of the stretch edited, not a copy of the buffer: see `track-changes-end'.\n\n\
+pub const TRACK_CHANGES_BEGIN_DOC: &str = "(track-changes-begin &optional KEY): Start watching \
+         what the edits to the current buffer reach, from now, under KEY, a symbol, forgetting \
+         what KEY watched before. Each KEY watches on its own; nil is the watcher that gives \
+         none. Watching keeps the text of the stretch edited, not a copy of the buffer: see \
+         `track-changes-end'.\n\n\
          Example:\n\
-         (track-changes-begin)";
+         (track-changes-begin 'my-log)";
 
 primitive!(track_changes_begin, args, _env, ctx, {
-    exact_arity(args, 0)?;
-    ctx.with_current_buffer_mut(|buf| buf.touched = Some(Touched::new(buf.text.len())));
+    let key = watch_key(args)?;
+    ctx.with_current_buffer_mut(|buf| buf.touched.begin(key, buf.text.len()));
     Ok(ELispExp::nil())
 });
 
-pub const TRACK_CHANGES_END_DOC: &str = "(track-changes-end): Stop watching the current buffer, \
-         and return what the edits since `track-changes-begin' changed, as (START REMOVED \
-         INSERTED): from START, REMOVED characters became the string INSERTED. Return nil when \
-         nothing was edited, or nothing was watched. It is what `string-diff' says of the text \
-         before and after, within the stretch the edits reached: a word typed and deleted again \
-         is (START 0 \"\"). Undo and redo count as edits; one that reached past the stretch makes \
-         the whole stretch the change.\n\n\
+pub const TRACK_CHANGES_END_DOC: &str = "(track-changes-end &optional KEY): Stop watching the \
+         current buffer under KEY, and return what the edits since `track-changes-begin' with \
+         KEY changed, as (START REMOVED INSERTED REMOVED-TEXT): from START, the REMOVED \
+         characters REMOVED-TEXT became the string INSERTED. REMOVED-TEXT is nil when it is no \
+         longer known. Return nil when nothing was edited, or nothing was watched under KEY. \
+         Undo and redo count as edits.\n\n\
          Example:\n\
          (track-changes-begin)\n\
          (insert \"abc\")\n\
-         (track-changes-end)   ; (0 0 \"abc\") in an empty buffer";
+         (track-changes-end)   ; (0 0 \"abc\" \"\") in an empty buffer";
 
 primitive!(track_changes_end, args, _env, ctx, {
-    exact_arity(args, 0)?;
-    let change = ctx.with_current_buffer_mut(|buf| buf.touched.take()?.change(&buf.text));
+    let key = watch_key(args)?;
+    let change =
+        ctx.with_current_buffer_mut(|buf| buf.touched.end(key.as_deref())?.change(&buf.text));
     Ok(match change {
         None => ELispExp::nil(),
         Some(change) => ELispExp::proper_list(vec![
             ELispExp::Number(change.start as f64),
             ELispExp::Number(change.removed as f64),
             ELispExp::string(change.inserted),
+            change
+                .removed_text
+                .map_or_else(ELispExp::nil, ELispExp::string),
         ]),
     })
 });
+
+/// Returns the KEY a watcher of the edits gives, `None` for nil or none.
+fn watch_key<B: BufferTrait>(
+    args: &[ELispExp<B>],
+) -> Result<Option<String>, EvalError<EditorState<B>>> {
+    if args.len() > 1 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    args::optional_name(args.first(), "Symbol naming a watcher")
+}
 
 /// Registers the primitives that insert and delete characters.
 ///

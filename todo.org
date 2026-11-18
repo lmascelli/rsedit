@@ -14,9 +14,9 @@ Comandi di testo
 - Registri e segnalibri: C-x r è libero per questo.
 - Narrowing (C-x n n).
 
-Hooks
-
 * Fixes todo
+- Aggiungere timeout a lsp, se 0 appena possibile, se nil solo al
+  salvataggio.
 - In the TUI C-_ is still seen as C-7
   Nel repository lmascelli/rsedit correggi la normalizzazione dei
   tasti nella TUI. Problema: crossterm 0.29 decodifica i byte legacy
@@ -53,6 +53,8 @@ Hooks
       nativo una volta che la feature è disponibile in Risp)
 - [ ] Popup dei tasti dopo un prefisso (come which-key), sopra il C-x C-h che c’è già.
 - [ ] Altri linguaggi: Markdown, JSON, YAML, Zig, MATLAB.
+- [ ] Mouse support. Right click menu
+- [ ] GUI e TUI top menubar
 
 
 PROMPT PER I PROSSIMI PUNTI DI rsedit (dopo il progetto del modulo lsp)
@@ -75,7 +77,7 @@ Come usarli
   separati).
 - I punti facoltativi (N7-N10, in fondo) non servono alla prima versione:
   si fanno quando serve, ciascuno dopo il punto indicato nel suo titolo.
-- Da eseguire: M3d
+- Da eseguire: N4
 
 
 PREAMBOLO

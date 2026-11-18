@@ -93,7 +93,7 @@ segnati come tali.
   header: ([Mattone], [Che cosa dà], [Che cosa ne fa il modulo]),
   [R3 JSON], [`json-parse-string`: oggetti in mappe con chiavi stringa, array in vettori, `true` in `t`, `false` e `null` nei simboli `false` e `null`, numeri in float. `json-serialize`: il contrario, con le chiavi ordinate; rifiuta nil e le liste.], [Legge ogni corpo e scrive ogni messaggio. Un campo assente si omette, un array vuoto è `[]`, un booleano falso è `false`: nil non entra mai in un messaggio, perché `json-serialize` lo rifiuterebbe. Gli id delle richieste sono interi piccoli, esatti come float.],
   [C7 processi], [`process-start` con la forma `messages`: la cornice `Content-Length` letta e scritta in Rust; consegne tra un comando e l'altro, una chiamata `(FUNCTION NOME TIPO VALORE)` ciascuna, `exit` sempre per ultima; `process-send`, che non aspetta e risponde nil quando la coda dell'ingresso è piena; `process-stop`, `process-status`.], [Un processo per server. La funzione di consegna smista le risposte, le richieste del server e le notifiche; lo stderr va nel registro del server. Ciò che `process-send` non accetta resta in una coda del modulo, nell'ordine, e si riprova (manuale, `<mod-lsp>`).],
-  [C8 posizioni], [`position-to-line-column` e `line-column-to-position`, con l'unità `char`, `utf-16` o `utf-8`; righe da 1. `track-changes-begin` e `track-changes-end`: che cosa è cambiato da quando si guarda, come `(START REMOVED INSERTED)`.], [Converte ogni posizione che entra o esce (@unita). Sa che cosa mandare a `didChange` (@intero-tratti), una volta che il nucleo ha i pezzi che mancano (@mancano).],
+  [C8 posizioni], [`position-to-line-column` e `line-column-to-position`, con l'unità `char`, `utf-16` o `utf-8`; righe da 1. `track-changes-begin` e `track-changes-end`, con una `KEY` facoltativa per ogni osservatore: che cosa è cambiato da quando si guarda, come `(START REMOVED INSERTED REMOVED-TEXT)`.], [Converte ogni posizione che entra o esce (@unita). Sa che cosa mandare a `didChange` (@intero-tratti), una volta che il nucleo ha i pezzi che mancano (@mancano).],
   [C5 deposito], [`finding-set PRODUCER FILE ENTRIES &optional UNIT` sostituisce in blocco; `finding-clear`; le domande per file, produttore, directory. Posizioni del produttore e marcatori quando il file è aperto.], [Un produttore per server. Ogni `publishDiagnostics` diventa un `finding-set` per quel file (manuale, `<mod-lsp>`).],
   [C6 schermo], [`findings-mode`, acceso ovunque dal modulo `findings`: intervallo, segno, conteggio, messaggio al punto; `M-g f` e `M-g n`.], [Niente: le segnalazioni di un server si vedono come quelle di `compile`.],
 )
@@ -106,19 +106,19 @@ Oggi ogni svuotamento che trova cambiato il `buffer-modified-tick` di un
 documento manda il testo intero (manuale, `<mod-lsp>`). Il modo a tratti manda
 invece un `contentChanges` solo, con l'intervallo nel testo di prima e il testo
 nuovo, e prende il posto di `lsp--changed` senza cambiare niente altro del
-modulo. Ha bisogno di N2, N3 e N4 (@mancano).
+modulo. Ha bisogno di N4 (@mancano).
 
 Il modo a tratti legge ciò che è cambiato con `track-changes-end`, sotto una
-chiave sua (N2), e ricomincia subito a guardare. La risposta `(START REMOVED
-INSERTED)` è in caratteri sul testo di adesso. L'inizio dell'intervallo è lo
+chiave sua, e ricomincia subito a guardare; Vim, nello stesso buffer, guarda
+sotto la chiave nil e non ne è toccato. La risposta `(START REMOVED INSERTED
+REMOVED-TEXT)` è in caratteri sul testo di adesso. L'inizio dell'intervallo è lo
 stesso nel testo di prima e in quello di adesso, perché davanti a START niente
 è cambiato: `position-to-line-column` lo traduce. La fine nel testo di prima
 non si può leggere nel buffer, dove quel testo non c'è più: si ricava
-dall'inizio e dal testo tolto, che `track-changes-end` oggi non dà (N3),
-misurato in righe e colonne nell'unità del server (N4). Quando il testo tolto
-non si sa --- un undo che è uscito dal tratto guardato, un file riletto da
-disco --- il modulo manda il testo intero: è ciò che `track-changes` dice già
-in quei casi, facendo del tratto intero il cambiamento.
+dall'inizio e dal testo tolto, REMOVED-TEXT, misurato in righe e colonne
+nell'unità del server (N4). Quando il testo tolto non si sa --- un undo che è
+uscito dal tratto guardato, un file riletto da disco --- REMOVED-TEXT è nil e
+il modulo manda il testo intero.
 
 // ===========================================================================
 = Le posizioni che escono <unita>
@@ -249,8 +249,6 @@ subito, un cliente che non è `lsp`.
 #ref-table(
   columns: (0.9cm, 4.2cm, 1fr, 2.4cm),
   header: ([], [Pezzo], [Che cosa e perché], [Serve a]),
-  [N2], [più osservatori: `track-changes-begin` e `track-changes-end` con una `KEY` facoltativa], [Oggi `Buffer::touched` è un `Option<Touched>` e `track-changes-begin` lo rimpiazza, dimenticando ciò che si guardava prima (V1: no, non regge più osservatori). Vim guarda una sessione di Insert; il modulo, nello stesso buffer, gliela toglierebbe, e `.` ripeterebbe la cosa sbagliata. La modifica minima: una piccola lista di `(KEY, Touched)` per buffer, le porte che avvisano ognuno, nil come chiave di chi non ne dà una, così vim non cambia.], [sincronizzazione a tratti],
-  [N3], [il testo tolto in `track-changes-end`], [Un quarto elemento, `(START REMOVED INSERTED REMOVED-TEXT)`, nil quando non si sa (il `before` di `Touched` già perso da un undo o da una rilettura). `Touched` tiene già quel testo: è la sua parte fra il prefisso e il suffisso comuni. Serve a chiunque debba ricostruire il testo di prima: un registro delle modifiche, un confronto.], [sincronizzazione a tratti],
   [N4], [`(string-line-column STRING &optional UNIT)`], [Quante righe nuove ci sono in STRING, e la colonna della sua fine nell'unità di C8: la misura che `text/positions.rs` sa fare su un testo, fatta su una stringa. In Lisp costerebbe un giro per carattere, e una regione di un mega tolta un mega di giri.], [sincronizzazione a tratti],
   [N6], [`(completion-offer START END CANDIDATES &optional ON-CHOSEN)`], [Offre CANDIDATES per START..END del buffer corrente come `completion-at-point` offre ciò che le fonti hanno dato: filtro, uno solo al posto del testo, più d'uno al presentatore; poi chiama ON-CHOSEN con il candidato messo. Chi chiama controlla prima che il buffer e il punto siano quelli. Serve a ogni fonte che risponde più tardi: una REPL, una ricerca su disco.], [completamento],
 )
@@ -262,7 +260,7 @@ subito, un cliente che non è `lsp`.
 )
 
 L'ordine: la definizione e le code action non aspettano niente; N6 per il
-completamento; N2, N3 e N4 insieme per la sincronizzazione a tratti.
+completamento; N4 per la sincronizzazione a tratti.
 
 // ===========================================================================
 = Le decisioni <decisioni>

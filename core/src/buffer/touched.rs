@@ -1,8 +1,9 @@
 //! The stretch of a buffer's text that edits have reached since someone
 //! started watching: how much at the top and how much at the bottom no edit
-//! has touched, and what the stretch between held when watching began.
+//! has touched, and what the stretch between held when watching began. Each
+//! watcher has its own, under its key.
 //!
-//! The three doors tell it of each edit, before the text moves. The text
+//! The three doors tell every watcher of each edit, before the text moves. The text
 //! kept is the stretch's, read as the stretch grows, not the buffer's: an
 //! Insert session that types a word keeps the nothing that was there. Vim
 //! asks it what a session changed, where it used to copy the whole buffer at
@@ -10,6 +11,58 @@
 //!
 //! Design: `doc/architettura-editor.typ, <due-porte>`.
 use super::BufferTrait;
+
+/// Who watches the edits to one buffer, each under its key: `None` is the
+/// watcher that gives none. Empty when nobody watches.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Watchers(Vec<(Option<String>, Touched)>);
+
+impl Watchers {
+    /// Starts watching under KEY a text LENGTH characters long, forgetting
+    /// what KEY watched before; the other watchers go on.
+    pub fn begin(&mut self, key: Option<String>, length: usize) {
+        let touched = Touched::new(length);
+        match self.0.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, old)) => *old = touched,
+            None => self.0.push((key, touched)),
+        }
+    }
+
+    /// Stops watching under KEY, and returns what it watched, or `None`
+    /// when KEY watched nothing.
+    pub fn end(&mut self, key: Option<&str>) -> Option<Touched> {
+        let at = self.0.iter().position(|(k, _)| k.as_deref() == key)?;
+        Some(self.0.swap_remove(at).1)
+    }
+
+    /// Returns whether nobody watches.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Tells every watcher of an edit: see [`Touched::note`].
+    pub fn note<B: BufferTrait>(&mut self, text: &B, from: usize, to: usize) {
+        for (_, touched) in &mut self.0 {
+            touched.note(text, from, to);
+        }
+    }
+
+    /// Tells every watcher of a step of an undo or a redo: see
+    /// [`Touched::note_unread`].
+    pub fn note_unread(&mut self, from: usize, to: usize, length: usize) {
+        for (_, touched) in &mut self.0 {
+            touched.note_unread(from, to, length);
+        }
+    }
+
+    /// Tells every watcher that every character was replaced: see
+    /// [`Touched::note_all`].
+    pub fn note_all(&mut self) {
+        for (_, touched) in &mut self.0 {
+            touched.note_all();
+        }
+    }
+}
 
 /// What the edits since watching began have reached, in one buffer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,12 +87,14 @@ struct Stretch {
 }
 
 /// What changed while watching: from START, REMOVED characters of the text
-/// as it was became INSERTED.
+/// as it was, REMOVED-TEXT, became INSERTED.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Change {
     pub start: usize,
     pub removed: usize,
     pub inserted: String,
+    /// The REMOVED characters, or `None` when they are no longer known.
+    pub removed_text: Option<String>,
 }
 
 impl Touched {
@@ -116,7 +171,8 @@ impl Touched {
     ///
     /// The same answer `string-diff` gives for the stretch: a text typed and
     /// deleted again leaves no change but where it was. After an undo or a
-    /// redo that reached past the stretch, the whole stretch is the change.
+    /// redo that reached past the stretch, the whole stretch is the change,
+    /// and the text it removed is not known.
     pub fn change<B: BufferTrait>(&self, text: &B) -> Option<Change> {
         let stretch = self.stretch.as_ref()?;
         let length = text.len();
@@ -134,6 +190,7 @@ impl Touched {
                 start,
                 removed,
                 inserted: after.into_iter().collect(),
+                removed_text: None,
             });
         };
         let before: Vec<char> = before.chars().collect();
@@ -152,6 +209,7 @@ impl Touched {
             start: start + prefix,
             removed: before.len() - prefix - suffix,
             inserted: after[prefix..after.len() - suffix].iter().collect(),
+            removed_text: Some(before[prefix..before.len() - suffix].iter().collect()),
         })
     }
 }
@@ -174,11 +232,17 @@ mod tests {
         apply_delete(text, from, to);
     }
 
-    fn change(start: usize, removed: usize, inserted: &str) -> Option<Change> {
+    fn change(
+        start: usize,
+        removed: usize,
+        inserted: &str,
+        removed_text: Option<&str>,
+    ) -> Option<Change> {
         Some(Change {
             start,
             removed,
             inserted: inserted.into(),
+            removed_text: removed_text.map(Into::into),
         })
     }
 
@@ -193,7 +257,7 @@ mod tests {
         let mut text = GapBuffer::from("abcdefghij");
         let mut touched = Touched::new(text.len());
         insert(&mut touched, &mut text, 4, "xyz");
-        assert_eq!(touched.change(&text), change(4, 0, "xyz"));
+        assert_eq!(touched.change(&text), change(4, 0, "xyz", Some("")));
     }
 
     #[test]
@@ -205,10 +269,13 @@ mod tests {
         // "abcdxyefghij": "cdx" goes, and "cd" with it from before.
         delete(&mut touched, &mut text, 2, 5);
         assert_eq!(text.to_string(), "abyefghij");
-        assert_eq!(touched.change(&text), change(2, 2, "y"));
+        assert_eq!(touched.change(&text), change(2, 2, "y", Some("cd")));
         // An edit far below takes in what lies between, as it was.
         insert(&mut touched, &mut text, 8, "!");
-        assert_eq!(touched.change(&text), change(2, 7, "yefghi!"));
+        assert_eq!(
+            touched.change(&text),
+            change(2, 7, "yefghi!", Some("cdefghi"))
+        );
     }
 
     #[test]
@@ -220,7 +287,7 @@ mod tests {
         insert(&mut touched, &mut text, 2, "x");
         delete(&mut touched, &mut text, 2, 3);
         insert(&mut touched, &mut text, 2, "c");
-        assert_eq!(touched.change(&text), change(3, 0, ""));
+        assert_eq!(touched.change(&text), change(3, 0, "", Some("")));
     }
 
     #[test]
@@ -231,11 +298,11 @@ mod tests {
         // Inside the stretch, the text before is still known.
         touched.note_unread(3, 4, text.len());
         apply_delete(&mut text, 3, 4);
-        assert_eq!(touched.change(&text), change(3, 0, ""));
+        assert_eq!(touched.change(&text), change(3, 0, "", Some("")));
         // Past it, it is not.
         touched.note_unread(1, 2, text.len());
         apply_delete(&mut text, 1, 2);
-        assert_eq!(touched.change(&text), change(1, 2, "c"));
+        assert_eq!(touched.change(&text), change(1, 2, "c", None));
     }
 
     #[test]
@@ -243,6 +310,49 @@ mod tests {
         let text = GapBuffer::from("xyz");
         let mut touched = Touched::new(10);
         touched.note_all();
-        assert_eq!(touched.change(&text), change(0, 10, "xyz"));
+        assert_eq!(touched.change(&text), change(0, 10, "xyz", None));
+    }
+
+    #[test]
+    fn the_removed_text_is_what_the_stretch_held_between_what_stayed() {
+        let mut text = GapBuffer::from("abcdef");
+        let mut touched = Touched::new(text.len());
+        delete(&mut touched, &mut text, 1, 4);
+        insert(&mut touched, &mut text, 1, "bX");
+        assert_eq!(touched.change(&text), change(2, 2, "X", Some("cd")));
+    }
+
+    #[test]
+    fn each_key_watches_from_its_own_beginning() {
+        let mut text = GapBuffer::from("abcdef");
+        let mut watchers = Watchers::default();
+        watchers.begin(None, text.len());
+        watchers.note(&text, 0, 0);
+        apply_insert(&mut text, 0, "x");
+        watchers.begin(Some("log".into()), text.len());
+        watchers.note(&text, 7, 7);
+        apply_insert(&mut text, 7, "y");
+        let log = watchers.end(Some("log")).unwrap();
+        assert_eq!(log.change(&text), change(7, 0, "y", Some("")));
+        // Ending one leaves the other watching, with every edit seen.
+        assert!(!watchers.is_empty());
+        let mine = watchers.end(None).unwrap();
+        assert_eq!(mine.change(&text), change(0, 6, "xabcdefy", Some("abcdef")));
+        assert!(watchers.is_empty());
+    }
+
+    #[test]
+    fn beginning_again_under_a_key_forgets_only_what_it_watched() {
+        let mut text = GapBuffer::from("abc");
+        let mut watchers = Watchers::default();
+        watchers.begin(None, text.len());
+        watchers.begin(Some("log".into()), text.len());
+        watchers.note(&text, 0, 0);
+        apply_insert(&mut text, 0, "x");
+        watchers.begin(None, text.len());
+        assert_eq!(watchers.end(None).unwrap().change(&text), None);
+        let log = watchers.end(Some("log")).unwrap();
+        assert_eq!(log.change(&text), change(0, 0, "x", Some("")));
+        assert_eq!(watchers.end(Some("log")), None);
     }
 }

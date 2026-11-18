@@ -89,8 +89,8 @@ SYNOPSIS
     (set-undo-limit N)
     (keyboard-quit)
 
-    (track-changes-begin)
-    (track-changes-end)
+    (track-changes-begin &optional KEY)
+    (track-changes-end &optional KEY)
 
 DESCRIPTION
     The editor's commands are built out of two halves: a unit of text and
@@ -412,13 +412,21 @@ SEVERAL REPLACEMENTS AT ONCE
 WATCHING EDITS
     `track-changes-begin' starts watching the edits to the buffer, and
     `track-changes-end' stops and says what they changed, as
-    (START REMOVED INSERTED): from START, REMOVED characters became the
-    string INSERTED, or nil when nothing was edited. It keeps the text the
-    edits reached, not a copy of the buffer, so it costs what was typed,
-    not what the file is. A word typed and deleted again is no change but
-    where it was. An undo counts as an edit; one that reaches outside what
-    was edited makes all of it the change. vim watches an Insert session
-    this way, for what . repeats.
+    (START REMOVED INSERTED REMOVED-TEXT): from START, the REMOVED
+    characters REMOVED-TEXT became the string INSERTED, or nil when
+    nothing was edited. It keeps the text the edits reached, not a copy of
+    the buffer, so it costs what was typed, not what the file is. A word
+    typed and deleted again is no change but where it was. An undo counts
+    as an edit; one that reaches outside what was edited makes all of it
+    the change, and then REMOVED-TEXT is nil, because what it went over is
+    no longer known. So is it after the file is read again.
+
+    Several can watch the same buffer, each under its own KEY, a symbol
+    given to both calls: beginning again under a KEY forgets only what
+    that KEY watched, and ending it leaves the others watching. Without a
+    KEY, or with nil, the watcher is the one that gives none. vim watches
+    an Insert session that way, for what . repeats, so a KEY of yours
+    leaves it alone.
 
 COLUMNS IN OTHER UNITS
     A position counts characters, and so does a column. A program outside
@@ -499,7 +507,13 @@ EXAMPLES
 
         (track-changes-begin)
         (insert "abc")
-        (track-changes-end)       ; (START 0 "abc")
+        (track-changes-end)       ; (START 0 "abc" "")
+
+    A watcher of your own, which vim's Insert sessions do not disturb:
+
+        (track-changes-begin 'my-log)
+        (delete-char 3)               ; with point before "abc"
+        (track-changes-end 'my-log)   ; (START 3 "" "abc")
 
     Where point is, with the column in UTF-16 code units, and the way back
     to the same place:

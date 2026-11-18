@@ -24,7 +24,7 @@ pub use disk::{FileStamp, OnDisk};
 pub use mark::Mark;
 pub use markers::Markers;
 pub use overlay::OverlayTable;
-pub use touched::Touched;
+pub use touched::Watchers;
 pub use undo::UndoHistory;
 pub use virtual_text::VirtualTextTable;
 
@@ -63,10 +63,10 @@ pub struct Buffer<B: BufferTrait> {
     /// doors move them, as they move the overlays.
     pub markers: Markers,
 
-    /// What the edits have reached since someone started watching, or `None`
-    /// when nobody is: see [`crate::buffer::touched`]. The three doors tell
-    /// it of each edit.
-    pub touched: Option<Touched>,
+    /// What the edits have reached since each watcher started watching,
+    /// empty when nobody is: see [`crate::buffer::touched`]. The three doors
+    /// tell every watcher of each edit.
+    pub touched: Watchers,
 
     /// Where the mark is, when this buffer has one. The region is the text
     /// between it and point -- see [`crate::buffer::mark::region_bounds`].
@@ -205,7 +205,7 @@ impl<B: BufferTrait> Buffer<B> {
             overlays: OverlayTable::default(),
             virtual_text: VirtualTextTable::default(),
             markers: Markers::default(),
-            touched: None,
+            touched: Watchers::default(),
             version: 0,
             scan: scan::ScanCache::default(),
             syntax: syntax::SyntaxCache::default(),
@@ -285,9 +285,7 @@ impl<B: BufferTrait> Buffer<B> {
         self.mark = None;
         // Still watching, with every character changed: what was being
         // watched for is no longer in the text.
-        if let Some(touched) = self.touched.as_mut() {
-            touched.note_all();
-        }
+        self.touched.note_all();
         let limit = self.undo.limit();
         self.undo = UndoHistory::default();
         self.undo.set_limit(limit);
@@ -316,7 +314,7 @@ impl<B: BufferTrait> Buffer<B> {
             overlays: OverlayTable::default(),
             virtual_text: VirtualTextTable::default(),
             markers: Markers::default(),
-            touched: None,
+            touched: Watchers::default(),
             version: 0,
             scan: scan::ScanCache::default(),
             syntax: syntax::SyntaxCache::default(),

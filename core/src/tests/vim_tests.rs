@@ -1258,4 +1258,17 @@ mod tests {
         // On the space before, where Escape leaves it, as in Vim.
         assert_eq!(point(&ctx), 0);
     }
+    #[test]
+    fn another_watcher_of_the_edits_leaves_dot_its_insert_session() {
+        let (ctx, env) = editor("one two three");
+        run("(track-changes-begin 'log)", &env, &ctx);
+        keys(&ctx, &env, "cwX");
+        esc(&ctx, &env);
+        keys(&ctx, &env, "w.");
+        assert_eq!(text(&ctx), "X X three");
+        // The other watcher saw both sessions, and what they removed.
+        let change = run("(track-changes-end 'log)", &env, &ctx);
+        let expected = run("'(0 7 \"X X\" \"one two\")", &env, &ctx);
+        assert_eq!(change, expected);
+    }
 }

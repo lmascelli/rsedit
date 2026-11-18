@@ -2171,18 +2171,27 @@ l'inverso lo scrive la storia stessa (@undo). Ne passano `undo`, `redo` e il
 passo indietro di `query-replace` (`replace_back`).
 
 Le tre porte dicono ogni modifica, prima che il testo si muova, anche a chi la
-guarda: `Buffer::touched`, che `track-changes-begin` accende e
-`track-changes-end` spegne restituendo ciò che è cambiato
-(`buffer/touched.rs`). Tiene due numeri, quanti caratteri all'inizio e quanti
+guarda: `Buffer::touched`, un `Watchers`, la piccola lista di chi guarda, ognuno
+con la sua chiave e il suo `Touched` (`buffer/touched.rs`). `track-changes-begin`
+accende quello della sua `KEY`, `track-changes-end` lo spegne restituendo ciò che
+è cambiato, e gli altri restano: così Vim guarda una sessione di Insert senza
+nome (la chiave nil) e un modulo, nello stesso buffer, sotto la sua, senza che
+l'uno tolga all'altro ciò che guarda. La chiave è il nome del simbolo, una
+stringa, perché il buffer non conosca il Lisp; una lista e non una mappa, perché
+chi guarda sono uno o due e la porta li avvisa tutti. Ogni `Touched` tiene due
+numeri, quanti caratteri all'inizio e quanti
 alla fine nessuna modifica ha raggiunto, e il testo che il tratto fra i due
 aveva quando la guardia è cominciata: una modifica fuori dal tratto lo allarga,
 e il testo che aggiunge è letto lì, dalla porta, prima della modifica; fuori dal
 tratto il testo è ancora quello di allora. La fine confronta il tratto di prima
 con quello di adesso come `string-diff` confronterebbe i due testi interi, ma
-costa quanto il tratto, non quanto il file. La terza porta non può leggere il
-testo che la storia sta scrivendo: un undo dentro il tratto non costa nulla, uno
-che ne esce fa del tratto intero il cambiamento. È ciò che Vim usa per sapere
-che cosa ha scritto una sessione di Insert (@mod-vim).
+costa quanto il tratto, non quanto il file; il testo tolto (`removed_text`, il
+quarto elemento della risposta) è la parte del tratto di prima fra il prefisso e
+il suffisso comuni. La terza porta non può leggere il testo che la storia sta
+scrivendo: un undo dentro il tratto non costa nulla, uno che ne esce fa del
+tratto intero il cambiamento, e il testo tolto non si sa più (nil), come dopo
+una rilettura. È ciò che Vim usa per sapere che cosa ha scritto una sessione di
+Insert (@mod-vim).
 
 Un percorso solo oggi scavalca le porte, e di proposito: `adopt_text` (lettura
 di un file, `revert-buffer`, ricarica dal watcher) sostituisce tutto il testo e
