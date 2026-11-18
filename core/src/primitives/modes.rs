@@ -237,6 +237,25 @@ primitive!(buffer_role, args, _env, ctx, {
         .map_or_else(ELispExp::nil, |role| ELispExp::symbol(role.name().into())))
 });
 
+pub const BUFFER_ROLE_DERIVED_P_DOC: &str = "(buffer-role-derived-p ROLE ANCESTOR): Return t when \
+         the buffer role ROLE is ANCESTOR or derives from it, as document-view derives from \
+         view, and nil otherwise. A name that is no role, for either, is an error.\n\n\
+         Example:\n\
+         (buffer-role-derived-p (buffer-role) 'view)";
+
+primitive!(buffer_role_derived_p, args, _env, _ctx, {
+    exact_arity(args, 2)?;
+    let role = |at: usize| {
+        args::optional_role("buffer-role-derived-p", args.get(at))?.ok_or_else(|| {
+            EvalError::WrongArgumentType {
+                expected: "Symbol naming a buffer role".into(),
+                got: args[at].clone(),
+            }
+        })
+    };
+    Ok(ELispExp::boolean(role(0)?.derives_from(role(1)?)))
+});
+
 pub const MINOR_MODE_OFF_DOC: &str = "(minor-mode-off MODE &optional BUFFER): Turn the minor \
          mode MODE off in BUFFER, the current one by default, and run its \"minor-mode-hook\" \
          there. Return t, or nil when it was not on.";
@@ -343,6 +362,11 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         MINOR_MODE_REFUSAL_DOC,
     );
     into.function("buffer-role", buffer_role, BUFFER_ROLE_DOC);
+    into.function(
+        "buffer-role-derived-p",
+        buffer_role_derived_p,
+        BUFFER_ROLE_DERIVED_P_DOC,
+    );
     into.function("minor-mode-p", minor_mode_p, MINOR_MODE_P_DOC);
     into.function("minor-modes", minor_modes, MINOR_MODES_DOC);
     into.function(

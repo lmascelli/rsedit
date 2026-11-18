@@ -15,7 +15,7 @@ SYNOPSIS
     (scroll-down-command &optional N)
     (recenter &optional WHERE)
     (display-buffer-at-bottom BUFFER HEIGHT)
-    (make-floating-window BUFFER-NAME X Y WIDTH HEIGHT &optional TITLE MODE)
+    (make-floating-window BUFFER-NAME X Y WIDTH HEIGHT ... &key :role ...)
     (close-floating-window)
     scroll-conservatively
     window-separator
@@ -68,9 +68,12 @@ FLOATING WINDOWS
     `make-floating-window' opens a buffer in a bordered window at a place
     and size of your choosing, gives it the focus and returns its id.
     `close-floating-window' closes the newest one and gives the focus back
-    to the window that had it. Floating windows stack, and close in the
-    reverse order they opened. C-x o reaches them too, after the tiled
-    ones; `count-windows' counts only the tiled ones.
+    to the window that had it. Its TITLE and MODE, optional, go in their
+    places or after :title and :mode, and :role says what the buffer is
+    for, editing unless it is given, as for `buffer-create'. Floating
+    windows stack, and close in the reverse order they opened. C-x o
+    reaches them too, after the tiled ones; `count-windows' counts only
+    the tiled ones.
 
     `display-buffer-at-bottom' is the other kind of extra window: a strip
     the width of the frame, of a fixed height, along the bottom, which

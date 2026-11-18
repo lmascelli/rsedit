@@ -138,7 +138,7 @@ along rather than being cut.")
 
 (defcommand buffer-list () nil
   "Show every buffer in a listing where keys switch to them and kill them."
-  (buffer-create buffer-list-buffer-name 'buffer-list-mode)
+  (buffer-create buffer-list-buffer-name :mode 'buffer-list-mode :role 'view)
   (switch-to-buffer buffer-list-buffer-name)
   (buffer-list--draw)
   (goto-line 1))

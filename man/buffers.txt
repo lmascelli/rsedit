@@ -6,7 +6,7 @@ SYNOPSIS
     (switch-to-buffer BUFFER-NAME)
     (current-buffer)
     (all-buffer-names)
-    (buffer-create NAME &optional MODE)
+    (buffer-create NAME &optional MODE &key :mode :role)
     (kill-buffer &optional BUFFER-OR-NAME)
     (kill-buffer-without-saving &optional BUFFER-OR-NAME)
     (close-buffer &optional BUFFER-OR-NAME)
@@ -117,7 +117,13 @@ READ ONLY
 
 BUFFERS FROM LISP
     `buffer-create' makes a buffer without showing it, in a mode of its
-    own if it is given one; a buffer that exists already is left as it is.
+    own if it is given one, after NAME or after :mode; a buffer that exists
+    already is left as it is. :role says what a new buffer is for, editing
+    unless it is given, and stays so as long as the buffer lives: see
+    `modes'. A buffer that exists already, of a role that is not the one
+    :role names nor derives from it, is an error rather than handed back:
+
+        (buffer-create "*listing*" :mode 'occur-mode :role 'view)
     `with-current-buffer' calls a function with a buffer current, without
     showing it, and makes the other one current again afterwards. It takes
     a function where Emacs takes a body:

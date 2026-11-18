@@ -51,6 +51,13 @@ pub(crate) fn set_minibuffer_content<B: BufferTrait>(ctx: &EditorState<B>, conte
 /// incremental search's included.
 pub(crate) const PROMPT_BUFFER: &str = "*Minibuffer*";
 
+/// The symbol property a reader of `*minibuffer-read-function*` sets to t
+/// to say that it takes the role of its prompt's buffer as a seventh
+/// argument, ROLE, after those `minibuffer-read` has always passed. Both
+/// readers the editor ships set it; one of yours that does not still gets
+/// the six it was written for.
+pub(crate) const READER_TAKES_ROLE: &str = "minibuffer-reader-role";
+
 /// The name of the Lisp variable holding the key the current prompt's history
 /// is filed under.
 pub(crate) const MINIBUFFER_HISTORY_KEY: &str = "*minibuffer-history-key*";
@@ -125,6 +132,12 @@ pub fn install_minibuffer<B: BufferTrait>(
     env.set_variable(
         MINIBUFFER_READ_FUNCTION.into(),
         ELispExp::symbol("default-minibuffer-prompt".into()),
+    );
+    // It takes the role of its buffer, as `minibuffer-read` gives it.
+    env.put_property(
+        "default-minibuffer-prompt",
+        READER_TAKES_ROLE,
+        ELispExp::t(),
     );
 
     let mut minibuffer_mode = MajorMode::new("minibuffer-mode");

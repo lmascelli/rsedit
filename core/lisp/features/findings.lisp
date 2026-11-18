@@ -97,7 +97,7 @@ attach them to it as the list `next-error' walks."
 (defun findings--show (what)
   "List the findings WHAT names, (file . FILE) or (under . DIRECTORY), and
 show the list."
-  (buffer-create findings-list-buffer-name 'findings-list-mode)
+  (buffer-create findings-list-buffer-name :mode 'findings-list-mode :role 'view)
   (buffer-put 'findings-what what findings-list-buffer-name)
   ;; Asked of the store again before each step of M-g n: the list follows
   ;; what the producers say now.

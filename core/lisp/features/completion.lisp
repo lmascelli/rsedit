@@ -163,7 +163,7 @@ What `*completion-read-function*' names."
         ;; In a buffer or at a prompt: see `*completion-at-point-start*'.
         (setq *completion--anchor* *completion-at-point-start*)
         (setq *completion--pattern* (completion--current-text))
-        (buffer-create completion-buffer-name 'completion-mode)
+        (buffer-create completion-buffer-name :mode 'completion-mode :role 'completion)
         (setq *completion--window*
               (display-buffer-at-bottom completion-buffer-name
                                         completion-window-height))

@@ -44,11 +44,18 @@ line of text between two of border.")
     (if (and name (not (string= name ""))) name nil)))
 
 (defun floating-minibuffer-prompt (prompt on-confirm on-change on-cancel
-                                   &optional mode key)
+                                   &optional mode key role)
   "Open a prompt in a bordered window floating in the middle of the frame,
 titled PROMPT, `minibuffer-width' columns by `minibuffer-height' rows, or
-what the frame can hold. The arguments are those of `minibuffer-read'. Put
-it in `*minibuffer-read-function*' to have every prompt open this way."
+what the frame can hold. The arguments are those of `minibuffer-read', in
+their places; ROLE, the role of the prompt's buffer, is prompt when nil, and
+must be prompt or derive from it. Put it in `*minibuffer-read-function*' to
+have every prompt open this way."
+  ;; Asked before anything is set, so that a wrong ROLE opens nothing.
+  (if (and role (not (buffer-role-derived-p role 'prompt)))
+      (signal 'error
+              (list (format "floating-minibuffer-prompt: a prompt's buffer is of role prompt or one derived from it, not %s"
+                            role))))
   ;; One at a time, as the editor's own: a second would share the first's
   ;; buffer and take its answer.
   (if (member floating-minibuffer--buffer-name (all-buffer-names))
@@ -76,10 +83,14 @@ it in `*minibuffer-read-function*' to have every prompt open this way."
          (x (floor (/ (max 0 (- frame-width width)) 2)))
          (y (floor (/ (max 0 (- rows height)) 2))))
     (make-floating-window floating-minibuffer--buffer-name x y width height
-                          (if (stringp prompt) prompt nil)
-                          (or (floating-minibuffer--name mode)
-                              "minibuffer-mode")))
+                          :title (if (stringp prompt) prompt nil)
+                          :mode (or (floating-minibuffer--name mode)
+                                    "minibuffer-mode")
+                          :role (or role 'prompt)))
   t)
+
+;; It takes ROLE, as `minibuffer-read' gives it to a reader that says so.
+(put 'floating-minibuffer-prompt 'minibuffer-reader-role t)
 
 (defun toggle-floating-minibuffer ()
   "Switch every prompt between the minibuffer split at the bottom of the

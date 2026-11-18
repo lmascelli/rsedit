@@ -3,6 +3,7 @@ mod autosave_tests;
 mod background_tests;
 mod balance_point_tests;
 mod buffer_conformance_tests;
+mod buffer_creation_role_tests;
 mod buffer_data_tests;
 mod buffer_list_tests;
 mod buffer_role_tests;

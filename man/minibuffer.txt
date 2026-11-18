@@ -2,7 +2,7 @@ NAME
     minibuffer - the prompt, its history, and asking from Lisp
 
 SYNOPSIS
-    (minibuffer-read PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL &optional MODE KEY)
+    (minibuffer-read PROMPT ON-CONFIRM &optional ON-CHANGE ... &key :role ...)
     (default-minibuffer-prompt PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL ...)
     (floating-minibuffer-prompt PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL ...)
     (toggle-floating-minibuffer)
@@ -103,6 +103,29 @@ ASKING FROM LISP
     it is not given. Either may be nil, which is the same as leaving it
     out: (minibuffer-read PROMPT ON-CONFIRM nil nil nil KEY) names a
     history and keeps minibuffer-mode.
+
+    Each of the four may be given after its keyword instead, once the
+    places run out, and the two forms mix: (minibuffer-read PROMPT
+    ON-CONFIRM :key KEY) does what the line above does. One given both in
+    its place and by keyword, a keyword given twice and one the function
+    does not know are errors, and open no prompt.
+
+    :role says what the prompt's buffer is for, prompt when it is not
+    given; it may only be prompt or a role derived from it, since the
+    prompt's buffer is always one. The role decides which minor modes the
+    buffer admits: see `modes'.
+
+    The prompt is opened by the function in `*minibuffer-read-function*',
+    called with the arguments in their places, and never fewer than four.
+    The role goes to it as a seventh argument, after KEY, only when it says
+    it takes one, with t under its symbol's minibuffer-reader-role property;
+    `default-minibuffer-prompt' and `floating-minibuffer-prompt' both do. A
+    reader of your own that does not is called as it always was, and gets
+    no :role: given one, `minibuffer-read' says so as an error, before any
+    prompt opens. To take it, end its parameters with &optional MODE KEY
+    ROLE, give ROLE to the buffer it makes, and say so:
+
+        (put 'my-prompt 'minibuffer-reader-role t)
 
     A command that declares its arguments needs none of this: the editor
     asks for them, with these prompts, before it runs the command. See

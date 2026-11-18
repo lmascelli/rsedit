@@ -149,7 +149,7 @@ keys of the REPL, where C-j evaluates the expressions written last."
   (if (member risp-repl-buffer (all-buffer-names))
       (switch-to-buffer risp-repl-buffer)
       (progn
-        (buffer-create risp-repl-buffer 'risp-mode)
+        (buffer-create risp-repl-buffer :mode 'risp-mode :role 'editing)
         (switch-to-buffer risp-repl-buffer)
         (set-local-keymap 'risp-repl-map)
         (insert ";; Lisp, evaluated in the running editor. Write an expression,\n"

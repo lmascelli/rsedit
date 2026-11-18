@@ -246,60 +246,77 @@ primitive!(select_window, args, _env, ctx, {
 });
 
 pub const MAKE_FLOATING_WINDOW_DOC: &str = "(make-floating-window BUFFER-NAME X Y WIDTH HEIGHT \
-         &optional TITLE MODE): Make a buffer called BUFFER-NAME in MODE, fundamental-mode by \
-         default, open it in a bordered window floating at column X and row Y, WIDTH by HEIGHT, \
-         with TITLE on its border, give it the focus, and return its id.\n\n\
+         &optional TITLE MODE &key :title :mode :role): Make a buffer called BUFFER-NAME in MODE, \
+         fundamental-mode by default, open it in a bordered window floating at column X and row \
+         Y, WIDTH by HEIGHT, with TITLE on its border, give it the focus, and return its id. \
+         TITLE and MODE go either in their place or after their keyword, not both. :role is \
+         what the buffer is for, editing by default, as for `buffer-create'; a role no buffer \
+         has is an error, and opens nothing.\n\n\
          Example:\n\
-         (make-floating-window \"*note*\" 2 1 40 6 \"Note\")";
+         (make-floating-window \"*note*\" 2 1 40 6 \"Note\")\n\
+         (make-floating-window \"*peek*\" 2 1 40 6 :title \"Peek\" :role 'view)";
+
+/// The keywords `make-floating-window` takes.
+const MAKE_FLOATING_WINDOW_KEYWORDS: &[&str] = &[":title", ":mode", ":role"];
 
 primitive!(make_floating_window, args, env, ctx, {
-    if args.len() < 5 {
-        Err(EvalError::WrongNumberOfArguments {
-            expected: 5,
-            got: args.len(),
-        })
-    } else {
-        if let (
-            ELispExp::String(buf_name),
-            ELispExp::Number(x),
-            ELispExp::Number(y),
-            ELispExp::Number(w),
-            ELispExp::Number(h),
-        ) = (&args[0], &args[1], &args[2], &args[3], &args[4])
-        {
-            let title = args.get(5).and_then(|exp| {
-                if let ELispExp::String(t) = exp {
-                    Some(t.to_string())
-                } else {
-                    None
-                }
-            });
-            let mode = args.get(6).and_then(|exp| match exp {
-                ELispExp::Symbol(m) | ELispExp::String(m) => Some(m.to_string()),
+    const NAME: &str = "make-floating-window";
+    // All of it read before the window opens, so that a call wrong anywhere
+    // makes neither the buffer nor the window.
+    let (positional, keywords) =
+        args::with_keywords(NAME, args, 5, 7, MAKE_FLOATING_WINDOW_KEYWORDS)?;
+    let (
+        ELispExp::String(buf_name),
+        ELispExp::Number(x),
+        ELispExp::Number(y),
+        ELispExp::Number(w),
+        ELispExp::Number(h),
+    ) = (
+        &positional[0],
+        &positional[1],
+        &positional[2],
+        &positional[3],
+        &positional[4],
+    )
+    else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "String, Number, Number, Number, Number".into(),
+            got: ELispExp::string(format!("{:?}", positional)),
+        });
+    };
+    // As loose as they always were: what is not a string is no title, and
+    // what is not a name no mode.
+    let title =
+        args::positional_or_keyword(NAME, positional, 5, &keywords, ":title")?.and_then(|exp| {
+            match exp {
+                ELispExp::String(t) => Some(t.to_string()),
                 _ => None,
-            });
+            }
+        });
+    let mode =
+        args::positional_or_keyword(NAME, positional, 6, &keywords, ":mode")?.and_then(|exp| {
+            match exp {
+                ELispExp::Symbol(m) | ELispExp::String(m) if !exp.is_nil() => Some(m.to_string()),
+                _ => None,
+            }
+        });
+    let role = args::optional_role(NAME, keywords.get(":role"))?.unwrap_or_default();
 
-            let id = ctx.open_floating_window(
-                buf_name,
-                *x as isize,
-                *y as isize,
-                *w as usize,
-                *h as usize,
-                title,
-                mode,
-                &env,
-            );
+    let id = ctx.open_floating_window(
+        buf_name,
+        *x as isize,
+        *y as isize,
+        *w as usize,
+        *h as usize,
+        title,
+        mode,
+        role,
+        &env,
+    );
 
-            // The id, which is true as well: nothing in this Lisp is false
-            // but nil, so `(if (make-floating-window ...) ...)` works too.
-            Ok(id.into())
-        } else {
-            Err(EvalError::WrongArgumentType {
-                expected: "String, Number, Number, Number, Number".into(),
-                got: ELispExp::string(format!("{:?}", args)),
-            })
-        }
-    }
+    // The id, which is true as well: nothing in this Lisp is false
+    // but nil, so `(if (make-floating-window ...) ...)` works too.
+    Ok(id.into())
 });
 
 pub const CLOSE_FLOATING_WINDOW_DOC: &str = "(close-floating-window): Close the newest floating \

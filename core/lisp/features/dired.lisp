@@ -218,7 +218,7 @@ for deletion stay flagged."
                          (with-current-buffer dired-buffer-name
                            (lambda () (dired--directory))))))
         (setq dired--marks nil))
-    (buffer-create dired-buffer-name 'dired-mode)
+    (buffer-create dired-buffer-name :mode 'dired-mode :role 'view)
     (switch-to-buffer dired-buffer-name)
     (dired--draw directory)
     ;; Line 2, `..', the first line a key can act on.

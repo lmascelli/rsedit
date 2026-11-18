@@ -5,11 +5,12 @@
 //!
 //! Design: `doc/architettura-editor.typ, <minibuffer>`.
 use super::*;
+use crate::buffer::BufferRole;
 use crate::editor::{
     COMPLETION_INVALIDATED_FUNCTION, COMPLETION_READ_FUNCTION, DEFAULT_MINIBUFFER_LINES,
     MINIBUFFER_LINES, MINIBUFFER_READ_FUNCTION,
 };
-use crate::feature::minibuffer;
+use crate::feature::minibuffer::{self, READER_TAKES_ROLE};
 use crate::managers::Recalled;
 use risp::call_callable;
 use std::sync::Arc;
@@ -272,14 +273,16 @@ primitive!(clear_minibuffer_history, args, _env, ctx, {
 });
 
 const DEFAULT_MINIBUFFER_PROMPT_DOC: &str = "(default-minibuffer-prompt PROMPT ON-CONFIRM \
-         ON-CHANGE ON-CANCEL &optional MODE KEY): The prompt `minibuffer-read' opens unless \
+         ON-CHANGE ON-CANCEL &optional MODE KEY ROLE): The prompt `minibuffer-read' opens unless \
          `*minibuffer-read-function*' names another: as in Emacs, a window across the bottom \
          of the frame, above the echo area, `minibuffer-lines' rows high, with PROMPT in front \
          of the answer; the windows above give it the rows, and have them back when it closes. \
-         The arguments are those of `minibuffer-read'; not called directly.";
+         The arguments are those of `minibuffer-read', in their places; ROLE, the role of the \
+         prompt's buffer, is prompt when nil, and must be prompt or derive from it. Not called \
+         directly.";
 
 primitive!(default_minibuffer_prompt, args, env, ctx, {
-    if !(4..=6).contains(&args.len()) {
+    if !(4..=7).contains(&args.len()) {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 4,
             got: args.len(),
@@ -297,6 +300,7 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
     // Read before anything is set, so that a wrong one changes nothing.
     let key = args::optional_name(args.get(5), "Symbol or String naming a history, or nil")?
         .filter(|key| !key.is_empty());
+    let role = prompt_role("default-minibuffer-prompt", args.get(6))?;
 
     // One prompt at a time, as in Emacs without recursive minibuffers: a
     // second would share the first's buffer and its callbacks, and take the
@@ -345,6 +349,7 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
         sized(&env, MINIBUFFER_LINES, DEFAULT_MINIBUFFER_LINES),
         title.as_deref().unwrap_or_default(),
         Some(mode),
+        role,
         &env,
     );
 
@@ -379,23 +384,68 @@ primitive!(completion_invalidate, _args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-const MINIBUFFER_READ_DOC: &str = "(minibuffer-read PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL \
-         &optional MODE KEY): Open a prompt titled PROMPT, and return at once. ON-CONFIRM is \
-         called with the text typed when Return is pressed, and ON-CANCEL, when not nil, with no \
-         arguments when Escape is. ON-CHANGE, when not nil, is called with the text when Tab is \
-         pressed and returns the candidates, a list of strings. MODE is the prompt's major mode, \
-         `minibuffer-mode' by default, and KEY names its history, PROMPT by default; nil for \
-         either is the default. Refused in a background job.\n\n\
+/// Returns the role ARG names for a prompt's buffer: [`BufferRole::Prompt`]
+/// when it is absent or nil, and an error naming FUNCTION when it names no
+/// role, or one that is not a prompt.
+pub(crate) fn prompt_role<B: BufferTrait>(
+    function: &str,
+    arg: Option<&ELispExp<B>>,
+) -> Result<BufferRole, EvalError<EditorState<B>>> {
+    let role = args::optional_role(function, arg)?.unwrap_or(BufferRole::Prompt);
+    if !role.derives_from(BufferRole::Prompt) {
+        return Err(EvalError::RuntimeMessage(format!(
+            "{function}: a prompt's buffer is of role prompt or one derived from it, not {}",
+            role.name()
+        )));
+    }
+    Ok(role)
+}
+
+const MINIBUFFER_READ_DOC: &str = "(minibuffer-read PROMPT ON-CONFIRM &optional ON-CHANGE \
+         ON-CANCEL MODE KEY &key :on-change :on-cancel :mode :key :role): Open a prompt titled \
+         PROMPT, and return at once. ON-CONFIRM is called with the text typed when Return is \
+         pressed, and ON-CANCEL, when not nil, with no arguments when Escape is. ON-CHANGE, when \
+         not nil, is called with the text when Tab is pressed and returns the candidates, a list \
+         of strings. MODE is the prompt's major mode, `minibuffer-mode' by default, and KEY \
+         names its history, PROMPT by default; nil for either is the default. Each goes in its \
+         place or after its keyword, not both. :role, prompt by default, is the role of the \
+         prompt's buffer: prompt or one derived from it, and only for a reader that takes it, \
+         as the `minibuffer' manual page says. Refused in a background job.\n\n\
          Example:\n\
-         (minibuffer-read \"Name:\" (lambda (name) (message \"Hello %s\" name)) nil nil)";
+         (minibuffer-read \"Name:\" (lambda (name) (message \"Hello %s\" name)) :key 'names)";
+
+/// The optional arguments of `minibuffer-read` a reader gets in their
+/// places, each with the keyword that may give it instead, in order.
+const MINIBUFFER_READ_PLACES: [&str; 4] = [":on-change", ":on-cancel", ":mode", ":key"];
+
+/// The keywords `minibuffer-read` takes.
+const MINIBUFFER_READ_KEYWORDS: &[&str] = &[":on-change", ":on-cancel", ":mode", ":key", ":role"];
 
 primitive!(minibuffer_read, args, env, ctx, {
-    if !(4..=6).contains(&args.len()) {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 4,
-            got: args.len(),
-        });
+    const NAME: &str = "minibuffer-read";
+    // Read whole before anything else, so that a call wrong anywhere opens
+    // nothing and leaves no state behind.
+    let (positional, keywords) = args::with_keywords(NAME, args, 2, 6, MINIBUFFER_READ_KEYWORDS)?;
+    let mut places: Vec<ELispExp<B>> = positional[..2].to_vec();
+    for (at, keyword) in MINIBUFFER_READ_PLACES.iter().enumerate() {
+        places.push(
+            args::positional_or_keyword(NAME, positional, at + 2, &keywords, keyword)?
+                .cloned()
+                .unwrap_or_else(ELispExp::nil),
+        );
     }
+    // As many as were given in place or by keyword, and never fewer than the
+    // four every reader has always been called with: a reader of four is
+    // not handed a fifth it would refuse.
+    let given = (2..places.len())
+        .rev()
+        .find(|&at| positional.len() > at || !places[at].is_nil())
+        .map_or(0, |at| at + 1);
+    places.truncate(given.max(4));
+    let role = match keywords.get(":role") {
+        Some(given) if !given.is_nil() => Some(prompt_role(NAME, Some(given))?),
+        _ => None,
+    };
     // Refused in a background job, where it can still be an error: its prompt
     // would be a window over a command nobody started, answered by a key
     // meant for whatever the user was doing.
@@ -407,7 +457,27 @@ primitive!(minibuffer_read, args, env, ctx, {
     let read_fn = env
         .get_variable(MINIBUFFER_READ_FUNCTION)
         .ok_or_else(|| EvalError::UnboundVariable(MINIBUFFER_READ_FUNCTION.into()))?;
-    call_callable(&read_fn, args, env.clone(), ctx)
+    if let Some(role) = role {
+        // A reader that has not said it takes a role would not be told of
+        // it, and would open a buffer of whatever role it opens: refused
+        // here, before it has opened anything.
+        let takes_role = match &read_fn {
+            ELispExp::Symbol(reader) => env
+                .get_property(reader, READER_TAKES_ROLE)
+                .is_some_and(|said| said.is_truthy()),
+            _ => false,
+        };
+        if !takes_role {
+            return Err(EvalError::RuntimeMessage(format!(
+                "minibuffer-read: the reader {read_fn:?} cannot give its prompt the role {}: \
+                 it does not have the minibuffer-reader-role property",
+                role.name()
+            )));
+        }
+        places.resize(6, ELispExp::nil());
+        places.push(ELispExp::symbol(role.name().into()));
+    }
+    call_callable(&read_fn, &places, env.clone(), ctx)
 });
 
 /// Registers the primitives of the minibuffer.

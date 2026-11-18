@@ -73,7 +73,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// Returns the buffer a run of PRODUCER writes into, emptied, read-only,
     /// in MODE: the newest listing of the same producer and mode when
     /// `results-reuse-buffer` says so, stopping the work that wrote into it,
-    /// and otherwise a new buffer named after STEM. PROTECTED, the buffer the
+    /// and otherwise a new buffer named after STEM, of role view. PROTECTED, the buffer the
     /// run reads, is never the one taken. `None` when the buffer could not
     /// be had.
     pub(crate) fn prepare_results_buffer(
@@ -98,7 +98,11 @@ impl<B: BufferTrait> EditorState<B> {
 
                     let eligible = self
                         .with_buffer(&name, |buf| {
-                            buf.file_path.is_none() && buf.current_mode == mode
+                            // A view, as one made here is: a buffer of another
+                            // role keeps it, whatever was listed in it.
+                            buf.file_path.is_none()
+                                && buf.current_mode == mode
+                                && buf.role().derives_from(crate::buffer::BufferRole::View)
                         })
                         .unwrap_or(false);
 
@@ -115,7 +119,14 @@ impl<B: BufferTrait> EditorState<B> {
             None => {
                 let name = self.free_name_for_work(stem);
 
-                self.new_buffer(&name, None, Some(mode.into()), env)?;
+                // A listing is looked at, not edited, whoever produced it.
+                self.new_buffer_as(
+                    &name,
+                    None,
+                    Some(mode.into()),
+                    crate::buffer::BufferRole::View,
+                    env,
+                )?;
 
                 name
             }

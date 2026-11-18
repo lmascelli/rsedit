@@ -4,6 +4,7 @@
 //!
 //! Design: `doc/architettura-editor.typ, <lettori-argomenti>`.
 use super::*;
+use crate::buffer::BufferRole;
 
 /// Returns ARG as a string, which it must already be.
 ///
@@ -156,4 +157,129 @@ pub(crate) fn width<B: BufferTrait>(n: f64) -> Result<usize, EvalError<EditorSta
 /// it hands back its argument untouched.
 pub(crate) fn quoted<B: BufferTrait>(value: ELispExp<B>) -> ELispExp<B> {
     ELispExp::form(vec![ELispExp::symbol("quote".into()), value])
+}
+
+/// Returns whether EXP is a keyword: a symbol whose name starts with `:`,
+/// and is more than the colon.
+pub(crate) fn is_keyword<B: BufferTrait>(exp: &ELispExp<B>) -> bool {
+    matches!(exp, ELispExp::Symbol(name) if name.len() > 1 && name.starts_with(':'))
+}
+
+/// The keyword arguments a primitive was given after its positional ones:
+/// each at most once, and each one the primitive knows.
+pub(crate) struct Keywords<'a, B: BufferTrait> {
+    given: Vec<(&'static str, &'a ELispExp<B>)>,
+}
+
+impl<'a, B: BufferTrait> Keywords<'a, B> {
+    /// Returns the value given for KEYWORD, written with its colon, or
+    /// `None` when it was not given.
+    pub(crate) fn get(&self, keyword: &str) -> Option<&'a ELispExp<B>> {
+        self.given
+            .iter()
+            .find(|(name, _)| *name == keyword)
+            .map(|(_, value)| *value)
+    }
+}
+
+/// A primitive's arguments, split: the positional ones and the keywords.
+pub(crate) type Split<'a, B> = (&'a [ELispExp<B>], Keywords<'a, B>);
+
+/// Splits ARGS, the arguments FUNCTION was called with, into the positional
+/// ones, from REQUIRED to MAX_POSITIONAL of them, and the keyword pairs that
+/// follow, every keyword one of KNOWN.
+///
+/// The keywords start at the first keyword past the required arguments, so a
+/// call with none is read exactly as before there were any. Everything is
+/// checked before anything is returned, so that a caller can refuse a call
+/// before it changes anything: a keyword not in KNOWN, one given twice, one
+/// with no value after it, and anything but a keyword where one belongs.
+pub(crate) fn with_keywords<'a, B: BufferTrait>(
+    function: &str,
+    args: &'a [ELispExp<B>],
+    required: usize,
+    max_positional: usize,
+    known: &[&'static str],
+) -> Result<Split<'a, B>, EvalError<EditorState<B>>> {
+    let split = args
+        .iter()
+        .enumerate()
+        .skip(required)
+        .find(|(_, arg)| is_keyword(arg))
+        .map_or(args.len(), |(at, _)| at);
+    let (positional, rest) = args.split_at(split);
+    if positional.len() < required || positional.len() > max_positional {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: if positional.len() < required {
+                required
+            } else {
+                max_positional
+            },
+            got: positional.len(),
+        });
+    }
+    let mut given: Vec<(&'static str, &'a ELispExp<B>)> = Vec::new();
+    for pair in rest.chunks(2) {
+        let (true, ELispExp::Symbol(written)) = (is_keyword(&pair[0]), &pair[0]) else {
+            return Err(EvalError::RuntimeMessage(format!(
+                "{function}: {:?} where a keyword was expected",
+                pair[0]
+            )));
+        };
+        let Some(keyword) = known.iter().find(|known| ***known == ***written) else {
+            return Err(EvalError::RuntimeMessage(format!(
+                "{function}: unknown keyword {written}; it takes {}",
+                known.join(" ")
+            )));
+        };
+        if given.iter().any(|(name, _)| name == keyword) {
+            return Err(EvalError::RuntimeMessage(format!(
+                "{function}: the keyword {keyword} is given twice"
+            )));
+        }
+        let Some(value) = pair.get(1) else {
+            return Err(EvalError::RuntimeMessage(format!(
+                "{function}: the keyword {keyword} has no value after it"
+            )));
+        };
+        given.push((keyword, value));
+    }
+    Ok((positional, Keywords { given }))
+}
+
+/// Returns the argument a caller gave either as the positional argument at
+/// INDEX or as KEYWORD, or `None` when it gave neither; an error naming
+/// FUNCTION when it gave both, which would leave it to guess which was meant.
+pub(crate) fn positional_or_keyword<'a, B: BufferTrait>(
+    function: &str,
+    positional: &'a [ELispExp<B>],
+    index: usize,
+    keywords: &Keywords<'a, B>,
+    keyword: &str,
+) -> Result<Option<&'a ELispExp<B>>, EvalError<EditorState<B>>> {
+    match (positional.get(index), keywords.get(keyword)) {
+        (Some(_), Some(_)) => Err(EvalError::RuntimeMessage(format!(
+            "{function}: given both as argument {} and as {keyword}",
+            index + 1
+        ))),
+        (from_position, from_keyword) => Ok(from_position.or(from_keyword)),
+    }
+}
+
+/// Returns ARG as the role it names, or `None` when it was not given or is
+/// nil; an error naming FUNCTION for anything else, a name no role has among
+/// it.
+pub(crate) fn optional_role<B: BufferTrait>(
+    function: &str,
+    arg: Option<&ELispExp<B>>,
+) -> Result<Option<BufferRole>, EvalError<EditorState<B>>> {
+    let Some(name) = optional_name(arg, "Symbol naming a buffer role")? else {
+        return Ok(None);
+    };
+    BufferRole::from_name(&name).map(Some).ok_or_else(|| {
+        EvalError::RuntimeMessage(format!(
+            "{function}: no buffer role is called {name}; the roles are {}",
+            BufferRole::ALL.map(BufferRole::name).join(" ")
+        ))
+    })
 }

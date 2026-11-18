@@ -3737,6 +3737,33 @@ Le decisioni:
 + *`read-only-mode` fuori dalle regole.* Protegge il buffer e non è una
   funzione del buffer: una vista lo deve poter avere senza permessi.
 
+=== Dove nasce il ruolo <ruoli-creazione>
+
+Il ruolo si dà dove il buffer è fatto. Le API di creazione hanno, oltre alla
+forma posizionale di sempre, una forma a keyword (`primitives/args.rs`,
+`with_keywords`): le keyword cominciano dopo gli argomenti obbligatori, al
+primo simbolo che comincia con `:`, e la chiamata è letta tutta, keyword
+sconosciute, ripetute, senza valore o date sia per posizione sia per nome
+comprese, prima di fare qualsiasi cosa.
+
+#ref-table(
+  columns: (3.8cm, 1fr),
+  header: ([Dove], [Come]),
+  [`buffer-create`], [`:mode` e `:role`, `editing` per difetto. Un buffer che esiste è reso com'è, modo compreso, se `:role` manca o è il suo ruolo o uno da cui deriva (`BufferRole::derives_from`); altrimenti è un errore, perché il ruolo non può cambiare.],
+  [`make-floating-window`], [`:title`, `:mode` e `:role`, `editing` per difetto; `open_floating_window` prende il ruolo.],
+  [`minibuffer-read`], [`:on-change`, `:on-cancel`, `:mode`, `:key` e `:role`, `prompt` per difetto, che deve essere `prompt` o derivarne (`prompt_role`). Il reader di `*minibuffer-read-function*` è chiamato per posizione, con almeno quattro argomenti; il ruolo gli arriva come settimo solo se il suo simbolo ha la proprietà `minibuffer-reader-role`, che i due reader distribuiti hanno. Un `:role` per un reader che non la ha è un errore, prima di chiamarlo.],
+  [Rust], [`open_prompt_window` dà `prompt`; `prepare_results_buffer`, e quindi occur, grep, compilazione e output della shell con produttore, `view`, e riusa solo un buffer `view`; l'output della shell senza produttore è `view`. File, `*scratch*` e `new_file_buffer` restano `editing`.],
+  [Lisp distribuito], [`completion` per `*Completions*`, anche da `completion-at-point`; `document-view` per help e manpage; `view` per Dired, buffer-list, theme-list, findings-list, log e locations di LSP, `*Messages*` e `*Backtrace*`; `editing`, esplicito, per il REPL di Risp.],
+)
+
++ *Il ruolo al reader solo se lo chiede.* Un reader scritto prima dei ruoli
+  ha al più sei parametri: un settimo lo romperebbe. Chi non dichiara di
+  saper onorare un ruolo non riceve nulla, e un ruolo esplicito per lui è
+  un errore anziché un ruolo ignorato in silenzio.
++ *Un buffer esistente non cambia ruolo.* `buffer-create` con un ruolo
+  incompatibile segnala invece di rendere un buffer che non è quello
+  chiesto; un ruolo derivato soddisfa la richiesta del genitore.
+
 == Due lessici sullo stesso testo <lessici>
 
 Il testo di un buffer viene letto in due modi diversi, per due domande diverse.

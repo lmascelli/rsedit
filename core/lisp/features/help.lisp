@@ -388,7 +388,7 @@ it again: (KIND ARGUMENTS...).")
   "Put PAGE in the help buffer, leaving the history alone."
   ;; Built before the help buffer is shown, from the editor as it was left.
   (let ((lines (help--build page)))
-    (buffer-create help-buffer-name 'help-mode)
+    (buffer-create help-buffer-name :mode 'help-mode :role 'document-view)
     (switch-to-buffer help-buffer-name)
     (set-buffer-read-only nil)
     (clear-buffer)

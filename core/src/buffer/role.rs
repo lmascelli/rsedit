@@ -65,6 +65,13 @@ impl BufferRole {
         std::iter::successors(Some(self), |role| role.parent())
     }
 
+    /// Returns whether this role is ANCESTOR or derives from it: a
+    /// [`BufferRole::DocumentView`] is a [`BufferRole::View`], and not the
+    /// other way round.
+    pub fn derives_from(self, ancestor: BufferRole) -> bool {
+        self.lineage().any(|role| role == ancestor)
+    }
+
     /// Returns whether a minor mode no rule speaks of is admitted: only in
     /// [`BufferRole::Editing`]. A derived role answers as its root.
     pub fn open_by_default(self) -> bool {

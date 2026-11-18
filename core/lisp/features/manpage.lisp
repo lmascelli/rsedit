@@ -116,7 +116,7 @@ word, so that a space, a `;' or a `*' in it reaches man and not the shell."
 
 (defun manpage--show (name text)
   "Put TEXT in the manual buffer as the page for NAME, emphasis and all."
-  (buffer-create manpage-buffer-name 'manpage-mode)
+  (buffer-create manpage-buffer-name :mode 'manpage-mode :role 'document-view)
   (switch-to-buffer manpage-buffer-name)
   (let* ((parsed (parse-overstrike text))
          (plain (car parsed))

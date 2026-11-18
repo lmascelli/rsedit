@@ -13,6 +13,7 @@ SYNOPSIS
     (minor-mode-p MODE &optional BUFFER)
     (minor-mode-refusal MODE &optional BUFFER)
     (buffer-role &optional BUFFER)
+    (buffer-role-derived-p ROLE ANCESTOR)
     (minor-modes &optional BUFFER)
     (minor-mode-enable MODE &optional MAJOR)
     (minor-mode-disable MODE &optional MAJOR)
@@ -171,7 +172,20 @@ BUFFER ROLES
     for something to look at; and document-view, for a text to read, which
     is a view. A buffer gets its role when it is made, before any of its
     hooks runs, and keeps it whatever its major mode becomes. (buffer-role)
-    says which it is.
+    says which it is, and `buffer-role-derived-p' whether a role is another
+    or derives from it.
+
+    The role is given where the buffer is made: :role to `buffer-create'
+    and `make-floating-window', editing when it is not given, and to
+    `minibuffer-read', prompt when it is not. What the editor makes has
+    the role it is for: a file, *scratch* and the *risp* buffer are
+    editing; the prompt, floating or not and whatever its major mode, an
+    incremental search's included, is prompt; the list of candidates, at a
+    prompt or in a buffer, is completion; the help and the manual pages are
+    document-view; Dired, the buffer list, the theme list, the findings
+    list, the results of occur and grep, a build's output and a shell
+    command's, the logs and locations of LSP, *Messages* and *Backtrace*
+    are view.
 
     The role decides which minor modes the buffer admits. An editing
     buffer admits every one; the other roles admit only those permitted

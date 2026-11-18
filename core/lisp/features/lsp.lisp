@@ -255,7 +255,7 @@ one that no longer reads, and stopped.")
   "nil, after adding TEXT as a line to SERVER's log buffer, cut from its start
 past `lsp-log-limit'."
   (let ((name (lsp--log-buffer server)))
-    (buffer-create name 'lsp--log-mode)
+    (buffer-create name :mode 'lsp--log-mode :role 'view)
     (with-current-buffer
      name
      (lambda ()
@@ -1099,7 +1099,7 @@ characters when FILE is one of SERVER's documents, the server's otherwise."
 walk, and showing the list."
   (let ((root (get server 'root))
         (entries (mapcar (lambda (place) (lsp--entry-of server place)) places)))
-    (buffer-create lsp--locations-buffer 'lsp-locations-mode)
+    (buffer-create lsp--locations-buffer :mode 'lsp-locations-mode :role 'view)
     (with-current-buffer
      lsp--locations-buffer
      (lambda ()

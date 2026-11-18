@@ -5,6 +5,7 @@
 //! Design: `doc/architettura-editor.typ, <coppie>`.
 
 use super::*;
+use crate::buffer::BufferRole;
 
 impl<B: BufferTrait> EditorState<B> {
     /// Splits the focused window, the halves divided by DIVISION, and returns
@@ -134,8 +135,8 @@ impl<B: BufferTrait> EditorState<B> {
         self.windows(|windows| windows.focused_buffer())
     }
 
-    /// Makes a buffer BUF_NAME, in MODE or `fundamental-mode`, shows it in a
-    /// bordered floating window at (X, Y), WIDTH by HEIGHT and titled TITLE,
+    /// Makes a buffer BUF_NAME, in MODE or `fundamental-mode` and of ROLE,
+    /// shows it in a bordered floating window at (X, Y), WIDTH by HEIGHT and titled TITLE,
     /// gives that window focus, and returns its id. Closing the window gives
     /// focus back to the one that had it.
     ///
@@ -150,10 +151,11 @@ impl<B: BufferTrait> EditorState<B> {
         height: usize,
         title: Option<String>,
         mode: Option<String>,
+        role: BufferRole,
         env: &Arc<Env<EditorState<B>>>,
     ) -> WindowId {
         let previous_focused_window_id = self.get_focused_window_id();
-        self.new_buffer(buf_name, None, mode, env);
+        self.new_buffer_as(buf_name, None, mode, role, env);
 
         // The id and the push in one acquisition: no other thread sees an id
         // handed out and not yet used.
@@ -181,7 +183,8 @@ impl<B: BufferTrait> EditorState<B> {
         new_id
     }
 
-    /// Makes a buffer BUF_NAME, in MODE or `fundamental-mode`, shows it in the
+    /// Makes a buffer BUF_NAME, in MODE or `fundamental-mode` and of ROLE, a
+    /// [`BufferRole::Prompt`] or one derived from it, shows it in the
     /// minibuffer's window, LINES rows across the bottom of the frame with
     /// PROMPT in front of the answer, gives that window focus, and returns its
     /// id. Closing the buffer closes the window and gives focus back to the
@@ -194,10 +197,12 @@ impl<B: BufferTrait> EditorState<B> {
         lines: usize,
         prompt: &str,
         mode: Option<String>,
+        role: BufferRole,
         env: &Arc<Env<EditorState<B>>>,
     ) -> WindowId {
+        debug_assert!(role.derives_from(BufferRole::Prompt), "{role:?}");
         let return_to = self.get_focused_window_id();
-        self.new_buffer(buf_name, None, mode, env);
+        self.new_buffer_as(buf_name, None, mode, role, env);
         let new_id =
             self.windows_mut(|windows| windows.open_prompt(buf_name, lines, prompt, return_to));
         // As for a float: the window is in the tree before focus moves, so

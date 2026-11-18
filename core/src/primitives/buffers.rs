@@ -11,35 +11,61 @@ primitive!(current_buffer, _args, _env, ctx, {
     Ok(ELispExp::string(ctx.get_current_buffer_name()))
 });
 
-pub const BUFFER_CREATE_DOC: &str = "(buffer-create NAME &optional MODE): Make an empty buffer \
-         called NAME in MODE, fundamental-mode by default, without showing it, and return NAME. A \
-         buffer of that name that exists already is left as it is, mode included.\n\n\
+pub const BUFFER_CREATE_DOC: &str = "(buffer-create NAME &optional MODE &key :mode :role): Make \
+         an empty buffer called NAME in MODE, fundamental-mode by default, without showing it, \
+         and return NAME. MODE goes either after NAME or after :mode, not both. :role is what the \
+         buffer is for, editing by default: prompt, completion, view or document-view, which \
+         `buffer-role' tells, given before any of the buffer's hooks runs and kept for its \
+         whole life. A buffer of that name that exists already is left as it is, mode \
+         included, and returned, unless :role names a role it is not, nor derives from: that is \
+         an error, and nothing is made.\n\n\
          Example:\n\
-         (buffer-create \"*report*\")";
+         (buffer-create \"*report*\")\n\
+         (buffer-create \"*listing*\" :mode 'occur-mode :role 'view)";
+
+/// The keywords `buffer-create` takes.
+const BUFFER_CREATE_KEYWORDS: &[&str] = &[":mode", ":role"];
 
 primitive!(buffer_create, args, env, ctx, {
-    if args.is_empty() || args.len() > 2 {
-        Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: args.len(),
-        })
-    } else {
-        let name = match &args[0] {
-            ELispExp::String(name) => name.to_string(),
-            ELispExp::Symbol(name) => name.to_string(),
-            _ => {
-                return Err(EvalError::WrongArgumentType {
-                    expected: "String or Symbol".into(),
-                    got: args[0].clone(),
-                });
-            }
-        };
-        let mode = args::optional_name(args.get(1), "String or Symbol naming a mode")?;
-        if !ctx.has_buffer(&name) {
-            ctx.new_buffer(&name, None, mode, &env);
+    // Everything is read before anything is looked at, so that a call that
+    // is wrong anywhere makes nothing.
+    let (positional, keywords) =
+        args::with_keywords("buffer-create", args, 1, 2, BUFFER_CREATE_KEYWORDS)?;
+    let name = match &positional[0] {
+        ELispExp::String(name) => name.to_string(),
+        ELispExp::Symbol(name) => name.to_string(),
+        _ => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String or Symbol".into(),
+                got: positional[0].clone(),
+            });
         }
-        Ok(ELispExp::string(name))
+    };
+    let mode = args::optional_name(
+        args::positional_or_keyword("buffer-create", positional, 1, &keywords, ":mode")?,
+        "String or Symbol naming a mode",
+    )?;
+    let role = args::optional_role("buffer-create", keywords.get(":role"))?;
+    match ctx.with_buffer(&name, |buf| buf.role()) {
+        // A buffer is the role it was made with: asked to be another, it
+        // cannot become it, and handing it back as though it were would
+        // leave the caller with modes it did not ask for.
+        Some(existing) => {
+            if let Some(wanted) = role
+                && !existing.derives_from(wanted)
+            {
+                return Err(EvalError::RuntimeMessage(format!(
+                    "buffer-create: {name} exists, as a buffer of role {}, not {}",
+                    existing.name(),
+                    wanted.name()
+                )));
+            }
+        }
+        None => {
+            ctx.new_buffer_as(&name, None, mode, role.unwrap_or_default(), &env);
+        }
     }
+    Ok(ELispExp::string(name))
 });
 
 pub const SET_BUFFER_READ_ONLY_DOC: &str = "(set-buffer-read-only FLAG): Make the current buffer \

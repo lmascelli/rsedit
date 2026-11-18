@@ -205,8 +205,15 @@ primitive!(shell_command_start, args, env, ctx, {
     } else {
         let name = ctx.free_name_for_work(OUTPUT_BUFFER);
 
-        ctx.new_buffer(&name, None, Some(mode), &env)
-            .filter(|name| ctx.has_buffer(name))
+        // Output to read, as a listing is, whether or not it is one.
+        ctx.new_buffer_as(
+            &name,
+            None,
+            Some(mode),
+            crate::buffer::BufferRole::View,
+            &env,
+        )
+        .filter(|name| ctx.has_buffer(name))
     };
 
     let Some(name) = name else {

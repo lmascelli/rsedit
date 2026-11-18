@@ -17,7 +17,7 @@ Example:
 
 (defun messages-buffer-refresh ()
   "Show the log, as it is now, in the *Messages* buffer."
-  (buffer-create "*Messages*")
+  (buffer-create "*Messages*" :role 'view)
   (switch-to-buffer "*Messages*")
   (clear-buffer)
   (mapc (lambda (line) (insert line "\n")) (all-logs))
@@ -64,7 +64,8 @@ before it opened."
   (make-floating-window "*Backtrace*" 4 2
                          (max 20 (- frame-width 8))
                          (max 5 (- frame-height 6))
-                         "Backtrace (q to dismiss)" 'backtrace-mode)
+                         :title "Backtrace (q to dismiss)" :mode 'backtrace-mode
+                         :role 'view)
   (setq *backtrace-window-open* t)
   (insert message "\n")
   (if frames

@@ -151,7 +151,7 @@ and a space.")
 (defcommand theme-list () nil
   "Show the themes installed, the one in force marked with a *, for Return to
 apply one."
-  (buffer-create theme-list-buffer-name 'theme-list-mode)
+  (buffer-create theme-list-buffer-name :mode 'theme-list-mode :role 'view)
   (switch-to-buffer theme-list-buffer-name)
   (theme-list--draw)
   (goto-line 1))
