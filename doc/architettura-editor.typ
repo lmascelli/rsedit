@@ -8089,11 +8089,15 @@ del nucleo che non sanno nulla di LSP: i processi dialoganti nella forma
 `messages` (@processi-dialoganti), il JSON dell'interprete
 (`json-parse-string`, `json-serialize`), il deposito delle segnalazioni
 (@segnalazioni) e il loro disegno (@segnalazioni-schermo), le righe e colonne
-in altre unità (@posizioni-unita), `buffer-modified-tick` (@due-porte), i modi
-minori (@modi-minori), `project-root` (@mod-project), `find-file` e le liste
-di risultati (@risultati). Il nucleo non lo nomina, e un plugin può
-sostituirlo. Fa le segnalazioni, la definizione e le code action; il
-completamento, con ciò che manca ancora al nucleo, è in `doc/progetto-lsp.typ`.
+in altre unità e la misura di una stringa, `string-line-column`
+(@posizioni-unita), `buffer-modified-tick` e l'osservazione delle modifiche,
+`track-changes-begin` e `track-changes-end` (@due-porte), `completion-offer`
+(@completamento), `replace-regions` (@modifiche-multiple), i modi minori
+(@modi-minori), `project-root` (@mod-project), `find-file` e le liste di
+risultati (@risultati). Ciascuno di questi mattoni ha un cliente che non è
+LSP. Il nucleo non nomina il modulo, e un plugin può sostituirlo. Fa le
+segnalazioni, la sincronizzazione, la definizione, le code action e il
+completamento.
 
 `lsp-mode`, acceso in un buffer che visita un file, cerca in `lsp-servers` la
 voce del suo modo maggiore, `(MODE NOME (PROGRAMMA ARGOMENTI...) . PROPRIETÀ)`,
@@ -8119,7 +8123,9 @@ tiene il suo stato (`put`, `get`).
 
 Del documento il buffer tiene, con `buffer-put`, il server, l'URI, il
 `languageId`, la versione --- 1 all'apertura, uno in più a ogni `didChange`
---- e il `buffer-modified-tick` dell'ultimo invio.
+--- e il `buffer-modified-tick` dell'ultimo invio. Con un server che prende i
+tratti, il buffer è anche osservato sotto la chiave `lsp` di
+`track-changes-begin`, dall'ultimo invio.
 
 #figure(
   canvas(height: 8.4cm)[
@@ -8166,13 +8172,17 @@ con la versione dell'invio ---; un `error` va nel registro, e nell'area
 messaggi se la richiesta era per un buffer. Con `method` e `id` è una
 richiesta del server, e ha sempre una risposta, perché un server che ne
 aspetta una può fermarsi; con `method` e senza `id` una notifica, e quelle che
-il modulo non conosce si ignorano.
+il modulo non conosce si ignorano. Ogni messaggio si scrive con
+`json-serialize`: un campo assente si omette, un array vuoto è `[]`, un
+booleano falso il simbolo `false`; nil non entra mai in un messaggio, perché
+`json-serialize` lo rifiuterebbe. Gli id delle richieste sono interi piccoli,
+esatti come float.
 
 #ref-table(
   columns: (5.6cm, 1fr),
   header: ([Dal server], [Risposta]),
   [`workspace/configuration`], [per ogni voce, la sezione chiesta di `:settings`, scesa per i punti del nome, o null.],
-  [`workspace/applyEdit`], [`applied` falso: il client non dichiara `applyEdit`.],
+  [`workspace/applyEdit`], [la modifica, con `lsp--apply-edit` (sotto): `applied`, e `failureReason` se rifiutata.],
   [`client/registerCapability`, `client/unregisterCapability`, `window/workDoneProgress/create`], [null.],
   [`window/showMessageRequest`], [il messaggio si mostra, senza le scelte; null.],
   [ogni altra richiesta], [l'errore `-32601`, metodo sconosciuto.],
@@ -8181,15 +8191,33 @@ il modulo non conosce si ignorano.
 )
 
 *Lo svuotamento.* Un documento il cui `buffer-modified-tick` non è quello
-dell'ultimo invio manda `didChange` con il testo intero, versione più uno, se
-il server vuole le modifiche (`textDocumentSync` diverso da 0). Si svuota in
+dell'ultimo invio manda `didChange`, versione più uno, se il server vuole le
+modifiche (`textDocumentSync` diverso da 0): un `contentChanges` solo, con il
+tratto cambiato se il server prende i tratti (2), il testo intero altrimenti
+(1). Si svuota in
 tre momenti: dopo ogni comando (`post-command-hook` per ogni modo), all'inizio
 di ogni consegna del server, prima di ogni richiesta. `didSave` segue
 `after-save-hook`, dopo uno svuotamento, per i server che dichiarano `save`;
 `didClose` segue lo spegnimento di `lsp-mode`, la chiusura del buffer
-(`after-close-hook`, che confronta i documenti con `all-buffer-names`), un
+(`after-close-hook`, con il nome in `closed-buffer-name`), un
 cambio di modo maggiore che ha tolto `lsp-mode` (controllato dopo ogni
 comando), e `C-x C-w`, seguito da un `didOpen` del nome nuovo.
+
+*I tratti.* `lsp--open`, con un server che prende i tratti, comincia a
+osservare il buffer sotto la chiave `lsp` mentre ne legge il testo; ogni invio
+legge ciò che è cambiato con `track-changes-end` e ricomincia subito a
+osservare. Vim, nello stesso buffer, osserva una sessione di Insert sotto la
+chiave nil e non ne è toccato. La risposta `(START REMOVED INSERTED
+REMOVED-TEXT)` è in caratteri sul testo di adesso. L'inizio dell'intervallo è
+lo stesso nel testo di prima e in quello di adesso, perché davanti a START
+niente è cambiato: `lsp--position-at` lo traduce nell'unità del server. La
+fine nel testo di prima non si può leggere nel buffer, dove quel testo non c'è
+più: si ricava dall'inizio e dal testo tolto, REMOVED-TEXT, misurato con
+`string-line-column` nell'unità del server --- la riga dell'inizio più le
+righe nuove, e la colonna dell'inizio più quella della fine se non ce ne
+sono. Il testo nuovo è INSERTED. Quando il testo tolto non si sa --- un undo
+che è uscito dal tratto osservato, un file riletto da disco --- REMOVED-TEXT è
+nil e il modulo manda il testo intero. `lsp--detach` smette di osservare.
 
 *Le segnalazioni.* Una voce per diagnostica: `:start` e `:end` dalla `range`,
 `:severity` da 1--4 in `error`, `warning`, `info`, `hint` (assente: `error`),
@@ -8248,6 +8276,24 @@ solo; il modulo le cerca prima in tutti, perché un rifiuto non ne cambi
 nessuno. I buffer restano da
 salvare; `lsp--flush-all` manda subito il testo nuovo ai server.
 
+*Il completamento.* `lsp-complete`, su `C-M-i` e `M-tab` nella keymap di
+`lsp-mode`, chiede `textDocument/completion` alla posizione del punto, se il
+server dichiara `completionProvider`, con scadenza, solo per il testo di
+adesso, e al posto di una richiesta uguale ancora in corso. La risposta è un
+elenco di voci o una `CompletionList`; arriva tra un comando e l'altro, e vale
+solo se il buffer corrente e il punto sono ancora quelli. Il testo di ogni
+voce è `textEdit.newText`, o `insertText`, o `label`, e di due voci con lo
+stesso testo resta la prima. Il tratto che i candidati sostituiscono è la
+`range` della prima voce che ne ha una, o il simbolo al punto
+(`bounds-of-thing-at-point`). `completion-offer` offre i candidati su quel
+tratto come `completion-at-point` offre quelli delle fonti; a scelta fatta
+chiama una funzione del modulo con il candidato, che applica le sue
+`additionalTextEdits` (un `use` in testa) con `replace-regions`. Quelle,
+tradotte in offset quando la risposta è arrivata, si spostano della
+differenza di misura del buffer se stanno dopo il tratto; una che lo tocca le
+fa lasciare tutte, con un messaggio. Poi `lsp--flush-all`. Il completamento
+automatico dopo un carattere di innesco (`triggerCharacters`) non c'è.
+
 *L'arresto.* `lsp-shutdown` manda `shutdown`; alla risposta `exit`, e chiude
 l'ingresso. Se dopo due secondi la consegna `exit` non è arrivata,
 `process-stop`. Alla consegna `exit` il modulo toglie le segnalazioni del
@@ -8286,11 +8332,23 @@ e i documenti si riaprono presso il nuovo come versione 1, al più
   ha sempre ricevuto il testo su cui gli si chiede qualcosa, e il confronto
   delle versioni basta a scartare le risposte vecchie. Il costo è un
   `didChange` per comando che scrive.
-+ *Il testo intero.* Un intervallo sbagliato è un difetto silenzioso: il
-  server lavora su un testo che non è quello del buffer. Il testo intero è
-  giusto per costruzione e chiede al nucleo solo `buffer-modified-tick`; costa
-  la misura del file a ogni comando che scrive. I tratti vengono quando il
-  nucleo saprà dire anche il testo tolto (`doc/progetto-lsp.typ`).
++ *I tratti quando il server li prende, il testo intero quando il testo tolto
+  non si sa.* Il testo intero costa la misura del file a ogni comando che
+  scrive; il tratto costa ciò che il comando ha scritto. Un intervallo
+  sbagliato è però un difetto silenzioso: il server lavora su un testo che
+  non è quello del buffer. Per questo il tratto viene tutto dal nucleo ---
+  l'inizio da `track-changes-end`, la fine dal testo tolto misurato da
+  `string-line-column` --- e quando il testo tolto non si sa il modulo non lo
+  ricostruisce, manda il testo intero, giusto per costruzione. Un osservatore
+  sotto una chiave sua non tocca quello di vim. Scartato: copiare il buffer a
+  ogni invio e confrontare le due copie, che costa la misura del file come il
+  testo intero.
++ *Il completamento è un comando suo, non una fonte.* Le fonti di
+  `completion-at-point` rispondono dentro il comando, il server dopo, tra un
+  comando e l'altro: una fonte aspetterebbe fino alla scadenza. Il comando
+  chiede, e `completion-offer` offre più tardi ciò che `completion-at-point`
+  offre subito. Scartato: una fonte che risponde dall'ultima risposta
+  ricordata, che offre al primo tasto i candidati della parola di prima.
 + *`utf-32` prima di `utf-16`, `utf-8` mai.* Il client offre in
   `general.positionEncodings` `utf-32`, che conta i caratteri come l'editor:
   nessuna conversione, e le colonne dei file non aperti sono giuste anche

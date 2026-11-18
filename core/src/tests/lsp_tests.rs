@@ -6,12 +6,15 @@
 //! below; two references; code actions that change `a.fake` and `b.fake`,
 //! one to be resolved, one a command that it carries out with applyEdit;
 //! completions, on line 1 with changes elsewhere, on line 2 with a range.
+//! It keeps the document's text as it is told it, rebuilt from the changes
+//! it receives, with columns in bytes.
 //!
 //! Design: `doc/architettura-editor.typ, <mod-lsp>`.
 #[cfg(all(test, unix))]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
+    use crate::input::{KeyCode, KeyEvent};
     use risp::{Env, LispExp, Parser, eval};
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -19,10 +22,13 @@ mod tests {
 
     type Ctx = EditorState<GapBuffer>;
 
-    /// The server. Its arguments are the file it logs to and the position
-    /// encoding it chooses.
+    /// The server. Its arguments are the file it logs to, the position
+    /// encoding it chooses, and how it wants changes: 1, the default, as the
+    /// whole text, 2 as the stretch changed.
     const SERVER: &str = r#"log="$1"
 encoding="$2"
+sync="${3:-1}"
+dir="${log%/*}"
 send() { printf 'Content-Length: %s\r\n\r\n%s' "${#1}" "$1"; }
 at() { printf '{"end":{"character":0,"line":%s},"start":{"character":0,"line":%s}}' "$1" "$1"; }
 len=0
@@ -36,7 +42,7 @@ while IFS= read -r line; do
       id=$(printf '%s' "$body" | sed -n 's/^{"id":\([0-9]*\),.*/\1/p')
       case "$body" in
         *'"method":"initialize"'*)
-          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":{\"capabilities\":{\"codeActionProvider\":{\"resolveProvider\":true},\"completionProvider\":{},\"definitionProvider\":true,\"positionEncoding\":\"$encoding\",\"textDocumentSync\":{\"change\":1,\"openClose\":true,\"save\":true},\"referencesProvider\":true}}}" ;;
+          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":{\"capabilities\":{\"codeActionProvider\":{\"resolveProvider\":true},\"completionProvider\":{},\"definitionProvider\":true,\"positionEncoding\":\"$encoding\",\"textDocumentSync\":{\"change\":$sync,\"openClose\":true,\"save\":true},\"referencesProvider\":true}}}" ;;
         *'"method":"shutdown"'*)
           send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":null}" ;;
         *'"method":"exit"'*)
@@ -73,12 +79,84 @@ while IFS= read -r line; do
           esac
           send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":$result}" ;;
         *'"method":"textDocument/didOpen"'*|*'"method":"textDocument/didChange"'*)
+          printf '%s' "$body" > "$dir/body"
+          LC_ALL=C awk -v bodyf="$dir/body" -v textf="$dir/served" -f "$dir/apply.awk"
           uri=$(printf '%s' "$body" | sed -n 's/.*"uri":"\([^"]*\)".*/\1/p')
           version=$(printf '%s' "$body" | sed -n 's/.*"version":\([0-9]*\).*/\1/p')
           send "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"diagnostics\":[{\"code\":7,\"message\":\"version $version\",\"range\":{\"end\":{\"character\":5,\"line\":0},\"start\":{\"character\":3,\"line\":0}},\"severity\":2}],\"uri\":\"$uri\",\"version\":$version}}" ;;
       esac ;;
   esac
 done
+"#;
+
+    /// What the server does with a didOpen or a didChange: the text it is
+    /// given, whole or as a range, in UTF-8 bytes, put in place in the file
+    /// `served`. Read in the C locale, a string counts bytes.
+    const APPLY: &str = r#"function hex(h,  i, n) {
+  n = 0
+  for (i = 1; i <= length(h); i++) n = n * 16 + index("0123456789abcdef", tolower(substr(h, i, 1))) - 1
+  return n
+}
+function utf8(n) {
+  if (n < 128) return sprintf("%c", n)
+  if (n < 2048) return sprintf("%c%c", 192 + int(n / 64), 128 + n % 64)
+  if (n < 65536) return sprintf("%c%c%c", 224 + int(n / 4096), 128 + int(n / 64) % 64, 128 + n % 64)
+  return sprintf("%c%c%c%c", 240 + int(n / 262144), 128 + int(n / 4096) % 64, 128 + int(n / 64) % 64, 128 + n % 64)
+}
+function decode(s, i,   out, c, n, m) {
+  out = ""
+  while (i <= length(s)) {
+    c = substr(s, i, 1)
+    if (c == "\"") break
+    if (c != "\\") { out = out c; i++; continue }
+    c = substr(s, i + 1, 1)
+    i += 2
+    if (c == "n") out = out "\n"
+    else if (c == "t") out = out "\t"
+    else if (c == "r") out = out "\r"
+    else if (c == "b") out = out "\b"
+    else if (c == "f") out = out "\f"
+    else if (c == "u") {
+      n = hex(substr(s, i, 4))
+      i += 4
+      if (n >= 55296 && n < 56320 && substr(s, i, 2) == "\\u") {
+        m = hex(substr(s, i + 2, 4))
+        i += 6
+        n = 65536 + (n - 55296) * 1024 + (m - 56320)
+      }
+      out = out utf8(n)
+    } else out = out c
+  }
+  return out
+}
+function num(s, key) {
+  match(s, "\"" key "\":[0-9]+")
+  return substr(s, RSTART + length(key) + 3, RLENGTH - length(key) - 3) + 0
+}
+function offset(t, line, column,   at, k) {
+  at = 0
+  for (; line > 0; line--) {
+    k = index(substr(t, at + 1), "\n")
+    if (k == 0) return length(t)
+    at += k
+  }
+  return at + column
+}
+BEGIN {
+  RS = "\001"
+  if ((getline body < bodyf) <= 0) body = ""
+  if ((getline text < textf) <= 0) text = ""
+  new = decode(body, index(body, "\"text\":\"") + 8)
+  if (match(body, /"range":[{]"end":[{][^}]*[}],"start":[{][^}]*[}][}]/)) {
+    range = substr(body, RSTART, RLENGTH)
+    end = substr(range, index(range, "\"end\""))
+    start = substr(range, index(range, "\"start\""))
+    from = offset(text, num(start, "line"), num(start, "character"))
+    to = offset(text, num(end, "line"), num(end, "character"))
+    new = substr(text, 1, from) new substr(text, to + 1)
+  }
+  printf "%s", new > textf
+}
 "#;
 
     /// A directory of this test's own, with the server's script and log,
@@ -92,6 +170,7 @@ done
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).expect("creating the sandbox");
             std::fs::write(dir.join("server.sh"), SERVER).expect("writing the server");
+            std::fs::write(dir.join("apply.awk"), APPLY).expect("writing the server");
             Sandbox(dir)
         }
 
@@ -138,6 +217,17 @@ done
     /// An editor with the module loaded, and the test server as the one for
     /// fundamental-mode, choosing ENCODING, with its root in SANDBOX.
     fn editor(sandbox: &Sandbox, encoding: &str) -> (Ctx, Arc<Env<Ctx>>) {
+        editor_syncing(sandbox, encoding, "1", &[])
+    }
+
+    /// The editor of `editor`, with a server that wants changes as SYNC
+    /// says, and the modules MORE loaded after the others.
+    fn editor_syncing(
+        sandbox: &Sandbox,
+        encoding: &str,
+        sync: &str,
+        more: &[&str],
+    ) -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
@@ -150,14 +240,17 @@ done
             include_str!("../../lisp/features/compile.lisp"),
             include_str!("../../lisp/features/project.lisp"),
             include_str!("../../lisp/features/lsp.lisp"),
-        ] {
+        ]
+        .into_iter()
+        .chain(more.iter().copied())
+        {
             run(source, &env, &ctx);
         }
         run(
             &format!(
                 r#"(setq lsp-servers
                      (list (list 'fundamental-mode "fake"
-                                 (list "sh" "{script}" "{log}" "{encoding}")
+                                 (list "sh" "{script}" "{log}" "{encoding}" "{sync}")
                                  :language "rust"
                                  :settings (make-map "fake" (make-map "depth" 2)))))
                    (defun test-root (file) "{root}")
@@ -316,6 +409,199 @@ done
         type_at_end(&name, "three\\n", &env, &ctx);
         let third = logged(&sandbox, &[r#""version":3"#], &env, &ctx);
         assert!(third.contains(r#""text":"one\ntwo\nthree\n""#), "{third}");
+    }
+
+    /// Sends the server what the buffer NAME, visiting FILE, has changed,
+    /// runs the host's ticks until the server has taken it in, checks that
+    /// the text it rebuilt is the buffer's, and returns the didChange.
+    fn server_has_the_text(
+        sandbox: &Sandbox,
+        name: &str,
+        file: &str,
+        env: &Arc<Env<Ctx>>,
+        ctx: &Ctx,
+    ) -> String {
+        run("(lsp--after-command)", env, ctx);
+        let version = text(&run(
+            &format!(r#"(format "%d" (buffer-get 'lsp-version "{name}"))"#),
+            env,
+            ctx,
+        ));
+        finding_says(file, &format!("version {version}"), env, ctx);
+        let served = std::fs::read_to_string(sandbox.0.join("served")).unwrap_or_default();
+        assert_eq!(
+            served,
+            contents(name, env, ctx),
+            "the server's text at version {version}"
+        );
+        logged(
+            sandbox,
+            &[
+                r#""method":"textDocument/didChange""#,
+                &format!(r#""version":{version}}}"#),
+            ],
+            env,
+            ctx,
+        )
+    }
+
+    /// Evaluates SRC in the buffer NAME, and ends its undo group.
+    fn edit(name: &str, src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
+        run(
+            &format!(r#"(with-current-buffer "{name}" (lambda () {src} (undo-boundary)))"#),
+            env,
+            ctx,
+        );
+    }
+
+    #[test]
+    fn a_server_that_takes_stretches_is_sent_only_what_the_edits_changed() {
+        let sandbox = Sandbox::new("stretches");
+        let file = sandbox.file("a.fake", "uno\nè😀 due\ntre\n");
+        let (ctx, env) = editor_syncing(&sandbox, "utf-8", "2", &[]);
+        let name = open(&file, &env, &ctx);
+        finding_says(&file, "version 1", &env, &ctx);
+        // After the emoji, six bytes into its line.
+        edit(&name, r#"(goto-char 6) (insert "X")"#, &env, &ctx);
+        let change = server_has_the_text(&sandbox, &name, &file, &env, &ctx);
+        assert!(
+            change.contains(r#""contentChanges":[{"range":{"end":{"character":6,"line":1},"start":{"character":6,"line":1}},"text":"X"}]"#),
+            "{change}"
+        );
+        type_at_end(&name, "quattro\\ncinque", &env, &ctx);
+        server_has_the_text(&sandbox, &name, &file, &env, &ctx);
+        // From inside the first line to inside the third.
+        edit(&name, "(delete-region 2 13)", &env, &ctx);
+        let change = server_has_the_text(&sandbox, &name, &file, &env, &ctx);
+        assert!(
+            change.contains(r#"{"range":{"end":{"character":1,"line":2},"start":{"character":2,"line":0}},"text":""}"#),
+            "{change}"
+        );
+        // Edits at both ends, and a word typed and deleted again, in one.
+        edit(
+            &name,
+            r#"(goto-char 1) (insert "a\nb") (goto-char (point-max)) (delete-char -3)
+               (insert "zz") (delete-char -2)"#,
+            &env,
+            &ctx,
+        );
+        server_has_the_text(&sandbox, &name, &file, &env, &ctx);
+        edit(&name, r#"(insert "zz") (delete-char -2)"#, &env, &ctx);
+        server_has_the_text(&sandbox, &name, &file, &env, &ctx);
+        assert!(
+            !sandbox
+                .log()
+                .lines()
+                .any(|line| line.contains(r#""contentChanges":[{"text""#)),
+            "the whole text was sent:\n{}",
+            sandbox.log()
+        );
+    }
+
+    #[test]
+    fn the_range_of_a_stretch_counts_columns_in_the_unit_of_the_server() {
+        let sandbox = Sandbox::new("stretch-unit");
+        let file = sandbox.file("a.fake", "x😀\n😀y\n");
+        let (ctx, env) = editor_syncing(&sandbox, "utf-16", "2", &[]);
+        let name = open(&file, &env, &ctx);
+        finding_says(&file, "version 1", &env, &ctx);
+        // What is removed ends after an emoji, two UTF-16 units into its line.
+        edit(&name, "(delete-region 1 4)", &env, &ctx);
+        run("(lsp--after-command)", &env, &ctx);
+        logged(
+            &sandbox,
+            &[
+                r#""contentChanges":[{"range":{"end":{"character":2,"line":1},"start":{"character":1,"line":0}},"text":""}]"#,
+            ],
+            &env,
+            &ctx,
+        );
+    }
+
+    #[test]
+    fn an_undo_past_the_stretch_watched_sends_the_whole_text() {
+        let sandbox = Sandbox::new("stretch-undo");
+        let file = sandbox.file("a.fake", "one\ntwo\n");
+        let (ctx, env) = editor_syncing(&sandbox, "utf-8", "2", &[]);
+        let name = open(&file, &env, &ctx);
+        finding_says(&file, "version 1", &env, &ctx);
+        edit(
+            &name,
+            r#"(goto-char (point-max)) (insert "three\n")"#,
+            &env,
+            &ctx,
+        );
+        server_has_the_text(&sandbox, &name, &file, &env, &ctx);
+        edit(&name, "(undo)", &env, &ctx);
+        let change = server_has_the_text(&sandbox, &name, &file, &env, &ctx);
+        assert!(
+            change.contains(r#""contentChanges":[{"text":"one\ntwo\n"}]"#),
+            "{change}"
+        );
+        // An undo of an edit made since the last change sent stays a stretch.
+        edit(&name, r#"(goto-char 4) (insert " and")"#, &env, &ctx);
+        edit(&name, r#"(insert " more")"#, &env, &ctx);
+        edit(&name, "(undo)", &env, &ctx);
+        let change = server_has_the_text(&sandbox, &name, &file, &env, &ctx);
+        assert!(change.contains(r#""range""#), "{change}");
+        edit(&name, "(redo)", &env, &ctx);
+        server_has_the_text(&sandbox, &name, &file, &env, &ctx);
+    }
+
+    #[test]
+    fn a_file_read_again_is_sent_whole_and_the_edits_after_it_as_stretches() {
+        let sandbox = Sandbox::new("stretch-revert");
+        let file = sandbox.file("a.fake", "one\n");
+        let (ctx, env) = editor_syncing(&sandbox, "utf-8", "2", &[]);
+        let name = open(&file, &env, &ctx);
+        finding_says(&file, "version 1", &env, &ctx);
+        type_at_end(&name, "two\\n", &env, &ctx);
+        server_has_the_text(&sandbox, &name, &file, &env, &ctx);
+        sandbox.file("a.fake", "new\ntext\n");
+        edit(&name, "(revert-buffer--reread)", &env, &ctx);
+        let change = server_has_the_text(&sandbox, &name, &file, &env, &ctx);
+        assert!(
+            change.contains(r#""contentChanges":[{"text":"new\ntext\n"}]"#),
+            "{change}"
+        );
+        type_at_end(&name, "more\\n", &env, &ctx);
+        let change = server_has_the_text(&sandbox, &name, &file, &env, &ctx);
+        assert!(change.contains(r#""range""#), "{change}");
+    }
+
+    #[test]
+    fn a_vim_insert_session_in_the_buffer_reaches_the_server_and_dot_still_repeats_it() {
+        let sandbox = Sandbox::new("stretch-vim");
+        let file = sandbox.file("a.fake", "one\ntwo\n");
+        let (ctx, env) = editor_syncing(
+            &sandbox,
+            "utf-8",
+            "2",
+            &[
+                include_str!("../../lisp/base/common-keymaps.lisp"),
+                include_str!("../../lisp/features/display-line-numbers.lisp"),
+                include_str!("../../lisp/features/vim.lisp"),
+            ],
+        );
+        let name = open(&file, &env, &ctx);
+        finding_says(&file, "version 1", &env, &ctx);
+        run("(vim-mode t)", &env, &ctx);
+        let keys = |sequence: &str| {
+            for c in sequence.chars() {
+                ctx.handle_key_event(KeyEvent::new(KeyCode::Char(c)), &env);
+            }
+        };
+        keys("Axy");
+        // Halfway through the session, each key sent as it came.
+        server_has_the_text(&sandbox, &name, &file, &env, &ctx);
+        keys("z");
+        ctx.handle_key_event(KeyEvent::new(KeyCode::Esc), &env);
+        keys("j.");
+        assert_eq!(contents(&name, &env, &ctx), "onexyz\ntwoxyz\n");
+        server_has_the_text(&sandbox, &name, &file, &env, &ctx);
+        keys("u");
+        assert_eq!(contents(&name, &env, &ctx), "onexyz\ntwo\n");
+        server_has_the_text(&sandbox, &name, &file, &env, &ctx);
     }
 
     #[test]

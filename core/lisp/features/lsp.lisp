@@ -751,18 +751,26 @@ publishDiagnostics, says; one about a text that is no longer there is dropped."
 ;; ---------------------------------------------------------------------------
 
 (defun lsp--sync-kind (server)
-  "How SERVER wants changes: 0 not at all, 1 or 2 as text."
+  "How SERVER wants changes: 0 not at all, 1 as the whole text,
+2 as the stretch changed."
   (let ((sync (map-elt (or (get server 'capabilities) (make-map)) "textDocumentSync")))
     (cond ((numberp sync) sync)
           ((mapp sync) (map-elt sync "change" 0))
           (t 0))))
 
+(defun lsp--incremental-p (server)
+  "t when SERVER takes the stretch of text changed rather than the whole."
+  (equal (lsp--sync-kind server) 2))
+
 (defun lsp--open (server buffer)
-  "nil, after sending SERVER the whole text of BUFFER as version 1."
+  "nil, after sending SERVER the whole text of BUFFER as version 1, and
+watching its edits from there when SERVER takes stretches."
   (let* ((document (assoc buffer (get server 'documents)))
          (read (with-current-buffer
                 buffer
-                (lambda () (list (buffer-string) (buffer-modified-tick))))))
+                (lambda ()
+                  (if (lsp--incremental-p server) (track-changes-begin 'lsp))
+                  (list (buffer-string) (buffer-modified-tick))))))
     (buffer-put 'lsp-version 1 buffer)
     (buffer-put 'lsp-tick (nth 1 read) buffer)
     (lsp--notify server "textDocument/didOpen"
@@ -773,9 +781,30 @@ publishDiagnostics, says; one about a text that is no longer there is dropped."
                                      "text" (car read)))))
   nil)
 
+(defun lsp--content-change (server)
+  "The change SERVER is sent for the edits to the current buffer since it last
+heard of them: the stretch they changed, when SERVER takes stretches and the
+text they removed is known, else the whole text."
+  (let ((change (if (lsp--incremental-p server) (track-changes-end 'lsp))))
+    (if (lsp--incremental-p server) (track-changes-begin 'lsp))
+    (if (and change (stringp (nth 3 change)))
+        ;; Nothing before START changed, so it is read in the text of now;
+        ;; where the removed text ended is measured on that text itself.
+        (let* ((unit (get server 'unit))
+               (start (lsp--position-at (car change) unit))
+               (size (string-line-column (nth 3 change) unit))
+               (end (if (= (car size) 0)
+                        (make-map "line" (map-elt start "line")
+                                  "character" (+ (map-elt start "character") (nth 1 size)))
+                        (make-map "line" (+ (map-elt start "line") (car size))
+                                  "character" (nth 1 size)))))
+          (make-map "range" (make-map "start" start "end" end)
+                    "text" (nth 2 change)))
+        (make-map "text" (buffer-string)))))
+
 (defun lsp--changed (server buffer tick)
-  "nil, after sending SERVER the whole text of BUFFER, changed at TICK, as its
-next version."
+  "nil, after sending SERVER what changed in BUFFER, now at TICK, as its next
+version."
   (buffer-put 'lsp-tick tick buffer)
   (when (> (lsp--sync-kind server) 0)
     (let ((version (+ 1 (buffer-get 'lsp-version buffer))))
@@ -785,10 +814,9 @@ next version."
                              (make-map "uri" (buffer-get 'lsp-uri buffer)
                                        "version" version)
                              "contentChanges"
-                             (vector (make-map "text"
-                                               (with-current-buffer
-                                                buffer
-                                                (lambda () (buffer-string)))))))))
+                             (vector (with-current-buffer
+                                      buffer
+                                      (lambda () (lsp--content-change server))))))))
   nil)
 
 (defun lsp--flush (server)
@@ -875,6 +903,8 @@ turning lsp-mode off where it cannot be one."
          (document (and server (assoc buffer (get server 'documents)))))
     (when server
       (lsp--flush server)
+      (if (member buffer (all-buffer-names))
+          (with-current-buffer buffer (lambda () (track-changes-end 'lsp))))
       (if document (lsp--close server document))
       (dolist (key '(lsp-server lsp-uri lsp-language lsp-version lsp-tick))
         (buffer-put key nil buffer))))

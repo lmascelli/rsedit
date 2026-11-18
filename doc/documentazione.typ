@@ -101,11 +101,10 @@ applicate.
 - In `doc/` stanno i documenti per chi sviluppa, in italiano e in Typst: il
   manuale (`architettura-editor.typ`), il rapporto sui problemi
   (`rapporto-problemi.typ`), queste regole e i progetti dei moduli non ancora
-  scritti (`progetto-lsp.typ`). Il manuale descrive il codice che c'è, un
-  progetto quello che verrà: quando il modulo è scritto, il suo capitolo e le
-  sue decisioni prendono dal progetto ciò che resta valido, e il progetto si
-  toglie. Gli aiuti grafici comuni sono in
-  `style.typ`. Accanto a ogni documento c'è il suo PDF, in git, rigenerato nello
+  scritti (`progetto-NOME.typ`), quando ce ne sono. Il manuale descrive il
+  codice che c'è, un progetto quello che verrà: quando il modulo è scritto, il
+  suo capitolo e le sue decisioni prendono dal progetto ciò che resta valido,
+  e il progetto si toglie. Gli aiuti grafici comuni sono in `style.typ`. Accanto a ogni documento c'è il suo PDF, in git, rigenerato nello
   stesso commit della sorgente.
 - Il linguaggio ha il suo manuale e il suo rapporto nel repository `risp`.
 
