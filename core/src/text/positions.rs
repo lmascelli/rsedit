@@ -1,7 +1,8 @@
 //! A position as a line and a column, with the column counted in characters,
 //! in UTF-16 code units or in UTF-8 bytes, and back: for a program that
 //! measures text in one of those encodings and has to agree with a text
-//! counted in characters.
+//! counted in characters. The same measure on a string says where its end
+//! falls when the string is put in a text.
 //!
 //! Design: `doc/architettura-editor.typ, <posizioni-unita>`.
 use crate::buffer::BufferTrait;
@@ -28,6 +29,14 @@ impl Unit {
         }
     }
 
+    /// Returns how many of this unit CHARS take together.
+    fn measure(self, chars: impl Iterator<Item = char>) -> usize {
+        match self {
+            Unit::Char => chars.count(),
+            unit => chars.map(|c| unit.width(c)).sum(),
+        }
+    }
+
     /// Returns the name Lisp gives the unit.
     pub fn name(self) -> &'static str {
         match self {
@@ -49,12 +58,21 @@ pub fn line_column<B: BufferTrait>(text: &B, pos: usize, unit: Unit) -> (usize, 
     if unit == Unit::Char {
         return (line, column);
     }
-    let measured = text
-        .chars_from(pos - column)
-        .take(column)
-        .map(|c| unit.width(c))
-        .sum();
-    (line, measured)
+    (
+        line,
+        unit.measure(text.chars_from(pos - column).take(column)),
+    )
+}
+
+/// Returns how many newlines TEXT holds, and the column of its end, counted
+/// in UNIT from its last newline or, when it has none, from its start.
+///
+/// It is the line and column [`line_column`] gives for the end of a text that
+/// is TEXT alone, and costs one pass over TEXT.
+pub fn string_line_column(text: &str, unit: Unit) -> (usize, usize) {
+    let lines = text.bytes().filter(|&b| b == b'\n').count();
+    let last_line = text.rfind('\n').map_or(text, |at| &text[at + 1..]);
+    (lines, unit.measure(last_line.chars()))
 }
 
 /// Returns the position in TEXT at LINE, counted from 0, and COLUMN, counted

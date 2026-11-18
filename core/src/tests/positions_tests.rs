@@ -1,6 +1,6 @@
 //! Lines and columns in characters, UTF-16 code units and UTF-8 bytes: both
 //! ways, on the characters each encoding counts differently, at the edges of
-//! a line and of the text, and from Lisp.
+//! a line and of the text, on a string alone, and from Lisp.
 //!
 //! Design: `doc/architettura-editor.typ, <posizioni-unita>`.
 #[cfg(test)]
@@ -8,7 +8,7 @@ mod tests {
     use crate::buffer::BufferTrait;
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
-    use crate::text::positions::{Unit, line_column, position};
+    use crate::text::positions::{Unit, line_column, position, string_line_column};
     use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
 
@@ -96,6 +96,31 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_string_ends_where_its_text_alone_would_end() {
+        for string in [MIXED, "", "è😀", "\n", "ab\r\nè😀x", "😀\n\nè"] {
+            let text = GapBuffer::from(string);
+            for unit in UNITS {
+                assert_eq!(
+                    string_line_column(string, unit),
+                    line_column(&text, text.len(), unit),
+                    "{unit:?}: {string:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_string_counts_its_newlines_and_the_column_after_the_last() {
+        let measured = |unit| string_line_column("a\nb\nè😀x", unit);
+        assert_eq!(measured(Unit::Char), (2, 3));
+        assert_eq!(measured(Unit::Utf16), (2, 4));
+        assert_eq!(measured(Unit::Utf8), (2, 7));
+        // Without a newline the column counts from the start of the string.
+        assert_eq!(string_line_column("è😀", Unit::Utf16), (0, 3));
+        assert_eq!(string_line_column("a\n", Unit::Utf8), (1, 0));
+    }
+
     // ---- from Lisp ------------------------------------------------------
 
     fn editor_with(text: &str) -> (Ctx, Arc<Env<Ctx>>) {
@@ -160,6 +185,16 @@ mod tests {
     }
 
     #[test]
+    fn lisp_measures_a_string_in_newlines_and_a_column_counted_from_0() {
+        let (ctx, env) = editor_with("");
+        let src = "(string-line-column \"ab\\nè😀\"";
+        assert_eq!(shown(&format!("{src})"), &env, &ctx), "(1 2)");
+        assert_eq!(shown(&format!("{src} 'utf-16)"), &env, &ctx), "(1 3)");
+        assert_eq!(shown(&format!("{src} \"utf-8\")"), &env, &ctx), "(1 6)");
+        assert_eq!(shown("(string-line-column \"\" nil)", &env, &ctx), "(0 0)");
+    }
+
+    #[test]
     fn lisp_refuses_a_unit_it_does_not_know_and_a_position_that_is_not_a_number() {
         let (ctx, env) = editor_with(MIXED);
         for src in [
@@ -167,6 +202,8 @@ mod tests {
             "(position-to-line-column \"0\")",
             "(line-column-to-position 1 0 'bytes)",
             "(line-column-to-position 1)",
+            "(string-line-column 'ab)",
+            "(string-line-column \"ab\" 'bytes)",
         ] {
             assert!(
                 matches!(

@@ -55,6 +55,8 @@ WHERE POINT IS
         position-to-line-column   a position as a line and a column in
                                   characters, UTF-16 or UTF-8
         line-column-to-position   a line and such a column as a position
+        string-line-column        a string's newlines and the column of its
+                                  end, in such a unit
         hl-line-mode              highlight point's whole logical line
         global-hl-line-mode       the same, in every buffer
 

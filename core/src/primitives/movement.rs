@@ -525,6 +525,24 @@ primitive!(line_column_to_position, args, _env, ctx, {
     Ok(ELispExp::number(pos as f64))
 });
 
+pub const STRING_LINE_COLUMN_DOC: &str = "(string-line-column STRING &optional UNIT): Return \
+         (NEWLINES COLUMN) for STRING: how many newlines it holds, and the column of its end, \
+         counted from 0 in UNIT, as `position-to-line-column' counts it, from its last newline \
+         or its start. Inserted at line L and column C, STRING ends at line L + NEWLINES, and at \
+         column C + COLUMN when NEWLINES is 0, COLUMN otherwise.\n\n\
+         Example:\n\
+         (string-line-column \"ab\\nè😀\" 'utf-16)  ; (1 3)";
+
+primitive!(string_line_column, args, _env, _ctx, {
+    let text = args::text(args.first())?;
+    let unit = column_unit(args.get(1))?;
+    let (newlines, column) = positions::string_line_column(&text, unit);
+    Ok(ELispExp::proper_list(vec![
+        ELispExp::number(newlines as f64),
+        ELispExp::number(column as f64),
+    ]))
+});
+
 /// Registers the primitives that move point and say where it is.
 ///
 /// Called by [`super::install_primitives`].
@@ -584,5 +602,10 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         "line-column-to-position",
         line_column_to_position,
         LINE_COLUMN_TO_POSITION_DOC,
+    );
+    into.function(
+        "string-line-column",
+        string_line_column,
+        STRING_LINE_COLUMN_DOC,
     );
 }

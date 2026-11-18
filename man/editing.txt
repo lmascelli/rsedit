@@ -35,6 +35,7 @@ SYNOPSIS
     (current-line)
     (position-to-line-column POSITION &optional UNIT)
     (line-column-to-position LINE COLUMN &optional UNIT)
+    (string-line-column STRING &optional UNIT)
 
     (self-insert STRING)
     (overwrite-mode &optional ARG)
@@ -446,6 +447,16 @@ COLUMNS IN OTHER UNITS
     before it is a character of the line, and is counted. Each conversion
     reads only the line it is on, however long the buffer is.
 
+    `string-line-column' measures a string the same way, before it is in a
+    buffer or after it has left one: it returns how many newlines the
+    string holds and the column of its end, counted from its last newline,
+    or from its start when it has none. Put at line L and column C, the
+    string ends at line L plus its newlines; its end column is C plus the
+    column it returns when it has no newline, and that column alone when
+    it has. "ab\nè😀" holds one newline and ends at column 2 in
+    characters, 3 in UTF-16 and 6 in UTF-8. Measuring a long string this
+    way costs one pass over it, far less than a loop in Lisp.
+
 REPEATING
     C-x z repeats the last command, and pressing z again repeats it again.
     For anything longer, record what you did and play it back: see the
@@ -520,6 +531,15 @@ EXAMPLES
 
         (let ((at (position-to-line-column (point) 'utf-16)))
           (goto-char (line-column-to-position (car at) (nth 1 at) 'utf-16)))
+
+    Where text just deleted at point used to end, in UTF-8 bytes, from the
+    text itself:
+
+        (let ((at (position-to-line-column (point) 'utf-8))
+              (size (string-line-column "one\ntwo" 'utf-8)))
+          (if (= (car size) 0)
+              (list (car at) (+ (nth 1 at) (nth 1 size)))
+            (list (+ (car at) (car size)) (nth 1 size))))
 
     Rename a variable in two places and fix a number, with offsets found
     on the text as it is:

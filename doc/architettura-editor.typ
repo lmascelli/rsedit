@@ -2786,6 +2786,15 @@ La riga viene dall'indice delle righe del testo (`cursor_1d_to_2d`,
 colonna, non quella del testo. Per `Unit::Char` non c'è niente da misurare, e
 la conversione è quella di `BufferTrait`.
 
+`string_line_column` fa la stessa misura su una stringa che non sta in un
+testo: quanti a capo contiene e la colonna della sua fine, contata dall'ultimo
+a capo, o dall'inizio se non ne ha. È ciò che `line_column` darebbe per la fine
+di un testo fatto solo di quella stringa, e serve a chi deve sapere dove arriva
+un testo prima di metterlo o dopo averlo tolto. Costa un giro sulla stringa;
+la primitiva `string-line-column` lo fa in Rust perché in Lisp sarebbe un giro
+per carattere. Righe e colonna sono un conto, non un luogo: partono da 0 anche
+in Lisp.
+
 #ref-table(
   columns: (5.2cm, 1fr, 1fr, 1fr),
   header: ([Carattere], [`Unit::Char`], [`Unit::Utf16`], [`Unit::Utf8`]),
