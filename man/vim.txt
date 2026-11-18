@@ -63,7 +63,8 @@ TURNING IT ON BY ITSELF
         global-vim-mode is on, or its major mode is in vim-mode-modes
         its major mode is not in vim-mode-excluded-modes
         vim-mode-predicate is nil, or answers non-nil in the buffer
-        it is not a prompt
+        its role is editing, or derives from it (see `modes')
+        it is not named *Minibuffer*
 
     vim-mode-excluded-modes starts with the editor's listings and buffers
     of its own: dired, help, the manual, the lists of buffers and themes, a
@@ -71,6 +72,12 @@ TURNING IT ON BY ITSELF
     prompt and the completion strip. vim-mode-predicate starts as
     vim-default-buffer-p, which accepts a buffer visiting a file, *scratch*,
     and any buffer whose name does not begin with a *.
+
+    The lists and the predicate narrow what the role allows, and never
+    widen it. M-x vim-mode still turns vim on by hand in a view, such as
+    the help or a listing; never in a prompt or a list of candidates, of
+    those roles or of one derived from them, whose keys answer the
+    question: there it says so in the echo area and does nothing.
 
     The rules are applied when a buffer gets a major mode, and when C-x C-w
     gives it a file; vim-mode-refresh applies them again to every buffer,

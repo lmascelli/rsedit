@@ -266,20 +266,41 @@ pub(crate) fn positional_or_keyword<'a, B: BufferTrait>(
     }
 }
 
-/// Returns ARG as the role it names, or `None` when it was not given or is
-/// nil; an error naming FUNCTION for anything else, a name no role has among
-/// it.
+/// Returns ARG as the role it names, one CTX ships or its configuration
+/// defined, or `None` when it was not given or is nil; an error naming
+/// FUNCTION for anything else, a name no role has among it.
 pub(crate) fn optional_role<B: BufferTrait>(
     function: &str,
     arg: Option<&ELispExp<B>>,
+    ctx: &EditorState<B>,
 ) -> Result<Option<BufferRole>, EvalError<EditorState<B>>> {
     let Some(name) = optional_name(arg, "Symbol naming a buffer role")? else {
         return Ok(None);
     };
-    BufferRole::from_name(&name).map(Some).ok_or_else(|| {
-        EvalError::RuntimeMessage(format!(
-            "{function}: no buffer role is called {name}; the roles are {}",
-            BufferRole::ALL.map(BufferRole::name).join(" ")
-        ))
+    ctx.modes(|modes| modes.role_named(&name))
+        .map(Some)
+        .ok_or_else(|| {
+            let known = ctx.modes(|modes| modes.roles());
+            EvalError::RuntimeMessage(format!(
+                "{function}: no buffer role is called {name}; the roles are {}",
+                known
+                    .iter()
+                    .map(|role| role.name())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ))
+        })
+}
+
+/// Returns ARG as the role it names, as [`optional_role`] does, but required:
+/// nil or nothing is an error too.
+pub(crate) fn role<B: BufferTrait>(
+    function: &str,
+    arg: Option<&ELispExp<B>>,
+    ctx: &EditorState<B>,
+) -> Result<BufferRole, EvalError<EditorState<B>>> {
+    optional_role(function, arg, ctx)?.ok_or_else(|| EvalError::WrongArgumentType {
+        expected: "Symbol naming a buffer role".into(),
+        got: arg.cloned().unwrap_or_else(ELispExp::nil),
     })
 }

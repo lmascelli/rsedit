@@ -190,9 +190,87 @@ impl MinorPolicies {
         }
         Decision {
             admitted: role.open_by_default(),
-            by: DecidedBy::Default {
-                role: role.lineage().last().unwrap_or(role),
-            },
+            by: DecidedBy::Default { role: role.root() },
         }
+    }
+}
+
+/// The roles an editor knows by name: the five it ships and those its
+/// configuration defined with `define-buffer-role`. Kept in
+/// [`super::Modes`] beside the rules that speak of them.
+#[derive(Debug, Default)]
+pub struct RoleRegistry {
+    defined: HashMap<String, BufferRole>,
+}
+
+/// Why `define-buffer-role` would not define a role.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RoleDefinitionError {
+    /// NAME is a role already, deriving from something else: a role is
+    /// fixed for the life of the buffers that have it.
+    Incompatible {
+        name: String,
+        parent: Option<BufferRole>,
+        wanted: Option<BufferRole>,
+    },
+}
+
+impl RoleDefinitionError {
+    /// Returns the sentence an error shows for it.
+    pub fn reason(&self) -> String {
+        let derived = |parent: &Option<BufferRole>| match parent {
+            Some(parent) => format!("deriving from {}", parent.name()),
+            None => "deriving from no role".to_string(),
+        };
+        match self {
+            RoleDefinitionError::Incompatible {
+                name,
+                parent,
+                wanted,
+            } => format!(
+                "the buffer role {name} exists already, {}, not {}",
+                derived(parent),
+                derived(wanted)
+            ),
+        }
+    }
+}
+
+impl RoleRegistry {
+    /// Returns the role called NAME: one the editor ships, or one defined.
+    pub fn named(&self, name: &str) -> Option<BufferRole> {
+        BufferRole::from_name(name).or_else(|| self.defined.get(name).copied())
+    }
+
+    /// Defines the role NAME, deriving from PARENT, or a root of its own
+    /// when PARENT is `None`. Returns the role, and whether it is new: the
+    /// same definition made again changes nothing; one that would give NAME
+    /// another parent, a role the editor ships included, is refused.
+    pub fn define(
+        &mut self,
+        name: &str,
+        parent: Option<BufferRole>,
+    ) -> Result<(BufferRole, bool), RoleDefinitionError> {
+        if let Some(existing) = self.named(name) {
+            if existing.parent() == parent {
+                return Ok((existing, false));
+            }
+            return Err(RoleDefinitionError::Incompatible {
+                name: name.to_string(),
+                parent: existing.parent(),
+                wanted: parent,
+            });
+        }
+        let role = BufferRole::Defined(crate::buffer::role::DefinedRole::interned(name, parent));
+        self.defined.insert(name.to_string(), role);
+        Ok((role, true))
+    }
+
+    /// Returns every role known, the ones the editor ships first, then the
+    /// defined ones by name.
+    pub fn all(&self) -> Vec<BufferRole> {
+        let mut defined: Vec<BufferRole> = self.defined.values().copied().collect();
+        defined.sort_by_key(|role| role.name());
+        BufferRole::ALL.into_iter().chain(defined).collect()
     }
 }

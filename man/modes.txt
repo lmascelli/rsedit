@@ -14,6 +14,9 @@ SYNOPSIS
     (minor-mode-refusal MODE &optional BUFFER)
     (buffer-role &optional BUFFER)
     (buffer-role-derived-p ROLE ANCESTOR)
+    (define-buffer-role NAME &key :parent)
+    (set-minor-mode-policy MODE POLICY :role ROLE)
+    (minor-mode-allowed-p MODE &optional BUFFER &key :role)
     (minor-modes &optional BUFFER)
     (minor-mode-enable MODE &optional MAJOR)
     (minor-mode-disable MODE &optional MAJOR)
@@ -214,6 +217,58 @@ BUFFER ROLES
     TURN-ON there. A mode permitted later is admitted from the next time
     it is asked for; one no longer admitted is turned off in the buffers
     where it was on, running its hook as for any other way off.
+
+YOUR OWN ROLES AND RULES
+    (define-buffer-role NAME :parent ROLE) makes a role of your own,
+    deriving from ROLE, and returns NAME. A buffer of it answers for a
+    minor mode as the nearest role of its lineage with a rule for that
+    mode, its own first; with no rule anywhere, a role that derives from
+    editing admits the mode and any other does not. Without :parent the
+    role is a root of its own, open to nothing that is not permitted for
+    it. Defining a role again the same way changes nothing, and so does
+    loading the same configuration twice; defining it with another
+    parent is an error, the roles the editor ships included, since a
+    buffer keeps its role for life. A parent that is no role, a keyword
+    given twice or one it does not take is an error too, and nothing is
+    defined.
+
+    (set-minor-mode-policy MODE POLICY :role ROLE) is your rule for MODE
+    in ROLE, and in the roles that derive from it and have none of their
+    own. POLICY is allow, deny or inherit: inherit takes your rule for
+    ROLE back, so that the one the editor ships for ROLE, if any, or else
+    the role ROLE derives from, decides. For the same role your rule wins
+    over the editor's. An allow turns nothing on: the mode is admitted
+    from the next time it is asked for. A deny turns MODE off, with its
+    hook, wherever it is on and no longer admitted. MODE must be a minor
+    mode and ROLE a role; a call wrong anywhere changes nothing.
+    (minor-mode-allowed-p MODE) says whether the current buffer admits
+    MODE, of another buffer when it is given one, and of a role with
+    :role.
+
+    Suppose your logs are read in a mode of your own, and you want the
+    line under the cursor lit there, as in no other view. Give the log
+    buffers a role of their own, deriving from view, so that whatever
+    view admits they admit too, and permit hl-line-mode in it alone:
+
+        ;; init.lisp
+        (define-buffer-role 'log-view :parent 'view)
+        (set-minor-mode-policy 'hl-line-mode 'allow :role 'log-view)
+        (make-mode 'log-mode)
+        (minor-mode-enable 'hl-line-mode 'log-mode)
+
+        (defcommand open-log () nil
+          "Show the log buffer."
+          (switch-to-buffer
+           (buffer-create "*log*" :mode 'log-mode :role 'log-view)))
+
+    (minor-mode-allowed-p 'hl-line-mode :role 'log-view) is then t, and
+    with :role 'view nil: the rule is log-view's, and a view has none of
+    its parent's. hl-line-mode comes on in *log* with log-mode, since
+    log-view admits it, and not in a buffer of log-mode made with :role
+    'view. A rule given to view later reaches log-view as well,
+    wherever log-view has none of its own. Taking the permission back,
+    with (set-minor-mode-policy 'hl-line-mode 'deny :role 'log-view),
+    turns hl-line-mode off in *log* at once.
 
 WHICH MODE A FILE GETS
         rust-mode           .rs

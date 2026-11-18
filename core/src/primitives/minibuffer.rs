@@ -300,7 +300,7 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
     // Read before anything is set, so that a wrong one changes nothing.
     let key = args::optional_name(args.get(5), "Symbol or String naming a history, or nil")?
         .filter(|key| !key.is_empty());
-    let role = prompt_role("default-minibuffer-prompt", args.get(6))?;
+    let role = prompt_role("default-minibuffer-prompt", args.get(6), ctx)?;
 
     // One prompt at a time, as in Emacs without recursive minibuffers: a
     // second would share the first's buffer and its callbacks, and take the
@@ -390,8 +390,9 @@ primitive!(completion_invalidate, _args, env, ctx, {
 pub(crate) fn prompt_role<B: BufferTrait>(
     function: &str,
     arg: Option<&ELispExp<B>>,
+    ctx: &EditorState<B>,
 ) -> Result<BufferRole, EvalError<EditorState<B>>> {
-    let role = args::optional_role(function, arg)?.unwrap_or(BufferRole::Prompt);
+    let role = args::optional_role(function, arg, ctx)?.unwrap_or(BufferRole::Prompt);
     if !role.derives_from(BufferRole::Prompt) {
         return Err(EvalError::RuntimeMessage(format!(
             "{function}: a prompt's buffer is of role prompt or one derived from it, not {}",
@@ -443,7 +444,7 @@ primitive!(minibuffer_read, args, env, ctx, {
         .map_or(0, |at| at + 1);
     places.truncate(given.max(4));
     let role = match keywords.get(":role") {
-        Some(given) if !given.is_nil() => Some(prompt_role(NAME, Some(given))?),
+        Some(given) if !given.is_nil() => Some(prompt_role(NAME, Some(given), ctx)?),
         _ => None,
     };
     // Refused in a background job, where it can still be an error: its prompt

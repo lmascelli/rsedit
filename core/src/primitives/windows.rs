@@ -300,7 +300,7 @@ primitive!(make_floating_window, args, env, ctx, {
                 _ => None,
             }
         });
-    let role = args::optional_role(NAME, keywords.get(":role"))?.unwrap_or_default();
+    let role = args::optional_role(NAME, keywords.get(":role"), ctx)?.unwrap_or_default();
 
     let id = ctx.open_floating_window(
         buf_name,

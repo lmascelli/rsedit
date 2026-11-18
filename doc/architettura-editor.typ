@@ -3765,6 +3765,39 @@ comprese, prima di fare qualsiasi cosa.
   incompatibile segnala invece di rendere un buffer che non è quello
   chiesto; un ruolo derivato soddisfa la richiesta del genitore.
 
+=== Ruoli e regole dalla configurazione <ruoli-configurazione>
+
+La configurazione dell'utente definisce ruoli e regole con quattro
+primitive (`primitives/modes.rs`), che leggono tutta la chiamata, keyword
+comprese (`with_keywords`), prima di cambiare qualcosa.
+
+#ref-table(
+  columns: (3.8cm, 1fr),
+  header: ([Primitiva], [Come]),
+  [`define-buffer-role`], [`NAME :parent ROLE` registra in `RoleRegistry` (`managers/minor_policies.rs`, dentro `Modes`) un `BufferRole::Defined`. Senza `:parent` il ruolo è una radice chiusa. La stessa definizione una seconda volta non cambia nulla e rende di nuovo `NAME`; un altro genitore, anche per un ruolo distribuito, è `RoleDefinitionError::Incompatible`. Un genitore sconosciuto è rifiutato da `optional_role`, prima della registrazione.],
+  [`set-minor-mode-policy`], [`MODE POLICY :role ROLE`, con `:role` obbligatorio, scrive l'origine `User` con lo stesso `EditorState::set_minor_policy` delle regole distribuite: `deny` spegne con l'hook dove il modo non è più ammesso, `allow` vale dalla richiesta successiva, `inherit` toglie la regola dell'utente per quel ruolo.],
+  [`minor-mode-allowed-p`], [`MODE &optional BUFFER &key :role`: la stessa `minor_decision` di `minor_mode_on`, per il ruolo di un buffer o per un ruolo dato.],
+  [`buffer-role`], [Rende anche i ruoli definiti, per nome.],
+)
+
++ *Il lignaggio dentro il ruolo.* Un ruolo definito porta con sé nome e
+  genitore (`DefinedRole`), internati una volta per processo e quindi
+  `&'static`: `BufferRole` resta `Copy`, `lineage` e `derives_from` non
+  chiedono nulla al registro e non prendono lock, e un ruolo letto dal
+  buffer non può diventare vecchio, perché una definizione non cambia
+  mai. Il registro serve solo a trovare un ruolo per nome; due editor
+  (o due test) che definiscono lo stesso nome con genitori diversi hanno
+  due definizioni distinte, una per registro. La memoria internata è
+  una voce per definizione distinta.
++ *Ridefinizione identica, non sostituzione.* Ricaricare `init.lisp` deve
+  funzionare; cambiare genitore a un ruolo che i buffer aperti hanno già
+  cambierebbe le loro regole senza che nessuno l'abbia chiesto, quindi è
+  un errore.
++ *`inherit` dell'utente toglie la sua regola.* È lo stesso significato
+  che ha per la regola distribuita: dopo, per quel ruolo decide la regola
+  distribuita, se c'è, altrimenti il ruolo genitore. Per escludere un
+  modo che l'editor permette si usa `deny`.
+
 == Due lessici sullo stesso testo <lessici>
 
 Il testo di un buffer viene letto in due modi diversi, per due domande diverse.
@@ -8825,6 +8858,12 @@ caratteri.
   le liste e i buffer dell'editor --- e `vim-mode-predicate` decidono; una
   scelta fatta a mano in un buffer resta finché `vim-mode-auto` non la rende.
   Le regole si riapplicano quando cambia il modo maggiore o il file visitato.
++ *Il ruolo come ambito.* L'accensione automatica vale solo dove il ruolo è
+  `editing` o ne deriva (@ruoli); liste e predicato dell'utente restringono
+  ancora. A mano Vim va anche in una vista, ma non in un `prompt` o in una
+  `completion`, né in un loro derivato: `vim--enable` non installa la keymap
+  e `vim-mode` lo dice. Vim non è un modo minore, quindi questo controllo è
+  suo e non di `MinorPolicies`.
 + *I comandi `:` passano dall'editor.* `:w` e `:q` sono `save-buffer` e
   `quit`, con le loro domande.
 + *Un file solo.* Una funzionalità, una pagina, una feature: divisa in più

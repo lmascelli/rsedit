@@ -138,19 +138,22 @@ status line."
 
 (defun vim--enable ()
   "Turn Vim on in this buffer; when it is on, keep its state, and put its
-keymap back if a mode replaced it."
-  (if (vim--state)
-      (let ((map (cond ((eq (vim--state) 'insert) 'vim-insert-map)
-                       ((eq (vim--state) 'replace) 'vim-replace-map)
-                       (t 'vim-normal-map))))
-        ;; A major-mode hook may have installed a new underlying local map.
-        (when (not (eq (buffer-get 'local-keymap) map))
-          (buffer-put 'vim-saved-keymap (buffer-get 'local-keymap))
-          (set-local-keymap map)))
-      (progn
+keymap back if a mode replaced it. Nothing in a prompt or a list of
+candidates: see `vim--keymap-allowed-p'."
+  (cond
+   ((not (vim--keymap-allowed-p)) nil)
+   ((vim--state)
+    (let ((map (cond ((eq (vim--state) 'insert) 'vim-insert-map)
+                     ((eq (vim--state) 'replace) 'vim-replace-map)
+                     (t 'vim-normal-map))))
+      ;; A major-mode hook may have installed a new underlying local map.
+      (when (not (eq (buffer-get 'local-keymap) map))
         (buffer-put 'vim-saved-keymap (buffer-get 'local-keymap))
-        (buffer-put 'vim-saved-mode-line-state (buffer-get 'mode-line-state))
-        (vim--reset) (deactivate-mark) (vim--set-state 'normal) (vim--clamp))))
+        (set-local-keymap map))))
+   (t
+    (buffer-put 'vim-saved-keymap (buffer-get 'local-keymap))
+    (buffer-put 'vim-saved-mode-line-state (buffer-get 'mode-line-state))
+    (vim--reset) (deactivate-mark) (vim--set-state 'normal) (vim--clamp))))
 (defun vim--disable ()
   "Turn Vim off in this buffer, giving back the keymap and the status line it
 had."
@@ -172,13 +175,25 @@ had."
         ((eq enabled '-) nil)
         ((numberp enabled) (> enabled 0))
         (t t)))
+(defun vim--keymap-allowed-p ()
+  "Non-nil unless the current buffer is a prompt or a list of candidates, by
+its role or one it derives from: their keys answer a question, and a Vim
+keymap in front of them would leave nothing to answer it with."
+  (let ((role (buffer-role)))
+    (not (or (buffer-role-derived-p role 'prompt)
+             (buffer-role-derived-p role 'completion)))))
 (defcommand vim-mode (&optional enabled) ("P")
   "Turn Vim's keys on in this buffer, or off when they are on. With ENABLED,
 or a prefix argument, 0, a negative number or the - of C-u - turns them off,
 and anything else on. A buffer turned on or off so keeps its choice whatever
-the automatic rules say, until `vim-mode-auto'."
+the automatic rules say, until `vim-mode-auto'. A view can have them by hand;
+a prompt and a list of candidates cannot."
   (if (vim--turn-on-p enabled (vim--state))
-      (progn (buffer-put 'vim-mode-override 'enabled) (vim--enable))
+      (if (vim--keymap-allowed-p)
+          (progn (buffer-put 'vim-mode-override 'enabled) (vim--enable))
+          (set-echo-message
+           (concat "Vim does not go in " (current-buffer) ", a buffer of role "
+                   (symbol-name (buffer-role)))))
       (vim-mode-disable)))
 (defcommand vim-mode-enable () nil
   "Turn Vim on in this buffer; when it is on already, keep its state, an
@@ -196,11 +211,16 @@ buffers do. The first value of `vim-mode-predicate'."
       (not (string-prefix-p "*" (current-buffer)))))
 (defun vim--apply-policy ()
   "Turn Vim on or off in this buffer as the automatic rules say, unless it
-was turned on or off by hand."
+was turned on or off by hand. The rules reach only a buffer whose role is
+editing or derives from it."
   (let ((preference (buffer-get 'vim-mode-override)))
     (cond ((eq preference 'enabled) (vim--enable))
           ((eq preference 'disabled) (vim--disable))
-          ((and (not (string= (current-buffer) "*Minibuffer*"))
+          ;; Automatically only where something is edited; the user's
+          ;; lists and predicate narrow that further.
+          ((and (buffer-role-derived-p (buffer-role) 'editing)
+                ;; A prompt made before roles, as an editing buffer.
+                (not (string= (current-buffer) "*Minibuffer*"))
                 (or global-vim-mode (member (major-mode) vim-mode-modes))
                 (not (member (major-mode) vim-mode-excluded-modes))
                 (or (not vim-mode-predicate) (funcall vim-mode-predicate)))

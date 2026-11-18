@@ -4,7 +4,9 @@
 //! file-name patterns. Every accessor copies Lisp out.
 //!
 //! Design: `doc/architettura-editor.typ, <compartimenti>`.
-use super::minor_policies::{Admission, Decision, MinorPolicies, PolicyOrigin};
+use super::minor_policies::{
+    Admission, Decision, MinorPolicies, PolicyOrigin, RoleDefinitionError, RoleRegistry,
+};
 use crate::{
     ELispExp,
     buffer::{BufferRole, BufferTrait},
@@ -94,6 +96,8 @@ pub struct Modes<B: BufferTrait> {
     minor_rules: Vec<(Option<String>, String)>,
     /// Which minor modes each buffer role admits.
     policies: MinorPolicies,
+    /// The buffer roles known by name.
+    roles: RoleRegistry,
 }
 
 impl<B: BufferTrait> Modes<B> {
@@ -109,6 +113,7 @@ impl<B: BufferTrait> Modes<B> {
             global_hooks: HashMap::new(),
             minor_rules: Vec::new(),
             policies: MinorPolicies::default(),
+            roles: RoleRegistry::default(),
         }
     }
 
@@ -253,8 +258,9 @@ impl<B: BufferTrait> Modes<B> {
         self.policies.set(role, minor, origin, admission)
     }
 
-    /// Forgets what ORIGIN said of MINOR in ROLE; returns whether it had
-    /// said anything.
+    /// Forgets what ORIGIN said of MINOR in ROLE, so that the other origin's
+    /// rule for ROLE, or else the nearest role ROLE derives from, decides;
+    /// returns whether it had said anything.
     pub fn clear_minor_policy(
         &mut self,
         role: BufferRole,
@@ -262,6 +268,25 @@ impl<B: BufferTrait> Modes<B> {
         origin: PolicyOrigin,
     ) -> bool {
         self.policies.clear(role, minor, origin)
+    }
+
+    /// Returns the buffer role called NAME, shipped or defined.
+    pub fn role_named(&self, name: &str) -> Option<BufferRole> {
+        self.roles.named(name)
+    }
+
+    /// Defines the buffer role NAME: see [`RoleRegistry::define`].
+    pub fn define_role(
+        &mut self,
+        name: &str,
+        parent: Option<BufferRole>,
+    ) -> Result<(BufferRole, bool), RoleDefinitionError> {
+        self.roles.define(name, parent)
+    }
+
+    /// Returns every buffer role known, shipped first.
+    pub fn roles(&self) -> Vec<BufferRole> {
+        self.roles.all()
     }
 
     /// Returns what ORIGIN says of MINOR in ROLE itself, nothing inherited.

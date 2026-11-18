@@ -45,7 +45,7 @@ primitive!(buffer_create, args, env, ctx, {
         args::positional_or_keyword("buffer-create", positional, 1, &keywords, ":mode")?,
         "String or Symbol naming a mode",
     )?;
-    let role = args::optional_role("buffer-create", keywords.get(":role"))?;
+    let role = args::optional_role("buffer-create", keywords.get(":role"), ctx)?;
     match ctx.with_buffer(&name, |buf| buf.role()) {
         // A buffer is the role it was made with: asked to be another, it
         // cannot become it, and handing it back as though it were would

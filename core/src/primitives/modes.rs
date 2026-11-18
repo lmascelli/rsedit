@@ -218,9 +218,10 @@ primitive!(minor_mode_refusal, args, _env, ctx, {
 });
 
 pub const BUFFER_ROLE_DOC: &str = "(buffer-role &optional BUFFER): Return what BUFFER, the \
-         current one by default, is for, as a symbol: editing, prompt, completion, view or \
-         document-view. A buffer's role is given when it is made and never changes; it decides \
-         which minor modes the buffer admits. nil when there is no such buffer.";
+         current one by default, is for, as a symbol: editing, prompt, completion, view, \
+         document-view, or a role made with `define-buffer-role'. A buffer's role is given when \
+         it is made and never changes; it decides which minor modes the buffer admits. nil when \
+         there is no such buffer.";
 
 primitive!(buffer_role, args, _env, ctx, {
     if args.len() > 1 {
@@ -244,16 +245,9 @@ pub const BUFFER_ROLE_DERIVED_P_DOC: &str = "(buffer-role-derived-p ROLE ANCESTO
          Example:\n\
          (buffer-role-derived-p (buffer-role) 'view)";
 
-primitive!(buffer_role_derived_p, args, _env, _ctx, {
+primitive!(buffer_role_derived_p, args, _env, ctx, {
     exact_arity(args, 2)?;
-    let role = |at: usize| {
-        args::optional_role("buffer-role-derived-p", args.get(at))?.ok_or_else(|| {
-            EvalError::WrongArgumentType {
-                expected: "Symbol naming a buffer role".into(),
-                got: args[at].clone(),
-            }
-        })
-    };
+    let role = |at: usize| args::role("buffer-role-derived-p", args.get(at), ctx);
     Ok(ELispExp::boolean(role(0)?.derives_from(role(1)?)))
 });
 
@@ -270,10 +264,30 @@ pub const MINOR_MODE_DISTRIBUTED_POLICY_DOC: &str = "(minor-mode--distributed-po
 
 primitive!(minor_mode_distributed_policy, args, env, ctx, {
     exact_arity(args, 3)?;
+    const NAME: &str = "minor-mode--distributed-policy";
+    let (minor, rule) = minor_and_policy(NAME, args, ctx)?;
+    let role = args::role(NAME, args.get(2), ctx)?;
+    Ok(ELispExp::boolean(ctx.set_minor_policy(
+        role,
+        &minor,
+        PolicyOrigin::Distributed,
+        rule,
+        &env,
+    )))
+});
+
+/// Returns the minor mode the first of ARGS names and the rule the second
+/// does -- allow, deny, or inherit for `None` -- or an error naming FUNCTION
+/// when the first is no minor mode or the second no policy.
+fn minor_and_policy<B: BufferTrait>(
+    function: &str,
+    args: &[ELispExp<B>],
+    ctx: &EditorState<B>,
+) -> Result<(String, Option<Admission>), EvalError<EditorState<B>>> {
     let minor = args::name(args.first())?;
     if !ctx.modes(|modes| modes.is_minor(&minor)) {
         return Err(EvalError::RuntimeMessage(format!(
-            "No such minor mode: {minor}"
+            "{function}: No such minor mode: {minor}"
         )));
     }
     let rule = match args::name(args.get(1))?.as_str() {
@@ -282,25 +296,112 @@ primitive!(minor_mode_distributed_policy, args, env, ctx, {
         "inherit" => None,
         other => {
             return Err(EvalError::RuntimeMessage(format!(
-                "minor-mode--distributed-policy: the policy is allow, deny or inherit, not \
-                 {other}"
+                "{function}: the policy is allow, deny or inherit, not {other}"
             )));
         }
     };
-    let role =
-        args::optional_role("minor-mode--distributed-policy", args.get(2))?.ok_or_else(|| {
-            EvalError::WrongArgumentType {
-                expected: "Symbol naming a buffer role".into(),
-                got: args[2].clone(),
-            }
-        })?;
+    Ok((minor, rule))
+}
+
+pub const SET_MINOR_MODE_POLICY_DOC: &str = "(set-minor-mode-policy MODE POLICY :role ROLE): Say, \
+         in the user's configuration, whether the buffers of ROLE admit the minor mode MODE, and \
+         so do the roles that derive from ROLE and have no rule of their own. POLICY is allow, \
+         deny, or inherit to take back the user's rule for ROLE, so that the rule the editor \
+         ships for ROLE, if any, or else the role ROLE derives from, decides. The rule of the \
+         nearest role decides, and for the same role the user's wins over the one the editor \
+         ships. An allow counts from the next time MODE is asked for, and turns nothing on; a \
+         deny turns MODE off, running its \"minor-mode-hook\", in every buffer where it is on \
+         and no longer admitted. MODE must be a minor mode and ROLE a role, shipped or made with \
+         `define-buffer-role'; a call that is wrong anywhere changes nothing. Return t, or nil \
+         when the rule was already so.\n\n\
+         Example:\n\
+         (set-minor-mode-policy 'hl-line-mode 'allow :role 'view)";
+
+primitive!(set_minor_mode_policy, args, env, ctx, {
+    const NAME: &str = "set-minor-mode-policy";
+    let (positional, keywords) = args::with_keywords(NAME, args, 2, 2, &[":role"])?;
+    let (minor, rule) = minor_and_policy(NAME, positional, ctx)?;
+    let Some(role) = args::optional_role(NAME, keywords.get(":role"), ctx)? else {
+        return Err(EvalError::RuntimeMessage(format!(
+            "{NAME}: say which role the rule is for, with :role"
+        )));
+    };
     Ok(ELispExp::boolean(ctx.set_minor_policy(
         role,
         &minor,
-        PolicyOrigin::Distributed,
+        PolicyOrigin::User,
         rule,
         &env,
     )))
+});
+
+pub const MINOR_MODE_ALLOWED_P_DOC: &str = "(minor-mode-allowed-p MODE &optional BUFFER &key \
+         :role): Return t when the role of BUFFER, the current one by default, admits the minor \
+         mode MODE, so that `minor-mode-on' would turn it on there, and nil when it does not, \
+         which `minor-mode-refusal' explains. With :role, ask of the role ROLE instead of a \
+         buffer's; BUFFER and :role do not go together. Whether MODE is on already does not \
+         matter. nil when there is no such buffer.\n\n\
+         Example:\n\
+         (minor-mode-allowed-p 'hl-line-mode :role 'document-view)";
+
+primitive!(minor_mode_allowed_p, args, _env, ctx, {
+    const NAME: &str = "minor-mode-allowed-p";
+    let (positional, keywords) = args::with_keywords(NAME, args, 1, 2, &[":role"])?;
+    let role = args::optional_role(NAME, keywords.get(":role"), ctx)?;
+    let buffer = positional.get(1).filter(|given| !given.is_nil());
+    if let (Some(_), Some(_)) = (buffer, role) {
+        return Err(EvalError::RuntimeMessage(format!(
+            "{NAME}: ask of a BUFFER or of a :role, not both"
+        )));
+    }
+    let (minor, buffer) = minor_and_buffer(positional, ctx)?;
+    let role = match role {
+        Some(role) => role,
+        None => match ctx.with_buffer(&buffer, |buf| buf.role()) {
+            Some(role) => role,
+            None => return Ok(ELispExp::nil()),
+        },
+    };
+    Ok(ELispExp::boolean(
+        ctx.modes(|modes| modes.minor_decision(role, &minor))
+            .admitted,
+    ))
+});
+
+pub const DEFINE_BUFFER_ROLE_DOC: &str = "(define-buffer-role NAME &key :parent): Make NAME, a \
+         symbol, a buffer role deriving from the role :parent names, and return NAME. A buffer \
+         of NAME admits a minor mode as the nearest role of its lineage with a rule for it \
+         says, NAME itself first; with no rule anywhere, a role deriving from editing admits \
+         it and any other does not. Without :parent, NAME is a root of its own, which admits \
+         only what is permitted for it. A role is given to a buffer when it is made, with \
+         :role, and kept for its life: defining NAME again the same way changes nothing, and \
+         defining it with another parent is an error, the shipped roles included. A parent \
+         that is no role, a keyword given twice, or one this does not take is an error too, \
+         and nothing is defined.\n\n\
+         Example:\n\
+         (define-buffer-role 'log-view :parent 'view)";
+
+primitive!(define_buffer_role, args, _env, ctx, {
+    const NAME: &str = "define-buffer-role";
+    let (positional, keywords) = args::with_keywords(NAME, args, 1, 1, &[":parent"])?;
+    let name = match &positional[0] {
+        ELispExp::Symbol(name) if !args::is_keyword(&positional[0]) => name.to_string(),
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "Symbol naming the role, not a keyword".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    if positional[0].is_nil() || name == "t" {
+        return Err(EvalError::RuntimeMessage(format!(
+            "{NAME}: {name} cannot name a buffer role"
+        )));
+    }
+    let parent = args::optional_role(NAME, keywords.get(":parent"), ctx)?;
+    ctx.modes_mut(|modes| modes.define_role(&name, parent))
+        .map_err(|why| EvalError::RuntimeMessage(format!("{NAME}: {}", why.reason())))?;
+    Ok(ELispExp::symbol(name))
 });
 
 pub const MINOR_MODE_OFF_DOC: &str = "(minor-mode-off MODE &optional BUFFER): Turn the minor \
@@ -413,6 +514,21 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         "minor-mode--distributed-policy",
         minor_mode_distributed_policy,
         MINOR_MODE_DISTRIBUTED_POLICY_DOC,
+    );
+    into.function(
+        "set-minor-mode-policy",
+        set_minor_mode_policy,
+        SET_MINOR_MODE_POLICY_DOC,
+    );
+    into.function(
+        "minor-mode-allowed-p",
+        minor_mode_allowed_p,
+        MINOR_MODE_ALLOWED_P_DOC,
+    );
+    into.function(
+        "define-buffer-role",
+        define_buffer_role,
+        DEFINE_BUFFER_ROLE_DOC,
     );
     into.function(
         "buffer-role-derived-p",

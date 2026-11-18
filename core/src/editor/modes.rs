@@ -140,12 +140,13 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// Makes ORIGIN say RULE of the minor mode MINOR in the buffers of ROLE,
-    /// or nothing when RULE is `None`, and returns whether that changed
-    /// anything. A permit counts from the next time MINOR is asked for; where
+    /// or forget what ORIGIN said there when RULE is `None` -- `inherit` --
+    /// and returns whether that changed anything. A permit counts from the next time MINOR is asked for; where
     /// MINOR is on and is no longer admitted -- in ROLE or in a role that
     /// derives from it -- it is turned off, with its `minor-mode-hook` run as
     /// for any other way off. `minor-mode--distributed-policy` gives the
-    /// rules of the modules the editor ships with.
+    /// rules of the modules the editor ships with, `set-minor-mode-policy`
+    /// the user's.
     pub(crate) fn set_minor_policy(
         &self,
         role: BufferRole,
