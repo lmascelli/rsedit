@@ -14,6 +14,7 @@ SYNOPSIS
     lsp-servers
     lsp-root-function
     lsp-request-timeout
+    lsp-send-delay
     lsp-restart-limit
     lsp-log-limit
 
@@ -85,7 +86,7 @@ THE SERVERS
 
 WHAT THE SERVER HEARS
     When lsp-mode comes on the server is sent the whole text of the
-    buffer. After every command that changed it, a server that offers to
+    buffer. Each time its changes are sent, a server that offers to
     take changes as stretches is sent only the stretch that changed and
     the text that took its place; any other server is sent the whole text
     again. An undo that reaches past what was changed since the server
@@ -93,9 +94,23 @@ WHAT THE SERVER HEARS
     because the text it replaced is no longer known. Vim in the same
     buffer is not disturbed: what . repeats stays its own.
     A save, C-x C-s or C-x C-w, is told to the servers that ask for it, and
-    closing the buffer or turning lsp-mode off closes the file there. What
-    is sent is always the text of now: a change made between two commands,
-    by a module's callback, is sent before anything else is.
+    closing the buffer or turning lsp-mode off closes the file there.
+
+    When the changes are sent is up to `lsp-send-delay'. With 0, the
+    default, they go after every command that made them, and a change
+    made between two commands, by a module's callback, goes before
+    anything else does. With a number of seconds, they go once the buffer
+    has gone that long without changing: while you type nothing is sent,
+    and a pause sends it all as one change. With nil they go only when you
+    ask the server something, when you save, and when the buffer leaves
+    the server. Whatever it says, a question, as M-. or C-M-i, sends the
+    changes first, so that the answer is about the text you see.
+
+    The findings come once the server has the changes: with a delay they
+    come later, with nil after a question or a save. Those a server sends
+    while changes of yours wait to be sent are about a text that is no
+    longer the buffer's, and are not shown; the findings already shown
+    stay, and keep to the text they were on.
 
 THE FINDINGS
     Each server is a producer of findings, named "lsp NAME ROOT", and what
@@ -211,9 +226,10 @@ LIMITS
     felt. With any server, so do an undo that reaches past the last
     change sent and the file read again.
 
-    The time a question waits and the three minutes of the restarts are
-    counted by the editor's background work, a quarter of a second at a
-    time: they are at least what they say, and may be a little more.
+    The time a question waits, the wait of `lsp-send-delay' and the three
+    minutes of the restarts are counted by the editor's background work,
+    a quarter of a second at a time: they are at least what they say, and
+    may be a little more.
 
 EXAMPLES
     rust-analyzer in every Rust file:
@@ -242,6 +258,15 @@ EXAMPLES
 
         (defun my-lsp-root (file) nil)
         (setq lsp-root-function 'my-lsp-root)
+
+    Changes sent once typing has stopped for half a second, rather than
+    after every key:
+
+        (setq lsp-send-delay 0.5)
+
+    Changes sent only on saving and when asking the server something:
+
+        (setq lsp-send-delay nil)
 
     Start the server of this buffer again after updating it:
 

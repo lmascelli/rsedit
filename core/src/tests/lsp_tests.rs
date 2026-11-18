@@ -604,6 +604,152 @@ BEGIN {
         server_has_the_text(&sandbox, &name, &file, &env, &ctx);
     }
 
+    /// The whole number SRC, a Lisp form, gives.
+    fn number(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> u64 {
+        text(&run(&format!(r#"(format "%d" {src})"#), env, ctx))
+            .parse()
+            .expect("a whole number")
+    }
+
+    /// Where in the server's log the first message holding all of PARTS is.
+    fn place_in_log(sandbox: &Sandbox, parts: &[&str]) -> usize {
+        sandbox
+            .log()
+            .lines()
+            .position(|line| parts.iter().all(|part| line.contains(part)))
+            .unwrap_or_else(|| panic!("no message with {parts:?} in:\n{}", sandbox.log()))
+    }
+
+    #[test]
+    fn with_a_delay_the_changes_wait_until_the_buffer_has_been_quiet_that_long() {
+        let sandbox = Sandbox::new("delay");
+        let file = sandbox.file("a.fake", "one\n");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let name = open(&file, &env, &ctx);
+        finding_says(&file, "version 1", &env, &ctx);
+        run("(setq lsp-send-delay 0.5)", &env, &ctx);
+        type_at_end(&name, "two\\n", &env, &ctx);
+        let first = number("lsp--now", &env, &ctx);
+        // Another change a quarter of a second later starts the wait again.
+        tick_until(&format!("(>= lsp--now {})", first + 250), &env, &ctx);
+        type_at_end(&name, "three\\n", &env, &ctx);
+        tick_until(&format!("(>= lsp--now {})", first + 500), &env, &ctx);
+        let version = format!(r#"(buffer-get 'lsp-version "{name}")"#);
+        assert_eq!(number(&version, &env, &ctx), 1);
+        let change = logged(
+            &sandbox,
+            &[r#""method":"textDocument/didChange""#],
+            &env,
+            &ctx,
+        );
+        assert!(
+            change.contains(r#""contentChanges":[{"text":"one\ntwo\nthree\n"}]"#)
+                && change.contains(r#""version":2"#),
+            "{change}"
+        );
+        assert!(number("lsp--now", &env, &ctx) >= first + 750);
+    }
+
+    #[test]
+    fn with_no_delay_the_changes_wait_for_a_question_or_a_save() {
+        let sandbox = Sandbox::new("no-delay");
+        let file = sandbox.file("a.fake", "one\n");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let name = open(&file, &env, &ctx);
+        finding_says(&file, "version 1", &env, &ctx);
+        run("(setq lsp-send-delay nil)", &env, &ctx);
+        type_at_end(&name, "two\\n", &env, &ctx);
+        for _ in 0..60 {
+            step(&env, &ctx);
+        }
+        let version = format!(r#"(buffer-get 'lsp-version "{name}")"#);
+        assert_eq!(number(&version, &env, &ctx), 1);
+        run("(goto-char 1) (lsp-find-definition)", &env, &ctx);
+        logged(
+            &sandbox,
+            &[r#""method":"textDocument/definition""#],
+            &env,
+            &ctx,
+        );
+        assert!(
+            place_in_log(
+                &sandbox,
+                &[r#""method":"textDocument/didChange""#, r#""version":2"#]
+            ) < place_in_log(&sandbox, &[r#""method":"textDocument/definition""#])
+        );
+        type_at_end(&name, "three\\n", &env, &ctx);
+        run("(save-buffer)", &env, &ctx);
+        logged(
+            &sandbox,
+            &[r#""method":"textDocument/didSave""#],
+            &env,
+            &ctx,
+        );
+        assert!(
+            place_in_log(
+                &sandbox,
+                &[r#""method":"textDocument/didChange""#, r#""version":3"#]
+            ) < place_in_log(&sandbox, &[r#""method":"textDocument/didSave""#])
+        );
+    }
+
+    #[test]
+    fn findings_that_come_while_changes_wait_are_dropped() {
+        let sandbox = Sandbox::new("waiting-findings");
+        let file = sandbox.file("a.fake", "one\n");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let name = open(&file, &env, &ctx);
+        finding_says(&file, "version 1", &env, &ctx);
+        run("(setq lsp-send-delay nil)", &env, &ctx);
+        type_at_end(&name, "two\\n", &env, &ctx);
+        // About the version the server has, but not the text the buffer has.
+        let findings = format!(
+            r#"{{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{{"uri":"file://{file}","version":1,"diagnostics":[]}}}}"#
+        );
+        run(
+            &format!(
+                r#"(lsp--deliver {} 'output {:?})"#,
+                server(&sandbox),
+                findings
+            ),
+            &env,
+            &ctx,
+        );
+        finding_says(&file, "version 1", &env, &ctx);
+    }
+
+    #[test]
+    fn every_request_leaves_through_the_one_function_that_sends_the_changes_first() {
+        let source = include_str!("../../lisp/features/lsp.lisp");
+        // A request is the one message with both an id and a method.
+        let mut senders = Vec::new();
+        for (at, _) in source.match_indices(r#"(make-map "jsonrpc""#) {
+            let mut depth = 0;
+            let end = source[at..]
+                .char_indices()
+                .find(|&(_, c)| {
+                    depth += match c {
+                        '(' => 1,
+                        ')' => -1,
+                        _ => 0,
+                    };
+                    depth == 0
+                })
+                .map(|(i, _)| at + i)
+                .expect("a closed form");
+            let message = &source[at..end];
+            if message.contains(r#""id""#) && message.contains(r#""method""#) {
+                let defun = source[..at].rfind("(defun ").expect("inside a function");
+                let name = source[defun + 7..].split_whitespace().next().unwrap();
+                senders.push((name, &source[defun..at]));
+            }
+        }
+        assert_eq!(senders.len(), 1, "{senders:?}");
+        let (name, before) = senders[0];
+        assert_eq!(name, "lsp--request");
+        assert!(before.contains("(lsp--flush server)"), "{before}");
+    }
+
     #[test]
     fn what_the_server_reports_becomes_the_findings_of_the_file() {
         let sandbox = Sandbox::new("findings");

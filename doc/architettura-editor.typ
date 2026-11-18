@@ -8125,7 +8125,9 @@ Del documento il buffer tiene, con `buffer-put`, il server, l'URI, il
 `languageId`, la versione --- 1 all'apertura, uno in più a ogni `didChange`
 --- e il `buffer-modified-tick` dell'ultimo invio. Con un server che prende i
 tratti, il buffer è anche osservato sotto la chiave `lsp` di
-`track-changes-begin`, dall'ultimo invio.
+`track-changes-begin`, dall'ultimo invio. Con un'attesa, il buffer tiene anche
+il `buffer-modified-tick` dell'ultima modifica vista e l'ora di `lsp--now` in
+cui l'ha vista.
 
 #figure(
   canvas(height: 8.4cm)[
@@ -8194,9 +8196,21 @@ esatti come float.
 dell'ultimo invio manda `didChange`, versione più uno, se il server vuole le
 modifiche (`textDocumentSync` diverso da 0): un `contentChanges` solo, con il
 tratto cambiato se il server prende i tratti (2), il testo intero altrimenti
-(1). Si svuota in
-tre momenti: dopo ogni comando (`post-command-hook` per ogni modo), all'inizio
-di ogni consegna del server, prima di ogni richiesta. `didSave` segue
+(1). Si svuota sempre prima di ogni richiesta: ogni richiesta passa da
+`lsp--request`, che svuota prima di scrivere, e un test controlla che nessun
+altro punto del modulo scriva un messaggio con `id` e `method`. Gli altri
+momenti li sceglie `lsp-send-delay`, attraverso `lsp--changes-noted`, che si
+chiama dopo ogni comando (`post-command-hook` per ogni modo) e all'inizio di
+ogni consegna del server. Con 0, il valore iniziale, svuota. Con un numero di
+secondi, annota per ogni documento cambiato l'ora in cui l'ha visto cambiare
+(`lsp--pending`) e accende l'orologio; a ogni passo `lsp--send-quiet` manda i
+documenti fermi da almeno quel tempo, e l'orologio resta acceso finché un
+server pronto ha modifiche in attesa. Con nil non manda niente: restano la
+richiesta, il salvataggio, l'uscita del buffer dal server e le modifiche di
+una code action o di un completamento, che svuotano da sé. Una
+`publishDiagnostics` per un documento con modifiche in attesa si scarta,
+perché le sue righe e colonne sono di un testo che non è più quello del
+buffer. `didSave` segue
 `after-save-hook`, dopo uno svuotamento, per i server che dichiarano `save`;
 `didClose` segue lo spegnimento di `lsp-mode`, la chiusura del buffer
 (`after-close-hook`, con il nome in `closed-buffer-name`), un
@@ -8325,13 +8339,19 @@ e i documenti si riaprono presso il nuovo come versione 1, al più
   sarebbe un errore a ogni file aperto. Il modulo è tra quelli di
   `default-configuration` perché, spento, costa un `post-command-hook` che
   senza server non fa niente.
-+ *Si svuota prima di chiedere, non a tempo.* Un'attesa dopo l'ultimo tasto
-  risparmia messaggi ma lascia un intervallo in cui il server non ha il testo
++ *Si svuota prima di chiedere; a tempo solo se lo si sceglie.* Un'attesa
+  dopo l'ultimo tasto risparmia messaggi ma lascia un intervallo in cui il server non ha il testo
   su cui gli si chiede; svuotare dopo ogni comando, all'inizio di ogni
   consegna e prima di ogni richiesta rende quell'intervallo vuoto: il server
   ha sempre ricevuto il testo su cui gli si chiede qualcosa, e il confronto
   delle versioni basta a scartare le risposte vecchie. Il costo è un
-  `didChange` per comando che scrive.
+  `didChange` per comando che scrive. Chi preferisce meno messaggi sceglie
+  un'attesa con `lsp-send-delay`, e paga con segnalazioni più tarde; la
+  richiesta svuota comunque, perché è `lsp--request` a farlo e non chi
+  chiede: una richiesta nuova non deve ricordarsene. L'attesa ricomincia a
+  ogni modifica, come per gli altri client, così mentre si scrive non parte
+  niente. Scartato: un invio al più ogni tanti secondi, che manda anche a
+  metà di una parola.
 + *I tratti quando il server li prende, il testo intero quando il testo tolto
   non si sa.* Il testo intero costa la misura del file a ogni comando che
   scrive; il tratto costa ciò che il comando ha scritto. Un intervallo

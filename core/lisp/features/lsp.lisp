@@ -37,6 +37,12 @@ to be asked again after the next command.")
   "How many seconds a question to a server waits for its answer before it is
 dropped, with a message.")
 
+(defvar lsp-send-delay 0
+  "When the changes to a buffer reach its server: 0, after every command; a
+number of seconds, once the buffer has gone that long without changing; nil,
+only when a command asks the server something, the file is saved, or the
+buffer leaves the server. A question always sends them first.")
+
 (defvar lsp-restart-limit 3
   "How many times in three minutes a server that falls is started again by
 itself. Past that it stays down until `lsp-restart'.")
@@ -301,10 +307,12 @@ turn, or SERVER is not running."
   (lsp--send server (make-map "jsonrpc" "2.0" "id" id "result" result)))
 
 (defun lsp--request (server method params callback &rest options)
-  "The id of the request METHOD with PARAMS sent to SERVER, whose result goes to
+  "The id of the request METHOD with PARAMS sent to SERVER, after every change
+it has not heard of, whatever `lsp-send-delay' says; the result goes to
 CALLBACK with SERVER. OPTIONS: :buffer, the result is wanted only while that
 buffer has the same text; :timed, it is dropped after `lsp-request-timeout';
 :replace, it takes the place of one of the same METHOD for the same buffer."
+  ;; Every request leaves from here, so every answer is about the text of now.
   (lsp--flush server)
   (let ((id (+ 1 (or (get server 'last-id) 0)))
         (buffer (lsp--prop options :buffer)))
@@ -528,15 +536,18 @@ that was asked, or when it fell and has not fallen too often."
               (let ((timed nil))
                 (dolist (request (get server 'requests))
                   (if (nth 5 request) (setq timed t)))
-                timed))
+                timed)
+              (and (lsp--delay) (eq (get server 'state) 'ready) (lsp--pending server)))
           (setq needed t)))
     needed))
 
 (defun lsp--clock-step (job)
   "nil, after a quarter of a second more of the clock JOB: a server past its
-time to stop is stopped, a question past `lsp-request-timeout' dropped."
+time to stop is stopped, a question past `lsp-request-timeout' dropped, the
+changes of a document quiet for `lsp-send-delay' sent."
   (setq lsp--now (+ lsp--now 250))
   (dolist (server lsp--servers)
+    (lsp--send-quiet server)
     (let ((deadline (get server 'deadline)))
       (when (and deadline (>= lsp--now deadline))
         (put server 'deadline nil)
@@ -563,7 +574,7 @@ its standard error, or its exit."
     (cond ((eq kind 'output)
            ;; A callback of another module may have written in a document
            ;; since the last command.
-           (lsp--flush-all)
+           (lsp--changes-noted)
            (lsp--handle server value))
           ((eq kind 'error) (lsp--log server value))
           (t (lsp--exited server value))))
@@ -732,6 +743,9 @@ publishDiagnostics, says; one about a text that is no longer there is dropped."
          (items (lsp--list (map-elt params "diagnostics")))
          (unit (get server 'unit)))
     (cond ((null file) nil)
+          ((and buffer (lsp--pending-p buffer))
+           (lsp--log server (format "dropped the findings of %s: changed since"
+                                    file)))
           ((and (numberp version) buffer
                 (not (equal version (buffer-get 'lsp-version buffer))))
            (lsp--log server (format "dropped the findings of version %d of %s"
@@ -836,6 +850,54 @@ heard of them."
   (dolist (server lsp--servers) (lsp--flush server))
   nil)
 
+(defun lsp--delay ()
+  "The milliseconds `lsp-send-delay' asks changes to wait, 0 for none; nil
+when they wait for a question."
+  (cond ((not (numberp lsp-send-delay)) nil)
+        ((> lsp-send-delay 0) (* 1000 lsp-send-delay))
+        (t 0)))
+
+(defun lsp--pending-p (buffer)
+  "t when BUFFER has changes its server has not been sent."
+  (let ((tick (buffer-modified-tick buffer)))
+    (and tick (not (equal tick (buffer-get 'lsp-tick buffer))))))
+
+(defun lsp--pending (server)
+  "The buffers of SERVER's documents with changes it has not been sent, each
+noted with the time it was last seen to change."
+  (let ((pending nil))
+    (dolist (document (get server 'documents))
+      (let* ((buffer (car document))
+             (tick (buffer-modified-tick buffer)))
+        (when (lsp--pending-p buffer)
+          (unless (equal tick (buffer-get 'lsp-seen-tick buffer))
+            (buffer-put 'lsp-seen-tick tick buffer)
+            (buffer-put 'lsp-changed-at lsp--now buffer))
+          (setq pending (cons buffer pending)))))
+    pending))
+
+(defun lsp--send-quiet (server)
+  "nil, after sending SERVER the changes of each document that has not
+changed for `lsp-send-delay'."
+  (let ((delay (lsp--delay)))
+    (when (and delay (eq (get server 'state) 'ready))
+      (dolist (buffer (lsp--pending server))
+        (if (>= (- lsp--now (buffer-get 'lsp-changed-at buffer)) delay)
+            (lsp--changed server buffer (buffer-modified-tick buffer))))))
+  nil)
+
+(defun lsp--changes-noted ()
+  "nil, after the changes of the documents are sent, or left to wait, as
+`lsp-send-delay' says."
+  (let ((delay (lsp--delay)))
+    (if (equal delay 0)
+        (lsp--flush-all)
+        (dolist (server lsp--servers)
+          (lsp--drain server)
+          (if (and delay (eq (get server 'state) 'ready) (lsp--pending server))
+              (lsp--clock-start)))))
+  nil)
+
 (defun lsp--server-for (file entry)
   "The server for FILE under ENTRY, made and started if need be; timeout when
 its root is not known yet."
@@ -906,7 +968,8 @@ turning lsp-mode off where it cannot be one."
       (if (member buffer (all-buffer-names))
           (with-current-buffer buffer (lambda () (track-changes-end 'lsp))))
       (if document (lsp--close server document))
-      (dolist (key '(lsp-server lsp-uri lsp-language lsp-version lsp-tick))
+      (dolist (key '(lsp-server lsp-uri lsp-language lsp-version lsp-tick
+                     lsp-seen-tick lsp-changed-at))
         (buffer-put key nil buffer))))
   nil)
 
@@ -953,8 +1016,8 @@ saved, when the server wants to know."
   nil)
 
 (defun lsp--after-command ()
-  "nil, after what the last command did has reached the servers: changes sent,
-buffers waiting for a root asked for it again, documents whose buffer lost
+  "nil, after what the last command did has reached the servers: changes sent
+or left to wait as `lsp-send-delay' says, buffers waiting for a root asked for it again, documents whose buffer lost
 lsp-mode with its major mode closed."
   (dolist (buffer lsp--waiting)
     (if (member buffer (all-buffer-names))
@@ -964,7 +1027,7 @@ lsp-mode with its major mode closed."
     (dolist (document (get server 'documents))
       (unless (minor-mode-p 'lsp-mode (car document))
         (lsp--detach (car document)))))
-  (lsp--flush-all))
+  (lsp--changes-noted))
 
 ;; ---------------------------------------------------------------------------
 ;; Going to a definition
