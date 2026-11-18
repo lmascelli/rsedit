@@ -16,6 +16,10 @@ turned off.
 Example:
   (show-paren-mode -1)")
 
+;; The rules of the roles: see the `modes' page, BUFFER ROLES. A prompt shows
+;; the pairs of what is typed at it, an expression for M-: above all.
+(minor-mode--distributed-policy 'show-paren-mode 'allow 'prompt)
+
 (define-globalized-minor-mode global-show-paren-mode show-paren-mode nil
   "Turn `show-paren-mode' on in every buffer, or off in all of them.
 The buffers to come follow; with no argument, the other way from how it is. On

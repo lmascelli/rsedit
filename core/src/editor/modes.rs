@@ -144,10 +144,8 @@ impl<B: BufferTrait> EditorState<B> {
     /// anything. A permit counts from the next time MINOR is asked for; where
     /// MINOR is on and is no longer admitted -- in ROLE or in a role that
     /// derives from it -- it is turned off, with its `minor-mode-hook` run as
-    /// for any other way off.
-    ///
-    /// Not reached from Lisp yet: the tests are its only callers for now.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// for any other way off. `minor-mode--distributed-policy` gives the
+    /// rules of the modules the editor ships with.
     pub(crate) fn set_minor_policy(
         &self,
         role: BufferRole,

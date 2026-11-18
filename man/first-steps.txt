@@ -114,12 +114,12 @@ WHEN SOMETHING GOES WRONG
 KEYS
     C-f                     forward-char
     C-b                     backward-char
-    C-n                     next-line
-    C-p                     previous-line
+    C-n                     move-next-line
+    C-p                     move-previous-line
     M-f                     forward-word
     M-b                     backward-word
-    C-a                     beginning-of-line
-    C-e                     end-of-line
+    C-a                     move-beginning-of-line
+    C-e                     move-end-of-line
     M-<                     beginning-of-buffer
     M->                     end-of-buffer
     C-v                     scroll-up-command

@@ -9,13 +9,17 @@
 
 (define-key nil "<backspace>" 'delete-backward-char)
 
-;; Moving, typing and the small verbs: the `editing' manual page.
-(define-key nil "C-a" 'beginning-of-line)
-(define-key nil "C-e" 'end-of-line)
+;; Moving, typing and the small verbs: the `editing' manual page. The keys
+;; for lines run the `move-' commands, by visual rows where the buffer wraps
+;; (the `wrapping' page) and by lines elsewhere; the Lisp commands
+;; `next-line', `beginning-of-line' and the others always move by lines.
+;; The arrows, bound in the core, run the same two vertical ones.
+(define-key nil "C-a" 'move-beginning-of-line)
+(define-key nil "C-e" 'move-end-of-line)
 (define-key nil "C-f" 'forward-char)
 (define-key nil "C-b" 'backward-char)
-(define-key nil "C-n" 'next-line)
-(define-key nil "C-p" 'previous-line)
+(define-key nil "C-n" 'move-next-line)
+(define-key nil "C-p" 'move-previous-line)
 (define-key nil "M-f" 'forward-word)
 (define-key nil "M-b" 'backward-word)
 (define-key nil "M-}" 'forward-paragraph)
@@ -23,8 +27,8 @@
 (define-key nil "M-<" 'beginning-of-buffer)
 (define-key nil "M->" 'end-of-buffer)
 ;; The same, on the keys made for them.
-(define-key nil "<home>" 'beginning-of-line)
-(define-key nil "<end>" 'end-of-line)
+(define-key nil "<home>" 'move-beginning-of-line)
+(define-key nil "<end>" 'move-end-of-line)
 (define-key nil "C-<home>" 'beginning-of-buffer)
 (define-key nil "C-<end>" 'end-of-buffer)
 

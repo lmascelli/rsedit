@@ -166,14 +166,19 @@ primitive!(next_line, args, _env, ctx, {
 ///
 /// The goal column is kept across a run of vertical moves, and read again
 /// from point when the command before was something else (`last-command`):
-/// read on every move, a short line on the way would clamp it for good.
-fn move_line<B: BufferTrait>(
+/// read on every move, a short line on the way would clamp it for good. The
+/// keys' own commands, `move-next-line` and `move-previous-line`, count as a
+/// logical move where the buffer does not wrap: there they moved by lines.
+pub(super) fn move_line<B: BufferTrait>(
     ctx: &EditorState<B>,
     delta: isize,
 ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
     // Both asked before the buffer is locked: they are other compartments,
     // and the closure holds the buffer's work and nothing else.
-    let continuing = ctx.last_command_is("next-line") || ctx.last_command_is("previous-line");
+    let continuing = ctx.last_command_is("next-line")
+        || ctx.last_command_is("previous-line")
+        || (super::visual_lines::after_ordinary_vertical_move(ctx)
+            && !super::visual_lines::wrapping(ctx));
     let remembered = ctx.goal_column();
     let goal = ctx.with_current_buffer_mut(|buf| {
         let (line, col) = buf.text.cursor_pos();
@@ -201,24 +206,27 @@ pub const BEGINNING_OF_LINE_DOC: &str = "(beginning-of-line): Move point to the 
          it is on.";
 
 primitive!(beginning_of_line, _args, _env, ctx, {
+    line_edge(ctx, false)
+});
+
+/// Moves point to the start of its line, or with END to its end, before the
+/// newline.
+pub(super) fn line_edge<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    end: bool,
+) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
     ctx.with_current_buffer_mut(|buf| {
         let (line, _) = buf.text.cursor_pos();
-        buf.text.cursor_move(line, 0);
+        let column = if end { line_length(&buf.text, line) } else { 0 };
+        buf.text.cursor_move(line, column);
         Ok(ELispExp::nil())
     })
-});
+}
 
 pub const END_OF_LINE_DOC: &str = "(end-of-line): Move point to the end of the line it is on, \
          before the newline.";
 
-primitive!(end_of_line, _args, _env, ctx, {
-    ctx.with_current_buffer_mut(|buf| {
-        let (line, _) = buf.text.cursor_pos();
-        let end = line_length(&buf.text, line);
-        buf.text.cursor_move(line, end);
-        Ok(ELispExp::nil())
-    })
-});
+primitive!(end_of_line, _args, _env, ctx, { line_edge(ctx, true) });
 
 // ---------------------------------------------------------------------------
 // Words, paragraphs and the whole buffer

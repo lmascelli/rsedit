@@ -13,7 +13,12 @@ VISUAL LINE MODE
     M-x visual-line-mode turns word wrapping on in the current buffer; run it
     again to turn it off. It starts off in every buffer. The status line says
     Wrap while it is on. M-x global-visual-line-mode turns it on in every
-    buffer, those open and those to come, and off again. From Lisp:
+    buffer, those open and those to come, whose role admits it, and off
+    again in all of them. The buffers you edit admit it, and so do the
+    texts to read, the help and the manual pages; a prompt, a list of
+    candidates and the other views, Dired or the buffer list, do not,
+    unless your configuration permits it there: the `modes' page, BUFFER
+    ROLES. From Lisp:
 
         (visual-line-mode 1)         on
         (visual-line-mode 0)         off
@@ -36,12 +41,18 @@ VISUAL LINE MODE
     row, so that it remains visible.
 
 MOVING
-    These keys belong to the minor mode and disappear when it is turned off:
+    The ordinary keys for lines run commands that look at the buffer:
+    where the mode is on they move by visual rows, as the commands on the
+    right do, and where it is off by lines. The `editing' page has them.
 
-        Down, C-n       next-visual-line
-        Up, C-p         previous-visual-line
-        Home, C-a       beginning-of-visual-line
-        End, C-e        end-of-visual-line
+        Down, C-n       move-next-line            next-visual-line
+        Up, C-p         move-previous-line        previous-visual-line
+        Home, C-a       move-beginning-of-line    beginning-of-visual-line
+        End, C-e        move-end-of-line          end-of-visual-line
+
+    The mode has no keys of its own. A mode that binds one of those keys
+    for something else keeps it: a prompt's history on the arrows, C-p and
+    C-n, a list of candidates choosing on them, Vim's own keys.
 
     next-visual-line and previous-visual-line accept a count, negative for
     the other direction, and preserve a screen column across consecutive
@@ -54,8 +65,9 @@ MOVING
     overlays, selections, search matches and virtual text follow the wrap.
 
     The Lisp commands next-line, previous-line, beginning-of-line and
-    end-of-line still move through logical lines. Code manipulating a file
-    can continue to use them independently of its display.
+    end-of-line still move through logical lines, wherever they are called
+    from, a key bound to them included. Code manipulating a file can
+    continue to use them independently of its display.
 
 SEE ALSO
     modes, windows, filling, virtual-text

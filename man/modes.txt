@@ -194,6 +194,17 @@ BUFFER ROLES
     configuration wins over the one the editor ships with. read-only-mode
     goes in every role.
 
+    The editor ships with two permissions: show-paren-mode in prompt, so
+    that the brackets of an expression typed at M-: pair, and
+    visual-line-mode in document-view, so that the help and the manual
+    pages wrap under global-visual-line-mode. Every other minor mode it
+    ships -- electric-indent-mode, electric-pair-mode, whitespace-mode,
+    auto-revert-mode, findings-mode, hl-line-mode,
+    display-line-numbers-mode, auto-fill-mode, overwrite-mode,
+    subword-mode, lsp-mode and the others -- has no rule, and so goes in
+    editing buffers only. lsp-mode asks, besides, for a file and a server
+    for its major mode, as before.
+
     A minor mode the role does not admit is not turned on: its command
     says why in the echo area and does nothing else, `minor-mode-on'
     returns nil, as it does for a mode on already, and

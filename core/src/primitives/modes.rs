@@ -5,6 +5,7 @@
 //! Design: `doc/architettura-editor.typ, <modi>`, and
 //! `doc/architettura-editor.typ, <modi-minori>` for the minor modes.
 use super::*;
+use crate::managers::{Admission, PolicyOrigin};
 use crate::primitives::args;
 use crate::primitives::grammar::compile;
 
@@ -256,6 +257,52 @@ primitive!(buffer_role_derived_p, args, _env, _ctx, {
     Ok(ELispExp::boolean(role(0)?.derives_from(role(1)?)))
 });
 
+pub const MINOR_MODE_DISTRIBUTED_POLICY_DOC: &str = "(minor-mode--distributed-policy MODE \
+         POLICY ROLE): For the modules the editor ships with: say whether the buffers of ROLE, \
+         and of the roles that derive from it and have no rule of their own, admit the minor \
+         mode MODE. POLICY is allow, deny, or inherit to drop the rule given before, so that \
+         the nearest role ROLE derives from decides. A rule of the user's for the same role \
+         wins over this one. An allow counts from the next time MODE is asked for; a deny turns \
+         MODE off where it is on and no longer admitted, running its hook. Return t, or nil \
+         when the rule was already so. MODE must be a minor mode and ROLE a role.\n\n\
+         Example:\n\
+         (minor-mode--distributed-policy 'visual-line-mode 'allow 'document-view)";
+
+primitive!(minor_mode_distributed_policy, args, env, ctx, {
+    exact_arity(args, 3)?;
+    let minor = args::name(args.first())?;
+    if !ctx.modes(|modes| modes.is_minor(&minor)) {
+        return Err(EvalError::RuntimeMessage(format!(
+            "No such minor mode: {minor}"
+        )));
+    }
+    let rule = match args::name(args.get(1))?.as_str() {
+        "allow" => Some(Admission::Permit),
+        "deny" => Some(Admission::Revoke),
+        "inherit" => None,
+        other => {
+            return Err(EvalError::RuntimeMessage(format!(
+                "minor-mode--distributed-policy: the policy is allow, deny or inherit, not \
+                 {other}"
+            )));
+        }
+    };
+    let role =
+        args::optional_role("minor-mode--distributed-policy", args.get(2))?.ok_or_else(|| {
+            EvalError::WrongArgumentType {
+                expected: "Symbol naming a buffer role".into(),
+                got: args[2].clone(),
+            }
+        })?;
+    Ok(ELispExp::boolean(ctx.set_minor_policy(
+        role,
+        &minor,
+        PolicyOrigin::Distributed,
+        rule,
+        &env,
+    )))
+});
+
 pub const MINOR_MODE_OFF_DOC: &str = "(minor-mode-off MODE &optional BUFFER): Turn the minor \
          mode MODE off in BUFFER, the current one by default, and run its \"minor-mode-hook\" \
          there. Return t, or nil when it was not on.";
@@ -362,6 +409,11 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         MINOR_MODE_REFUSAL_DOC,
     );
     into.function("buffer-role", buffer_role, BUFFER_ROLE_DOC);
+    into.function(
+        "minor-mode--distributed-policy",
+        minor_mode_distributed_policy,
+        MINOR_MODE_DISTRIBUTED_POLICY_DOC,
+    );
     into.function(
         "buffer-role-derived-p",
         buffer_role_derived_p,

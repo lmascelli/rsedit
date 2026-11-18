@@ -3723,6 +3723,7 @@ ognuna `Permit` o `Revoke`.
   [Le richieste automatiche], [`apply_minor_rules` passa oltre un rifiuto senza messaggi, in `initialize_buffer` e in `change_major_mode`. `define-globalized-minor-mode` chiede `minor-mode-refusal` prima di TURN-ON, nei buffer aperti (`NOME--apply`) e in quelli nuovi (`NOME--enter-buffer`); lo spegnimento globale resta in tutti i buffer.],
   [I comandi], [Il comando di `define-minor-mode`, se il ruolo rifiuta, scrive il motivo nell'area dell'eco e salta il corpo; spegnere non è mai rifiutato.],
   [Permessi e revoche], [`EditorState::set_minor_policy` cambia il registro e poi, senza lock, spegne con `minor_mode_off`, e quindi con il suo hook, il modo dove è acceso e non è più ammesso. Un permesso non accende nulla: vale dalla richiesta successiva.],
+  [Le regole distribuite], [`minor-mode--distributed-policy MODE POLICY ROLE` (`allow`, `deny`, `inherit`) scrive l'origine `Distributed`; i moduli la chiamano accanto al modo, prima della macro globale. Oggi sono due permessi: `show-paren-mode` in `prompt` (`show-paren.lisp`) e `visual-line-mode` in `document-view` (`visual-line.lisp`). Gli altri modi distribuiti non hanno regole e valgono quindi solo dove vale `editing`; `lsp-mode` tiene in più i suoi controlli sul file e sul server.],
 )
 
 Le decisioni:
@@ -5727,8 +5728,10 @@ messaggio o nel nome di un buffer, è `␉`.
 
 `features/visual-line.lisp` definisce `visual-line-mode` con il sistema dei
 modi minori (@modi-minori): stato nel buffer, etichetta `Wrap`, comando che
-alterna lo stato o legge un argomento esplicito, keymap consultata solo
-quando il modo è acceso. Il modulo predefinito lo carica senza accenderlo.
+alterna lo stato o legge un argomento esplicito. Il modulo predefinito lo
+carica senza accenderlo. Non ha una keymap propria: i tasti ordinari delle
+righe (frecce, `C-p`/`C-n`, Home/End, `C-a`/`C-e`) eseguono i comandi
+`move-*`, che scelgono il movimento visivo dove il modo è acceso.
 Non ci sono una variabile globale e un secondo flag da tenere d'accordo.
 
 `Row::wrap` divide la linea già composta in intervalli di celle: preferisce
@@ -5762,13 +5765,31 @@ margine, azzera lo scorrimento orizzontale e segue il punto in righe visive;
 il margine numera soltanto la prima continuazione. Il mouse legge le righe
 registrate sulla finestra per risalire alla linea e alla colonna originali.
 
-`primitives/visual_lines.rs` registra i quattro comandi della keymap del
-modo. I movimenti verticali conservano la colonna dello schermo tra comandi
+`primitives/visual_lines.rs` registra i quattro comandi visivi e i quattro
+dei tasti ordinari, `move-next-line`, `move-previous-line`,
+`move-beginning-of-line` e `move-end-of-line`, legati nella keymap globale
+(le frecce in `fill_default_keymaps`, gli altri in `common-keymaps`). Ognuno
+chiede al buffer corrente se `visual-line-mode` è acceso e si comporta come
+il comando visivo o come quello logico; `next-line` e gli altri comandi
+logici restano logici anche quando un tasto li esegue. Una serie di
+`move-next-line`/`move-previous-line` conserva la colonna obiettivo, contata
+come la conta il movimento che hanno fatto: dello schermo dove il buffer va a
+capo, del buffer altrove. I movimenti verticali conservano la colonna dello schermo tra comandi
 consecutivi e attraversano le continuazioni composte soltanto da testo
 virtuale o da una parte di tabulazione, che non contengono posizioni proprie
 del buffer. I comandi di movimento logico restano disponibili al Lisp.
 `editor/visual_lines.rs` coordina lo scroll di pagina, la rotella e
 `recenter`, componendo e registrando il nuovo layout anche tra due frame.
+
++ *Il movimento visivo nei comandi dei tasti, non nella keymap del modo.* Una
+  keymap del modo minore starebbe sopra quella del modo maggiore e
+  toglierebbe a un prompt la cronologia e a una lista di candidati la
+  selezione; per questo `visual-line--turn-on` escludeva `completion-mode`.
+  Nella keymap globale i comandi `move-*` cedono a ogni modo che lega gli
+  stessi tasti, e l'esclusione l'hanno presa i ruoli (@ruoli).
++ *Comandi nuovi invece di `next-line` che guarda il modo.* Il codice Lisp
+  che lavora sulle righe di un file, Vim compreso, chiama `next-line` e si
+  aspetta righe logiche qualunque cosa mostri la finestra.
 
 `tests/visual_line_tests.rs` verifica stato per buffer, testo e undo,
 coordinate in entrambe le direzioni, tasti, scroll, ridimensionamento,

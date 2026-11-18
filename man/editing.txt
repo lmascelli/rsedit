@@ -6,6 +6,8 @@ SYNOPSIS
     (backward-char &optional N)
     (next-line &optional N)
     (previous-line &optional N)
+    (move-next-line &optional N)
+    (move-previous-line &optional N)
     (forward-word &optional N)
     (backward-word &optional N)
     (subword-mode &optional ARG)
@@ -23,6 +25,8 @@ SYNOPSIS
     (global-hl-line-mode &optional ARG)
     (beginning-of-line)
     (end-of-line)
+    (move-beginning-of-line)
+    (move-end-of-line)
     (beginning-of-buffer)
     (end-of-buffer)
     (goto-char POSITION)
@@ -124,6 +128,17 @@ MOVING
         C-M-f  C-M-b    a balanced expression
         M-g g           to a line, by number
 
+    The arrows, C-n, C-p, C-a, C-e, Home and End run the move- commands:
+    move-next-line, move-previous-line, move-beginning-of-line and
+    move-end-of-line. Where the buffer wraps its long lines, with
+    visual-line-mode, they move by the rows on the screen; elsewhere by
+    lines. The Lisp commands next-line, previous-line, beginning-of-line
+    and end-of-line always move by lines, whatever the buffer shows: code
+    that works on a file's lines keeps using them. The `wrapping' page says
+    more. A mode that binds those keys for something else keeps them: at a
+    prompt the arrows, C-p and C-n go through the history, and in a list of
+    candidates they choose one.
+
     A word is a run of letters, digits and underscores. A paragraph ends
     at a blank line. A balanced expression is a list, a string or an atom
     such as a name or a number, with any prefix in front of it, such as the
@@ -204,7 +219,8 @@ SEEING WHICH BRACKETS PAIR
     Brackets are read as C-M-f reads them: one in a string or a comment
     is text, and is paired with nothing.
 
-    The drawing is the minor mode `show-paren-mode', on in every buffer: M-x
+    The drawing is the minor mode `show-paren-mode', on in every buffer
+    whose role admits it -- those you edit, and the prompts: M-x
     show-paren-mode turns it off in the buffer you are in, and on again, and
     M-x global-show-paren-mode off in every buffer, those open and those to
     come, and on again. The `modes' page says how to keep a minor mode off in
@@ -553,14 +569,14 @@ EXAMPLES
 KEYS
     C-f                     forward-char
     C-b                     backward-char
-    C-n                     next-line
-    C-p                     previous-line
+    C-n                     move-next-line
+    C-p                     move-previous-line
     M-f                     forward-word
     M-b                     backward-word
-    C-a                     beginning-of-line
-    C-e                     end-of-line
-    <home>                  beginning-of-line
-    <end>                   end-of-line
+    C-a                     move-beginning-of-line
+    C-e                     move-end-of-line
+    <home>                  move-beginning-of-line
+    <end>                   move-end-of-line
     M-}                     forward-paragraph
     M-{                     backward-paragraph
     M-<                     beginning-of-buffer

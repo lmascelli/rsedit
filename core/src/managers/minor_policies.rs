@@ -33,8 +33,7 @@ impl PolicyOrigin {
 pub enum Admission {
     /// Admitted.
     Permit,
-    /// Kept out. Not given from Lisp yet: see `EditorState::set_minor_policy`.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Kept out.
     Revoke,
 }
 

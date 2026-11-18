@@ -195,6 +195,89 @@ mod tests {
     }
 
     #[test]
+    fn the_ordinary_keys_run_the_move_commands_and_a_key_bound_to_next_line_stays_logical() {
+        let (ctx, env) = wrapped("alpha beta gamma\nnext", 8);
+        let _ = view(&ctx, &env, 8, 20);
+        for (keys, command) in [
+            ("<down>", "move-next-line"),
+            ("<up>", "move-previous-line"),
+            ("C-n", "move-next-line"),
+            ("C-p", "move-previous-line"),
+            ("<home>", "move-beginning-of-line"),
+            ("C-a", "move-beginning-of-line"),
+            ("<end>", "move-end-of-line"),
+            ("C-e", "move-end-of-line"),
+        ] {
+            let found = run(
+                &format!(
+                    r#"(let ((target (nth 1 (key-binding "{keys}"))))
+                         (if (listp target) (car target) target))"#
+                ),
+                &env,
+                &ctx,
+            );
+            // With the mode on, and so no keymap of its own in the way.
+            assert!(
+                matches!(&found, LispExp::Symbol(name) if name.as_ref() == command),
+                "{keys}: {found:?}"
+            );
+        }
+
+        // Bound to a key, the logical commands move by lines all the same.
+        run(
+            r#"(define-key nil "C-c n" 'next-line)
+               (define-key nil "C-c e" 'end-of-line)
+               (goto-char 2)"#,
+            &env,
+            &ctx,
+        );
+        for key in ["C-c", "n"] {
+            press_spelled(&ctx, &env, key);
+        }
+        assert_eq!(point(&ctx), (1, 2));
+        run("(goto-char 2)", &env, &ctx);
+        for key in ["C-c", "e"] {
+            press_spelled(&ctx, &env, key);
+        }
+        assert_eq!(point(&ctx), (0, 16));
+        // And from Lisp, the move- commands choose as the keys do.
+        run("(goto-char 2) (move-next-line)", &env, &ctx);
+        assert_eq!(point(&ctx), (0, 8));
+        run(
+            "(visual-line-mode 0) (goto-char 2) (move-next-line) (move-end-of-line)",
+            &env,
+            &ctx,
+        );
+        assert_eq!(point(&ctx), (1, 4));
+    }
+
+    /// Presses KEY, written `C-c` or `n`.
+    fn press_spelled(ctx: &Ctx, env: &Arc<Env<Ctx>>, key: &str) {
+        match key.strip_prefix("C-") {
+            Some(rest) => press(ctx, env, KeyCode::Char(rest.chars().next().unwrap()), true),
+            None => press(ctx, env, KeyCode::Char(key.chars().next().unwrap()), false),
+        }
+    }
+
+    #[test]
+    fn a_run_of_ordinary_vertical_keys_keeps_its_goal_by_lines_where_nothing_wraps() {
+        let (ctx, env) = editor("abcdefgh\nx\nabcdefgh", 20);
+        let _ = view(&ctx, &env, 20, 20);
+        run("(goto-char 6)", &env, &ctx);
+        press(&ctx, &env, KeyCode::Down, false);
+        assert_eq!(point(&ctx), (1, 1));
+        press(&ctx, &env, KeyCode::Char('n'), true);
+        assert_eq!(
+            point(&ctx),
+            (2, 6),
+            "the goal column survives the short line"
+        );
+        press(&ctx, &env, KeyCode::Up, false);
+        press(&ctx, &env, KeyCode::Char('p'), true);
+        assert_eq!(point(&ctx), (0, 6));
+    }
+
+    #[test]
     fn logical_commands_remain_available_and_visual_counts_clamp_at_buffer_edges() {
         let (ctx, env) = wrapped("alpha beta gamma\nnext", 8);
         run("(goto-char 2) (next-line)", &env, &ctx);

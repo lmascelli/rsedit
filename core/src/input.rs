@@ -433,14 +433,14 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut Keymap<B>) {
             code: KeyCode::Up,
             modifiers: KeyModifiers::default(),
         },
-        ELispExp::form(vec![ELispExp::symbol("previous-line".into())]),
+        ELispExp::form(vec![ELispExp::symbol("move-previous-line".into())]),
     );
     keymaps.insert_key(
         KeyEvent {
             code: KeyCode::Down,
             modifiers: KeyModifiers::default(),
         },
-        ELispExp::form(vec![ELispExp::symbol("next-line".into())]),
+        ELispExp::form(vec![ELispExp::symbol("move-next-line".into())]),
     );
     keymaps.insert_key(
         KeyEvent {

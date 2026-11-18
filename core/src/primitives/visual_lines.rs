@@ -1,7 +1,26 @@
-//! Commands that move through the same visual rows the core composes.
+//! Commands that move through the same visual rows the core composes, and
+//! the ones the ordinary keys run, which move by visual rows where the buffer
+//! wraps and by lines elsewhere.
 use super::*;
 use crate::primitives::args::movement_count;
-use crate::ui::visual_lines::VisualLines;
+use crate::ui::visual_lines::{MODE, VisualLines};
+
+/// The commands the ordinary vertical keys run: Up, Down, `C-p`, `C-n`.
+const ORDINARY_VERTICAL: [&str; 2] = ["move-next-line", "move-previous-line"];
+
+/// Returns whether the current buffer wraps, `visual-line-mode` on: what
+/// the ordinary keys' commands ask to choose how to move.
+pub(super) fn wrapping<B: BufferTrait>(ctx: &EditorState<B>) -> bool {
+    ctx.with_current_buffer(|buf| buf.minor_mode_enabled(MODE))
+}
+
+/// Returns whether the command before was one of the ordinary vertical
+/// keys': a run of them keeps its goal column, whichever way they moved.
+pub(super) fn after_ordinary_vertical_move<B: BufferTrait>(ctx: &EditorState<B>) -> bool {
+    ORDINARY_VERTICAL
+        .iter()
+        .any(|name| ctx.last_command_is(name))
+}
 
 fn dimensions<B: BufferTrait>(
     ctx: &EditorState<B>,
@@ -33,8 +52,11 @@ fn move_visual<B: BufferTrait>(
     delta: isize,
 ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
     let (width, tab_width) = dimensions(ctx, env);
-    let continuing =
-        ctx.last_command_is("next-visual-line") || ctx.last_command_is("previous-visual-line");
+    // The ordinary keys' commands count where the buffer wraps: there they
+    // moved by visual rows, with a goal column of the screen.
+    let continuing = ctx.last_command_is("next-visual-line")
+        || ctx.last_command_is("previous-visual-line")
+        || (after_ordinary_vertical_move(ctx) && wrapping(ctx));
     let remembered = ctx.goal_column();
     let goal = ctx.with_current_buffer_mut(|buf| {
         let visual = VisualLines::new(&buf.text, &buf.virtual_text, width, tab_width);
@@ -135,7 +157,85 @@ primitive!(end_of_visual_line, args, env, ctx, {
     edge(ctx, &env, true)
 });
 
+pub const MOVE_NEXT_LINE_DOC: &str = "(move-next-line &optional N): Move down N lines, one by \
+    default, as Down and C-n do: by visual rows, as `next-visual-line', where \
+    `visual-line-mode' is on in the current buffer, and by lines, as `next-line', elsewhere. \
+    A negative N moves up. `next-line' itself always moves by lines.\n\n\
+    Example:\n\
+    (move-next-line 2)";
+primitive!(move_next_line, args, env, ctx, {
+    let count = movement_count(args)?;
+    if wrapping(ctx) {
+        move_visual(ctx, &env, count)
+    } else {
+        super::movement::move_line(ctx, count)
+    }
+});
+
+pub const MOVE_PREVIOUS_LINE_DOC: &str = "(move-previous-line &optional N): Move up N lines, one \
+    by default, as Up and C-p do: by visual rows, as `previous-visual-line', where \
+    `visual-line-mode' is on in the current buffer, and by lines, as `previous-line', \
+    elsewhere. A negative N moves down.\n\n\
+    Example:\n\
+    (move-previous-line)";
+primitive!(move_previous_line, args, env, ctx, {
+    let count = movement_count(args)?.saturating_neg();
+    if wrapping(ctx) {
+        move_visual(ctx, &env, count)
+    } else {
+        super::movement::move_line(ctx, count)
+    }
+});
+
+pub const MOVE_BEGINNING_OF_LINE_DOC: &str = "(move-beginning-of-line): Move point to the start \
+    of the line, as Home and C-a do: of the visual row, as `beginning-of-visual-line', where \
+    `visual-line-mode' is on in the current buffer, and of the line, as `beginning-of-line', \
+    elsewhere.\n\n\
+    Example:\n\
+    (move-beginning-of-line)";
+primitive!(move_beginning_of_line, args, env, ctx, {
+    exact_arity(args, 0)?;
+    if wrapping(ctx) {
+        edge(ctx, &env, false)
+    } else {
+        super::movement::line_edge(ctx, false)
+    }
+});
+
+pub const MOVE_END_OF_LINE_DOC: &str = "(move-end-of-line): Move point to the end of the line, as \
+    End and C-e do: of the visual row, as `end-of-visual-line', where `visual-line-mode' is \
+    on in the current buffer, and of the line, as `end-of-line', elsewhere.\n\n\
+    Example:\n\
+    (move-end-of-line)";
+primitive!(move_end_of_line, args, env, ctx, {
+    exact_arity(args, 0)?;
+    if wrapping(ctx) {
+        edge(ctx, &env, true)
+    } else {
+        super::movement::line_edge(ctx, true)
+    }
+});
+
 pub fn install<B: BufferTrait>(into: &Registry<B>) {
+    into.command("move-next-line", move_next_line, &["p"], MOVE_NEXT_LINE_DOC);
+    into.command(
+        "move-previous-line",
+        move_previous_line,
+        &["p"],
+        MOVE_PREVIOUS_LINE_DOC,
+    );
+    into.command(
+        "move-beginning-of-line",
+        move_beginning_of_line,
+        &[],
+        MOVE_BEGINNING_OF_LINE_DOC,
+    );
+    into.command(
+        "move-end-of-line",
+        move_end_of_line,
+        &[],
+        MOVE_END_OF_LINE_DOC,
+    );
     into.command(
         "next-visual-line",
         next_visual_line,

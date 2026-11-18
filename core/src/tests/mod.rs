@@ -25,6 +25,7 @@ mod debug_lisp_tests;
 mod delete_trailing_tests;
 mod deletion_tests;
 mod dired_tests;
+mod distributed_mode_role_tests;
 mod doc_faithfulness_tests;
 mod doc_pointer_tests;
 mod echo_tests;

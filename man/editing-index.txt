@@ -23,6 +23,8 @@ MOVING POINT
         backward-char             a character back
         next-line                 a line down, keeping the column
         previous-line             a line up, keeping the column
+        move-next-line            a line down, or a row where it wraps
+        move-previous-line        a line up, or a row where it wraps
         forward-word              past the end of the next word
         backward-word             to the start of the word before
         subword-mode              move and kill by parts of identifiers
@@ -35,6 +37,8 @@ MOVING POINT
         down-list                 just inside the next list
         beginning-of-line         to the start of the line
         end-of-line               to the end of the line
+        move-beginning-of-line    to the start of the line, or of the row
+        move-end-of-line          to the end of the line, or of the row
         beginning-of-buffer       to the start of the buffer
         end-of-buffer             to the end of the buffer
         goto-char                 to POSITION
