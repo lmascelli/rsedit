@@ -1,0 +1,74 @@
+NAME
+    markers - a place in the text that moves with it
+
+SYNOPSIS
+    (make-marker POSITION &optional ADVANCES)
+    (marker-position MARKER)
+    (set-marker MARKER POSITION)
+    (delete-marker MARKER)
+
+DESCRIPTION
+    A position is a number of characters from the start of the buffer, and
+    it goes stale as soon as text is typed before it. A marker is a
+    position the buffer keeps for you, and moves as the text moves: put
+    one at the start of a word, type a line above it, and the marker is
+    still at the start of the word.
+
+        (setq my-start (make-marker (point)))
+        (marker-position my-start)              ; where it is now
+
+    `make-marker' returns a handle, a number that names the marker, and
+    the other functions take it. A marker belongs to the buffer it was
+    made in: the functions look for it in the current buffer, and in
+    another one `marker-position' says nil. A position outside the buffer
+    is taken as its nearer end.
+
+    The editor's own lists use markers: the places M-g n goes back to
+    after the lines above them have moved, and the end of what a shell
+    printed in an eshell buffer, where its next output goes.
+
+AS THE TEXT CHANGES
+    Text inserted before a marker carries it along; text inserted after
+    it leaves it where it is. Deleting text that holds the marker puts it
+    where the deletion was. Undoing an edit moves the marker back as the
+    edit had moved it.
+
+    Text inserted exactly at the marker goes after it: the marker stays
+    in front of it. Made with ADVANCES not nil, the marker goes after
+    the text instead. The first is what a place where something starts
+    wants, the end of what a shell printed, with what you type after it;
+    the second what a place that collects text wants, to stay at the end
+    of what is put there.
+
+        (setq at (make-marker 10))              ; stays at 10 ...
+        (setq after (make-marker 10 t))         ; ... and this one goes
+        (goto-char 10)
+        (insert "x")                            ; after the x, to 11
+
+KEEPING AND LETTING GO
+    `set-marker' moves a marker to another position of its buffer, and
+    returns where it went. `delete-marker' takes it out of the buffer:
+    from then on its handle names nothing, and is never given to another
+    marker. A marker goes with its buffer.
+
+    Each marker is moved by every edit of its buffer: delete those you
+    no longer need, rather than make a new one for every command.
+
+EXAMPLES
+    Come back to where you were after inserting a header above it:
+
+        (let ((here (make-marker (point))))
+          (goto-char 0)
+          (insert ";; Generated, do not edit.\n")
+          (goto-char (marker-position here))
+          (delete-marker here))
+
+    Collect lines at the end of a region, the marker following each one:
+
+        (setq my-end (make-marker (point) t))
+        (defun my-collect (line)
+          (goto-char (marker-position my-end))
+          (insert line "\n"))
+
+SEE ALSO
+    overlays, virtual-text, buffers, eshell

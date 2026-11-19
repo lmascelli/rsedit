@@ -2343,15 +2343,23 @@ regione si disegna come un rettangolo; il rettangolo tra due posizioni lo
 calcola `Rectangle::between_offsets`, in `text/rectangle.rs` (@testo). Gli
 #emph[overlay] sono intervalli con una faccia e una categoria (le
 corrispondenze di una ricerca, una diagnostica, l'enfasi di una pagina di
-manuale); sono, con il testo virtuale, le sole posizioni conservate che
-seguono le modifiche: le porte li adattano con `adjust_for_insert` e
-`adjust_for_delete`. Nessuna delle due estremità cresce, e un overlay che si
-riduce a lunghezza zero viene cancellato.
+manuale); sono, con il testo virtuale e i marcatori, le sole posizioni
+conservate che seguono le modifiche: le porte li adattano con
+`adjust_for_insert` e `adjust_for_delete`. Nessuna delle due estremità cresce,
+e un overlay che si riduce a lunghezza zero viene cancellato.
+I #emph[marcatori] (`buffer/markers.rs`) sono posizioni sole, senza faccia, per
+id: quelli delle liste di risultati (@risultati) e quelli che il Lisp fa con
+`make-marker`. Ciascuno ha un verso, `advances`: un inserimento proprio nella
+sua posizione lo spinge dopo il testo inserito, come vogliono i posti dei
+risultati, o lo lascia davanti, come vuole la fine dell'output di una shell, con
+ciò che si scrive dopo di essa (@mod-eshell). Un marcatore non sparisce con il
+testo che lo contiene: finisce dove era la cancellazione, e se ne va solo con
+`delete-marker` o con il suo buffer.
 Il #emph[testo virtuale] è ancorato a un punto, non a un intervallo, ed è per
 questo una tabella a parte: il layout delle righe lo inserisce nel testo
 mostrato (`ui/layout.rs`), e un clic su di esso viene riportato alla posizione
-vera del buffer. Le primitive sono in `primitives/overlays.rs` e
-`primitives/virtual_text.rs`.
+vera del buffer. Le primitive sono in `primitives/overlays.rs`,
+`primitives/virtual_text.rs` e `primitives/markers.rs`.
 
 == Le cache del testo <cache-testo>
 
@@ -4926,6 +4934,24 @@ Ciò che vale per ogni processo che l'editor avvia sta in
   (`process_group(0)`); `stop_process` manda `TERM` e `CONT` al gruppo e,
   dal thread `stop process`, `KILL` dopo due secondi. Fuori da Unix non ci
   sono gruppi né `TERM`: il processo si uccide subito, da solo.
+- *La sessione*: un processo dialogante parte invece con `in_own_session`,
+  che nel figlio, tra `fork` ed `exec`, chiama `setsid`: guida una sessione
+  sua e un gruppo suo, con lo stesso numero, e non ha un terminale di
+  controllo. Con il solo gruppo, un figlio dell'editor che gira in un
+  terminale ha quel terminale, in un gruppo che non è in primo piano: una
+  shell interattiva che lo apre per il controllo dei lavori, o un programma
+  che vi chiede una password, viene fermato dal sistema (`SIGTTOU`,
+  `SIGTTIN`), o, peggio, se lo prende. Senza terminale sente che non ce n'è
+  uno, come quando l'editor non ne ha. `setsid` è dichiarato con un
+  `extern "C"` sulla libc che la libreria standard già usa, perché
+  `CommandExt::setsid` non è stabile; i comandi di shell restano con il solo
+  gruppo, e la pagina `shell` dice che cosa ne segue.
+- *I segnali*: `signal` manda al gruppo un solo segnale di `Signal`
+  (`INT`, `QUIT`, `HUP`, `TERM`, `KILL`), sotto lo stesso lock di `reap`, e
+  niente dopo: un processo che lo gestisce, come una shell interattiva con
+  `INT`, continua. Fuori da Unix si mandano solo `Terminate` e `Kill`, che
+  uccidono il processo da solo; gli altri rispondono falso. È ciò che
+  `process-signal` chiama.
 - *L'uscita dell'editor*: ogni processo si registra con
   `remember_child_process`, per riferimento debole, e `kill_left_over`, alla
   fine di `shutdown`, uccide i gruppi di quelli ancora vivi.
@@ -4938,7 +4964,8 @@ Ciò che vale per ogni processo che l'editor avvia sta in
 Un processo dialogante è un programma che resta e risponde: un server di un
 linguaggio, una REPL, un filtro. `process-start` (`primitives/processes.rs`)
 lo avvia con i suoi argomenti, senza shell, nella directory di lavoro, con tre
-pipe; ciò che stampa arriva a una funzione Lisp, tra un comando e l'altro. Il
+pipe, o due quando `:errors merged` manda lo stderr nella pipe dello stdout;
+ciò che stampa arriva a una funzione Lisp, tra un comando e l'altro. Il
 mattone non sa chi parla con lui né in che lingua: cornice a parte, il
 contenuto dei messaggi è affare del chiamante. La pagina `processes` dice che
 cosa vede chi lo usa.
@@ -4974,6 +5001,17 @@ cosa vede chi lo usa.
   Il terzo scrive ciò che `process-send` ha messo in coda. Quando lo stdout
   finisce, il primo aspetta il secondo, poi il processo (`reap`), poi chiude
   la coda dell'ingresso e aspetta il terzo; per ultimo mette in coda `exit`.
+- *Gli errori con l'output.* Con `:errors merged` stdout e stderr sono le due
+  copie dell'estremità di scrittura di una sola `std::io::pipe`, come per i
+  comandi di shell (@comandi-shell), e il thread `NOME errors` non c'è: ciò che
+  il programma scrive arriva nell'ordine in cui l'ha scritto, tagliato secondo
+  la forma, come `output`. Il `Command` si lascia andare subito dopo lo
+  `spawn`, perché le copie che tiene dell'estremità di scrittura non lascino
+  la pipe aperta oltre la fine del processo. È ciò che serve a una shell, che
+  scrive il prompt sullo stderr e l'output dei comandi sullo stdout: con due
+  pipe due thread li consegnano in un ordine che nessuno sa ricostruire.
+- *L'ambiente.* `:environment` aggiunge, dopo `apply_environment`, variabili
+  solo di quel processo, `NOME=VALORE`, o ne toglie una, `NOME`.
 - *La cornice.* `Frames` legge un'intestazione di campi fino alla riga
   vuota, righe chiuse da `\r\n` o da `\n`, ne prende `Content-Length` senza
   badare alle maiuscole e lascia passare gli altri campi; poi aspetta il corpo
@@ -6776,6 +6814,7 @@ e i lavori Lisp sono nel capitolo sul lavoro in background (@comandi-shell,
   [`ask.rs`], [Le domande: `y-or-n`, `yes-or-no`, e `ask_with_keys` per chi ne fa di sue.],
   [`args.rs`], [I lettori degli argomenti, che usano tutti gli altri file.],
   [`shell.rs`], [I comandi di shell (@comandi-shell).],
+  [`processes.rs`, `child_process.rs`], [I processi dialoganti (@processi-dialoganti), e ciò che ogni processo avviato ha in comune: il gruppo, l'arresto, i segnali (@processi-figli).],
   [`workers.rs`, `lisp_job.rs`], [I lavori Lisp e le opzioni dello scheduler (@lavori-lisp).],
 )
 
@@ -7212,7 +7251,7 @@ rimanda; le sezioni che seguono dicono ciò che non è scritto altrove.
   [`grammar.rs`], [Le regole e le regioni della grammatica (@lessici).],
   [`syntax_table.rs`], [La tabella sintattica e le domande allo scanner: `syntax-ppss`, `balance-point`, `bounds-of-enclosing-list` (@lessici).],
   [`theme.rs`], [Le facce e i loro stili (@facce).],
-  [`overlays.rs`, `virtual_text.rs`], [Overlay e testo virtuale (@mark-overlay).],
+  [`overlays.rs`, `virtual_text.rs`, `markers.rs`], [Overlay, testo virtuale e marcatori (@mark-overlay).],
   [`evaluation.rs`, `diagnostics.rs`], [Valutare un file o un testo, e riferire: il log, il backtrace, l'area dei messaggi (@valutazione).],
   [`loading.rs`], [Caricare un modulo una volta, e ciò che si sa di quelli caricati e dei plugin (@moduli-lisp).],
 )
@@ -8327,6 +8366,219 @@ nomina; la cancellazione è un comando sui tasti di `delete-backward-char` e
   carattere voluto. Tolta e rimessa nello stesso comando, è un passo di undo.
 + *Rust non accoppia le virgolette.* Le lifetime lo renderebbero sbagliato più
   spesso che giusto.
+
+=== `eshell` <mod-eshell>
+
+`M-x eshell` fa girare una shell vera in un buffer, come lo `shell-mode` di
+Emacs, e valuta come Lisp una riga che comincia con `eshell-lisp-prefix`, come
+l'eshell di Emacs. Il modulo è tutto in Lisp, sopra cinque mattoni del nucleo:
+`process-start` con `:errors merged` e `:environment`
+(@processi-dialoganti), `process-signal` (@processi-figli), i marcatori
+(@mark-overlay), `eval-string-top-level` (@valutazione) e `session-value`
+(@memoria). Che cosa vede chi lo usa, e i limiti, lo dice la pagina `eshell`.
+
+#canvas(height: 7.0cm)[
+  #node(2.0cm, 1.0cm, 3.0cm, 1.1cm, [*shell* \ stdin; stdout + stderr \ in una pipe], fill: paper)
+  #node(6.6cm, 0.6cm, 3.2cm, 0.7cm, [thread `NOME`], fill: accent.lighten(85%))
+  #node(6.6cm, 1.9cm, 3.2cm, 0.7cm, [thread `NOME input`], fill: accent.lighten(85%))
+  #node(6.6cm, 3.15cm, 3.2cm, 0.7cm, [`process-send`])
+  #node(10.6cm, 0.6cm, 2.4cm, 0.7cm, [`Exchange`])
+  #node(14.9cm, 0.6cm, 3.6cm, 0.9cm, [`eshell--receive` \ tra due comandi], fill: accent.lighten(85%))
+  #node(14.9cm, 2.7cm, 4.2cm, 1.2cm, [`eshell--output`: eco, \ `\r\n` ed escape tolti; \ la OSC 7 → la directory])
+  #node(9.8cm, 4.7cm, 7.6cm, 0.9cm, [buffer: #h(0.3em) output … prompt #h(0.2em) *▸* #h(0.2em) riga scritta \ #text(size: 7pt)[▸ = il marcatore, che non avanza]])
+  #node(2.6cm, 4.7cm, 3.4cm, 0.9cm, [`eshell-send-input` \ (`<ret>`)], fill: accent.lighten(85%))
+  #node(2.6cm, 6.4cm, 4.2cm, 0.8cm, [`eval-string-top-level`])
+  #carrow((3.5cm, 0.8cm), (5.0cm, 0.6cm))
+  #carrow((8.2cm, 0.6cm), (9.4cm, 0.6cm), label: [`push`], dy: -0.25cm)
+  #carrow((11.8cm, 0.6cm), (13.1cm, 0.6cm), label: [`tick`], dy: -0.25cm)
+  #carrow((14.9cm, 1.05cm), (14.9cm, 1.95cm))
+  #carrow((14.0cm, 3.4cm), (12.8cm, 4.25cm), label: [al marcatore], dx: 1.0cm, dy: 0.05cm)
+  #carrow((6.0cm, 4.7cm), (4.3cm, 4.7cm))
+  #carrow((2.6cm, 5.15cm), (2.6cm, 6.0cm), label: [`,`…], dx: 0.35cm)
+  #carrow((3.4cm, 4.25cm), (5.0cm, 3.35cm), label: [altrimenti], dx: -0.9cm, dy: -0.1cm)
+  #carrow((6.6cm, 2.8cm), (6.6cm, 2.25cm))
+  #carrow((5.0cm, 1.9cm), (3.5cm, 1.3cm))
+  #carrow((4.7cm, 6.4cm), (7.0cm, 5.15cm), label: [il valore, e il prompt di nuovo], dx: 2.6cm, dy: 0.25cm, dash: "dashed")
+]
+
+Lo stato di una shell sta nel suo buffer, con `buffer-put`: il nome del
+processo (`eshell--process`), il nome della shell in `eshell-shells`
+(`eshell--shell`), il marcatore (`eshell--marker`), l'eco attesa, l'escape
+tagliato a metà dall'ultima lettura e il punto della storia a cui è arrivato
+`M-p`. La storia è una sola, una lista di stringhe dalla più recente, per
+tutti i buffer.
+
+- *I thread.* La shell gira e si legge sui thread di `process-start`: `NOME`
+  legge la pipe unica a pezzi (`chunks`), perché un prompt non finisce una
+  riga, e `NOME input` scrive ciò che `process-send` mette in coda. Il Lisp
+  del modulo gira tutto sul thread dei comandi: `eshell--receive` è la
+  funzione delle consegne, chiamata tra un comando e l'altro
+  (@processi-dialoganti), e lavora nel buffer della shell con
+  `with-current-buffer`. Il nome del processo è il nome del buffer, ed è la
+  maniglia che `eshell-start` e `eshell-process` restituiscono al Lisp:
+  `process-send`, `process-signal`, `stop-worker` e `work-list` la conoscono.
+- *Il marcatore.* Divide ciò che la shell ha stampato da ciò che si sta
+  scrivendo. L'output va al marcatore, che dopo l'inserimento si sposta alla
+  sua fine; un marcatore che non avanza lascia davanti a sé ciò che si scrive
+  proprio lì. Il punto, se era dopo il marcatore, si sposta con il testo
+  inserito davanti: resta sulla riga che si sta scrivendo. Se era più su,
+  resta dov'è.
+- *L'invio.* `eshell-send-input` prende il testo dal marcatore alla fine,
+  aggiunge il ritorno a capo, gli dà un overlay `eshell-input` e sposta il
+  marcatore dopo di esso. Una riga con il prefisso va a
+  `eval-string-top-level`, nel buffer della shell, e il valore si scrive al
+  marcatore seguito dalla copia del prompt, il testo dall'inizio della riga al
+  marcatore preso prima dell'invio: la shell non ha visto la riga, e non ne
+  stampa un altro. Le altre vanno a `process-send`, con le righe unite dal
+  `:newline` del profilo.
+- *I filtri.* `eshell--output` unisce ciò che la lettura precedente ha
+  lasciato a metà, un escape o un `\r` finale che può essere la prima metà di
+  un `\r\n`, fa di `\r\n` un `\n`, toglie in testa la copia della riga che
+  una shell con `:echoes` stampa, e toglie gli escape: le sequenze CSI
+  (`ESC [`), le OSC (`ESC ]`, fino a `BEL` o `ESC \`) e quelle di due
+  caratteri. Una OSC 7,
+  `file://HOST/PERCORSO`, diventa la directory del buffer. Un escape che la
+  lettura ha tagliato resta per la consegna seguente, fino a 4 KiB; oltre, si
+  scarta il suo `ESC` e il resto passa. Un `\r` da solo diventa un `\n` in
+  `insert`, come in ogni testo inserito (@due-porte).
+- *La fine.* La consegna `exit` scrive `--- exited N ---` o `--- killed ---`
+  e toglie il nome del processo dal buffer: da lì `eshell-process` risponde
+  nil, e `M-x eshell` riavvia nello stesso buffer la shell che c'era. La
+  chiusura del buffer ferma la shell da `after-close-hook`, con
+  `closed-buffer-name`, che è il nome del processo.
+
+==== Far girare una shell senza un terminale <shell-senza-terminale>
+
+Una shell interattiva si aspetta un terminale: un dispositivo che le dice
+quanto è largo, che fa l'eco di ciò che si scrive, che trasforma `C-c` in un
+segnale al gruppo in primo piano e che separa i lavori. Qui la shell ha solo
+pipe, e ogni profilo di `eshell-shells` dice come farla funzionare lo stesso.
+I profili sono dati, liste di proprietà, perché aggiungerne uno non chieda di
+scrivere funzioni.
+
+#ref-table(
+  columns: (2.4cm, 1fr),
+  header: ([Shell], [Come si avvia e perché]),
+  [bash], [`bash --noediting -i`. `-i` la rende interattiva anche con lo stdin su una pipe: legge `.bashrc` e stampa il prompt, sullo stderr, che deve arrivare con l'output (`:errors merged`). Senza terminale dice «no job control in this shell», e ha ragione. Gestisce `INT`: `process-signal` lo manda al gruppo, il comando in primo piano muore, la shell dà un nuovo prompt. Ignora `TERM`, e `process-stop` la chiude con il `KILL` dopo due secondi. `TERM=dumb`, `PAGER=cat` e `GIT_PAGER=cat` evitano i programmi che disegnano o impaginano; `PROMPT_COMMAND` stampa la OSC 7 prima di ogni prompt.],
+  [sh], [`sh -i`: dash, o la shell POSIX del sistema. Come bash, ma il prompt è `PS1`, nell'ambiente, con la OSC 7 dentro e `${PWD}` espanso a ogni prompt; dash toglie un livello di backslash dal prompt, e il terminatore `ESC \` va scritto doppio.],
+  [cmd], [`cmd.exe /K "chcp 65001>nul"`: la pagina di codice della sua console nascosta (il processo parte con `CREATE_NO_WINDOW`) diventa UTF-8 prima del primo prompt; senza, i comandi interni scrivono nella pagina OEM, e ciò che non è ASCII arriva sbagliato. Con lo stdin su una pipe cmd stampa il prompt e poi ristampa ogni riga che legge: `:echoes` toglie la copia. `PROMPT=$E]7;file:///$P$E\$P$G` mette la OSC 7 nel prompt. Le righe finiscono con `\r\n`.],
+  [PowerShell], [`powershell.exe -NoLogo -NoProfile -Command -`: legge i comandi dallo stdin, ma non stampa prompt, e senza prompt non si vede quando un comando è finito. Il profilo manda dopo ogni riga, con `:prompt`, un comando che lo stampa, e all'avvio, con `:init`, rende UTF-8 `[Console]::OutputEncoding`. `pwsh` è lo stesso per PowerShell 6 e seguenti, su ogni sistema.],
+)
+
+Le complicazioni, comuni o di una shell sola:
+
+- *Niente terminale, niente isatty.* I programmi che lo controllano cambiano
+  comportamento: niente colori, `ls` una voce per riga, nessun impaginatore;
+  quelli che disegnano (vim, less, top) non funzionano; quelli che leggono una
+  password da `/dev/tty` (sudo, ssh) non la trovano. Molti programmi tengono
+  l'output in un buffer quando non scrivono su un terminale, e lo mandano a
+  blocchi o alla fine.
+- *Niente controllo dei lavori.* Senza terminale non c'è gruppo in primo
+  piano: tutti i processi della shell restano nel gruppo che `process-start`
+  le ha dato, ed è per questo che `INT` al gruppo raggiunge il comando in
+  corso. `C-z`, `fg` e `bg` non hanno senso.
+- *La fine dell'input è una sola.* La pipe dello stdin è della shell: chiuderla
+  dà la fine dell'input al comando che la legge, ma anche alla shell, che
+  finisce. Un terminale lo distingue (`C-d` alla riga vuota di `cat`), una
+  pipe no.
+- *Interrompere su Windows.* Non ci sono segnali: `C-c` è un evento della
+  console, che `GenerateConsoleCtrlEvent` manda solo ai processi che
+  condividono la console di chi lo chiama. La shell ha una console sua,
+  nascosta; attaccarsi a quella (`AttachConsole`) staccherebbe l'editor della
+  TUI dalla propria. `process-signal` risponde nil, e resta `process-stop`,
+  che uccide la sola shell (@processi-figli).
+- *L'eco.* Una shell che ristampa ciò che legge (cmd) produce la riga due
+  volte. La copia si toglie solo se arriva in testa all'output dopo l'invio,
+  come fa `comint-process-echoes` di Emacs; una riga scritta mentre un comando
+  gira arriva dopo il suo output, e resta.
+- *Le codifiche.* Il buffer è UTF-8, e il lettore sostituisce ciò che non lo
+  è. cmd e Windows PowerShell scrivono nella pagina di codice della console,
+  che `chcp 65001` e `[Console]::OutputEncoding` cambiano per l'output;
+  Windows PowerShell legge lo stdin nella pagina che aveva all'avvio, e
+  cambiarla da dentro non tocca il lettore già aperto.
+- *Il prompt chiesto a PowerShell.* La riga di `:prompt` è un comando come gli
+  altri: un comando che legge lo stdin (`Read-Host`) la legge, e un blocco su
+  più righe, che `-Command -` chiude solo con una riga vuota, la prende come
+  sua.
+- *I ritorni a capo.* Le shell di Windows finiscono le righe con `\r\n`, e un
+  programma che ridisegna una riga (una barra di avanzamento) usa un `\r` da
+  solo: il primo diventa `\n` nel filtro, il secondo in `insert`, una riga per
+  ogni stato della barra.
+- *Gli escape.* Anche con `TERM=dumb` qualche programma colora, e il prompt di
+  un `.bashrc` può avere colori: si tolgono, non si disegnano. Disegnarli
+  vorrebbe dire tradurre SGR in overlay, il primo passo dell'emulazione di un
+  terminale.
+- *La directory.* La shell cambia directory da sé, e l'editor non lo sa. Il
+  profilo le fa stampare la OSC 7 nel prompt, che il filtro legge: dove un
+  `.bashrc` ridefinisce `PROMPT_COMMAND`, o il prompt è di chi scrive, la
+  directory del buffer resta quella di partenza.
+- *Le altre shell.* zsh senza terminale spegne ZLE, e stampa il prompt con le
+  sue opzioni (`PROMPT_SP`, `PROMPT_CR`), che scrivono spazi e `\r` prima di
+  ogni prompt; fish non è fatta per uno stdin che non sia un terminale. Non
+  hanno un profilo; chi le usa ne scrive uno, con le opzioni che le
+  addomesticano. Una REPL che legge righe, come `python3 -i -u`, va senza
+  altro.
+
+I test di `eshell_tests` fanno girare sh e bash; i profili di cmd e di
+PowerShell non hanno un test, perché i test con processi veri girano solo su
+Unix.
+
+Le decisioni:
+
++ *Pipe, non pseudoterminale.* Un pty (`openpty` su Unix, ConPTY su Windows)
+  darebbe l'eco, il controllo dei lavori, `C-c` e i programmi che disegnano,
+  ma ciò che arriva sarebbe pieno di sequenze di movimento del cursore, che
+  solo un emulatore di terminale sa leggere: è un'altra funzione, l'emulazione
+  di un terminale, che userà un pty quando ci sarà. Con le pipe il buffer è
+  testo, e il modulo è un comint.
++ *Una sessione propria.* Nel terminale vero `sh -i` e `bash -i` aprono
+  `/dev/tty`, il terminale dell'editor, e il sistema li ferma perché non sono
+  in primo piano: nessun prompt, nessun output. Emacs avvia i suoi processi
+  con `setsid` per la stessa ragione; qui lo fa `process-start` per ogni
+  processo dialogante (@processi-figli). Scartato: le opzioni delle shell
+  che spengono il controllo dei lavori (`+m`), che bash legge dopo aver già
+  provato a prendere il terminale.
++ *Una pipe sola per output ed errori.* Con due, due thread consegnano il
+  prompt dello stderr e l'output dello stdout in un ordine qualunque, e il
+  prompt finisce davanti all'output del comando che lo precede. Scartato: due
+  pipe e un ordine ricostruito dopo, che non si può, perché due letture vicine
+  non dicono quale scrittura è venuta prima.
++ *Il Lisp con un prefisso.* L'eshell di Emacs valuta una riga che comincia
+  con `(`, ma lì la shell è sua. Qui la parentesi ha un significato in ogni
+  shell supportata: una subshell in bash, un gruppo in cmd, un'espressione in
+  PowerShell. Scartato: indovinare, valutando una riga che si legge come una
+  forma il cui primo simbolo è una funzione, perché `(cd /tmp)` e `(ls)` sono
+  comandi validi di bash e nomi plausibili dell'editor, e la stessa riga
+  cambierebbe destinazione definendo una funzione. La virgola non significa
+  nulla all'inizio di una riga di sh e bash, e il prefisso si cambia.
++ *Il prompt riscritto dopo il Lisp.* La riga valutata non arriva alla shell,
+  che non stampa un prompt nuovo; il modulo riscrive quello di prima.
+  Scartato: mandare alla shell una riga vuota, che chiederebbe il prompt alla
+  shell, con il suo ritardo, e a cmd un'eco in più.
++ *Il marcatore nel nucleo, non un numero nel buffer.* Un numero tenuto dal
+  Lisp andrebbe ricalcolato a ogni modifica sopra di esso: una riga cancellata
+  nell'output, un undo. I marcatori li spostano già le tre porte; mancava il
+  verso, e un'interfaccia Lisp.
++ *La storia nel modulo, non nel minibuffer.* Gli anelli del minibuffer
+  (`managers/history.rs`) sono per prompt, tolgono solo la ripetizione della
+  più recente, e la loro passeggiata è legata al prompt aperto. Quella della
+  shell sceglie come trattare i doppioni (`eshell-history-duplicates`), si
+  cancella dei doppioni a comando, e si conserva con `set-session-value`,
+  letta la prima volta che serve, perché la sessione si legge dopo
+  `init.lisp` (@memoria).
++ *La directory dalla OSC 7, non dai `cd`.* Emacs segue i `cd`, `pushd` e
+  `popd` scritti (`shell-dirtrack-mode`), e sbaglia con un alias, uno script,
+  `cd -` o un `cd` in una riga composta. La OSC 7 è ciò che la shell sa, nel
+  formato che i terminali già leggono.
++ *Gli escape tolti, non disegnati.* Vedi le complicazioni: disegnarli è
+  l'inizio di un terminale.
++ *La maniglia è il nome.* Il nucleo trova i processi per nome, e il nome del
+  buffer è unico: un nome solo per buffer, processo e lavoro fa sì che
+  `after-close-hook`, che riceve il nome del buffer chiuso, sappia quale
+  processo fermare, e che `stop-worker` lo trovi.
++ *Il primo profilo è quello di `$SHELL`, o sh.* Su Unix sh c'è sempre; bash
+  no (macOS ha zsh). Su Windows cmd, che è sempre lì e il cui comportamento su
+  una pipe è il più semplice; PowerShell si sceglie con `eshell-shell`.
 
 === `fill` <mod-fill>
 

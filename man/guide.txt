@@ -51,6 +51,7 @@ THE REFERENCE
         macros            record what you pressed, press it again
         rectangles        blocks of text, cut by column
         overlays          a face on one particular span
+        markers           a place in the text that moves with it
         virtual-text      text shown and not in the buffer
         themes            how the colours are chosen
         plugins           modules written by others, and where they go
@@ -60,6 +61,7 @@ THE REFERENCE
         lsp               language servers, and what they say about the code
         shell             running a command, and reading what it printed
         processes         talking with a program that keeps running
+        eshell            a shell in a buffer, and Lisp at its prompt
         regexps           regular expressions, and matching them from Lisp
         background        work that goes on while you type
         vim               modal editing, as Vim does it

@@ -26,8 +26,9 @@ change.
   own.
 - Completion in every prompt (`M-x`, files, buffers) and at point.
 - A directory editor, a buffer list, occur and project-wide grep, a
-  compilation buffer that jumps to errors, and shell commands with their
-  output in a buffer.
+  compilation buffer that jumps to errors, shell commands with their
+  output in a buffer, and a shell in a buffer -- bash, sh, cmd or
+  PowerShell -- with Lisp at its prompt.
 - Help that describes the running editor (`C-h f`, `C-h v`, `C-h k`,
   `C-h b`), and manual pages read inside it.
 - Auto-save with recovery, reloading of files changed on disk, themes, mouse

@@ -44,6 +44,7 @@ loaded anyway.")
     buffer-list         ; C-x b to switch, C-x C-b for the whole list
     recent-files        ; M-g r to open a file opened before
     shell               ; M-! runs a command and shows what it said
+    eshell              ; M-x eshell, a shell in a buffer, and Lisp at its prompt
     manpage             ; C-h m, and K on a word
     help                ; C-h f, C-h k, C-h b: the editor describing itself
     risp-repl           ; M-x risp-repl, a buffer where C-j evaluates Lisp

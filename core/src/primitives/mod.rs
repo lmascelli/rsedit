@@ -54,6 +54,7 @@ mod killing;
 pub(crate) mod lisp_job;
 mod loading;
 mod macros;
+mod markers;
 mod match_data;
 mod menus;
 mod minibuffer;
@@ -161,6 +162,7 @@ pub fn install_primitives<B: BufferTrait>(
     killing::install(&into);
     loading::install(&into);
     macros::install(&into);
+    markers::install(&into);
     match_data::install(&into);
     minibuffer::install(&into);
     modes::install(&into);

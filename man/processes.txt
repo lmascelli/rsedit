@@ -2,9 +2,10 @@ NAME
     processes - talking with a program that keeps running
 
 SYNOPSIS
-    (process-start NAME PROGRAM ARGS FUNCTION &optional FORM)
+    (process-start NAME PROGRAM ARGS FUNCTION &optional FORM &key ...)
     (process-send NAME STRING)
     (process-close-input NAME)
+    (process-signal NAME SIGNAL)
     (process-stop NAME)
     (process-status NAME)
 
@@ -56,6 +57,19 @@ WHAT YOU ARE GIVEN
     that are not UTF-8 become a replacement character; a character cut in
     two between two reads arrives whole.
 
+ITS ERRORS AND ITS ENVIRONMENT
+    With :errors merged, what the program writes to its standard error
+    goes into the same pipe as its output, and arrives with it, as output,
+    cut as FORM says: in the order it was written, which two pipes cannot
+    keep. A shell needs it so, since it writes its prompt to its standard
+    error and what it runs to its output. error then comes only for what
+    went wrong reading. :errors separate, or none, is the default.
+
+    :environment gives the program variables of its own, over those the
+    editor gives every program: a list of strings, each "NAME=VALUE" to
+    set NAME, or "NAME" alone to take it away. Only this program has
+    them; `setenv' changes those of every program started after it.
+
 WHEN YOU ARE GIVEN IT
     Never in the middle of a command: FUNCTION is called between one
     command and the next, as the callbacks of background work are (see
@@ -83,6 +97,22 @@ WRITING TO IT
     written: the program reads the end of its input, as cat does at C-d,
     and many end there.
 
+SIGNALLING IT
+    `process-signal' sends SIGNAL to the program and to all it started, as
+    a terminal sends one to what runs in it, and returns t:
+
+        interrupt       what C-c sends: stop what you are doing
+        quit            what C-\ sends: stop, and leave a core
+        hangup          the terminal has gone
+        terminate       end, cleaning up
+        kill            end, at once
+
+    Nothing follows the signal. A program that catches it goes on: an
+    interactive shell, given interrupt, stops the command it is running
+    and gives a new prompt. It returns nil when no process of that name
+    is running. On Windows only terminate and kill can be sent, and both
+    kill the program alone; the others return nil.
+
 STOPPING IT AND ASKING HOW IT IS
     `process-stop' stops the program, and what it started, as a shell
     command is stopped (see the shell page): asked first, stopped outright
@@ -106,6 +136,11 @@ STOPPING IT AND ASKING HOW IT IS
 LIMITS
     When the program cannot be started -- it is not found, or the working
     directory has gone -- `process-start' says why and returns nil.
+
+    The program has no terminal, even when the editor runs in one: one
+    that asks at the terminal, for a password or to take it over as an
+    interactive shell does, is told there is none, and goes on without it
+    or gives up. It never takes the terminal the editor draws on.
 
     A daemon the program starts leaves its process group, and is not
     stopped with it.
@@ -138,5 +173,13 @@ EXAMPLES
         (process-stop 'echo)
         (process-status 'echo)          ; killed, once it has gone
 
+    Run a shell whose prompt and errors arrive with its output, in order,
+    with a variable of its own, and interrupt what it runs:
+
+        (process-start 'sh "sh" '("-i") 'my-show 'chunks
+                       :errors 'merged :environment '("PS1=> "))
+        (process-send 'sh "sleep 60\n")
+        (process-signal 'sh 'interrupt)
+
 SEE ALSO
-    shell, background, files
+    shell, eshell, background, files

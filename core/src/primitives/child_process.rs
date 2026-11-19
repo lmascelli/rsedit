@@ -1,8 +1,9 @@
 //! What every process the editor starts shares, whoever reads it: a group of
-//! its own, stopping it -- `TERM`, then `KILL` after a grace -- waiting for it
-//! without keeping a stop out, giving those told to finish a moment at the
-//! editor's exit and killing what is left, and reading its output a piece at
-//! a time. `shell` and `processes` use it.
+//! its own, stopping it -- `TERM`, then `KILL` after a grace -- or sending
+//! its group one signal, waiting for it without keeping a stop out, giving
+//! those told to finish a moment at the editor's exit and killing what is
+//! left, and reading its output a piece at a time. `shell` and `processes`
+//! use it.
 //!
 //! Design: `doc/architettura-editor.typ, <processi-figli>`.
 use crate::{BufferTrait, EditorState};
@@ -47,6 +48,37 @@ pub(crate) fn in_own_group(command: &mut Command) {
     {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
+    }
+    #[cfg(not(unix))]
+    let _ = command;
+}
+
+/// Has COMMAND start in a session of its own, which it leads, and so in a
+/// group of its own as [`in_own_group`] does, with no controlling terminal: a
+/// program that opens `/dev/tty` -- an interactive shell taking the terminal
+/// for its jobs, a password asked for -- is told there is none, rather than
+/// stopped for touching the terminal the editor draws on, or let take it.
+/// Unix only: elsewhere a process is stopped alone, and has no session.
+pub(crate) fn in_own_session(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe extern "C" {
+            fn setsid() -> i32;
+        }
+        // SAFETY: the closure runs in the child between fork and exec, where
+        // only async-signal-safe calls are allowed: `setsid` is one, and the
+        // closure touches no memory but the error it may return. The child of
+        // a fork is never a group leader, so `setsid` cannot fail for that.
+        unsafe {
+            command.pre_exec(|| {
+                if setsid() == -1 {
+                    Err(std::io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
     }
     #[cfg(not(unix))]
     let _ = command;
@@ -108,6 +140,63 @@ pub(crate) fn stop_process(process: &Process) {
     }
     #[cfg(not(unix))]
     kill(process);
+}
+
+/// A signal [`signal`] sends, by what it is for rather than its number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Signal {
+    /// `INT`: what `C-c` at a terminal sends.
+    Interrupt,
+    /// `QUIT`: what `C-\` at a terminal sends.
+    Quit,
+    /// `HUP`: the terminal has gone.
+    Hangup,
+    /// `TERM`: asked to end.
+    Terminate,
+    /// `KILL`: ended, without being asked.
+    Kill,
+}
+
+impl Signal {
+    /// Returns the name the shell's `kill` knows it by.
+    #[cfg(unix)]
+    fn name(self) -> &'static str {
+        match self {
+            Self::Interrupt => "INT",
+            Self::Quit => "QUIT",
+            Self::Hangup => "HUP",
+            Self::Terminate => "TERM",
+            Self::Kill => "KILL",
+        }
+    }
+}
+
+/// Sends SIGNAL to PROCESS and its group, under the lock that guards it, and
+/// returns whether it was sent: false once it has been waited for, and
+/// elsewhere than on Unix for any signal but [`Signal::Terminate`] and
+/// [`Signal::Kill`], which kill the process alone, as [`stop_process`] does
+/// there.
+///
+/// Unlike [`stop_process`], nothing follows: a process that handles the
+/// signal, as an interactive shell handles `INT`, goes on.
+pub(crate) fn signal(process: &Process, signal: Signal) -> bool {
+    let mut guard = lock(process);
+    let Some(child) = guard.as_mut() else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        signal_group(child.id(), &[signal.name()]);
+        true
+    }
+    #[cfg(not(unix))]
+    match signal {
+        Signal::Terminate | Signal::Kill => {
+            let _ = child.kill();
+            true
+        }
+        Signal::Interrupt | Signal::Quit | Signal::Hangup => false,
+    }
 }
 
 /// Kills, with their groups, the processes of CTX that have not ended: at the

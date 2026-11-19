@@ -1,0 +1,314 @@
+NAME
+    eshell - a shell in a buffer, and Lisp at its prompt
+
+SYNOPSIS
+    (eshell &optional ARG)
+    (eshell-start &optional SHELL BUFFER)
+    (eshell-process &optional BUFFER)
+    (eshell-send-input)
+    (eshell-previous-input)
+    (eshell-next-input)
+    (eshell-search-history)
+    (eshell-beginning-of-line)
+    (eshell-kill-input)
+    (eshell-clear)
+    (eshell-interrupt)
+    (eshell-send-eof)
+    (eshell-kill)
+    (eshell-history)
+    (eshell-history-delete-duplicates)
+    (eshell-history-clear)
+    eshell-shells
+    eshell-shell
+    eshell-buffer-name
+    eshell-lisp-prefix
+    eshell-history-size
+    eshell-history-duplicates
+    eshell-history-ignore
+    eshell-history-save
+
+DESCRIPTION
+    M-x eshell opens *eshell*, a buffer with a shell running in it: bash
+    or sh, or cmd on Windows, or PowerShell when you ask for it. What the
+    shell prints comes into the buffer as it prints it, and what you type
+    after its last prompt goes to it when you press Return:
+
+        $ ls
+        Cargo.toml  README.md  core  src
+        $ _
+
+    The buffer is a buffer like any other. Move back through what a
+    command printed, search it with C-s, copy a line of it with M-w, go
+    on working in another window while a build runs in this one. The
+    shell is the real one, with your aliases and your prompt: pipes,
+    globs, variables and scripts mean what they mean in a terminal.
+
+    A line that starts with a comma is not sent to the shell. It is Lisp,
+    evaluated in the editor, and its value is written under it:
+
+        $ ,(+ 1 2)
+        3
+        $ _
+
+    M-x eshell again goes back to *eshell*, and starts a shell in it when
+    the one there has ended. C-u M-x eshell asks which shell to run, and
+    opens a buffer of its own for it: *eshell*<2>, *eshell*<3>.
+
+TYPING A COMMAND
+    What you type after the last prompt is the command. Return sends it,
+    however it was written: typed, recalled from the history, yanked.
+    Several lines in one go are sent as they are, as a script would be,
+    so a loop or a here-document goes in one Return.
+
+    You can type before the prompt has come: while a command is still
+    running, what you type waits after its output, and what it goes on
+    printing goes in front of it, never into it. Point stays where you
+    were typing. Up in what was printed, point stays where it is, and
+    you read in peace while the output grows below.
+
+    Return on a line above, one typed or printed long ago, copies that
+    line after the last prompt, without its prompt, for you to change
+    and send again. C-a on the prompt's line goes to where the command
+    starts, after the prompt; C-c C-u deletes what you have typed there.
+    C-c M-o clears the buffer of everything above the prompt.
+
+    The lines you sent are drawn in eshell-input, bold unless your
+    theme says otherwise. The shell's prompt, and the colours a program
+    asks for, are not drawn: see LIMITS.
+
+LISP AT THE PROMPT
+    A line that starts with `eshell-lisp-prefix', a comma, is evaluated
+    as M-: evaluates what is typed at it: the one expression after the
+    comma, outside any function, so that a defun or a setq lasts. The
+    shell's buffer is current while it runs, and its directory is the
+    shell's, as WHERE THE SHELL IS says.
+
+        $ ,(find-file "notes.txt")
+        $ ,(length (buffer-string))
+        1254
+        $ ,fill-column
+        78
+
+    The value is written under the line, a string as it is, anything
+    else as the reader would read it back; an error, after error:. Then
+    the prompt is written again, for the next line, without asking the
+    shell for one: the shell never sees the line. Lisp works in a buffer
+    whose shell has ended, too.
+
+    Why a comma, and not a parenthesis as in the eshell of Emacs: every
+    shell here gives the parenthesis a meaning of its own. (cd /tmp; ls)
+    runs a subshell in bash, (echo a & echo b) groups two commands in
+    cmd, and (Get-Date).Year is an expression in PowerShell. At the start
+    of a line a comma means nothing in sh and bash. Set the prefix to
+    something else, or to nil to send every line to the shell.
+
+THE HISTORY
+    Every line you send, to the shell or as Lisp, goes into the history,
+    one for all the shells' buffers. M-p puts the line before the one
+    shown after the prompt in its place, and M-n the one after; past the
+    newest, M-n gives back what you were typing when you started. M-r
+    asks for a line, completing over all of them, the best matches
+    first, and puts it after the prompt.
+
+    `eshell-history-size' lines are kept, 500 unless you say otherwise,
+    and the oldest go first. What is kept of a line typed again is
+    `eshell-history-duplicates':
+
+        consecutive     every line but one just like the line before it;
+                        the default, as bash's ignoredups
+        erase           only the newest copy of each line: an older copy
+                        goes when the line is typed again
+        all             every line, as it was typed
+
+    M-x eshell-history-delete-duplicates deletes, at once, every line
+    that is typed again later, and keeps the newest copy of each.
+    M-x eshell-history-clear forgets them all. A line that
+    `eshell-history-ignore' matches, a regexp, is never kept; a blank
+    line never is. `eshell-history' returns the history, newest first.
+
+    The history is kept from one run to the next, with the session, as
+    the session page says, unless `eshell-history-save' is nil. A line
+    of the history is written in the session file in full: what you
+    would not write in a file, a password typed on the command line, does
+    not belong in it. Keep such a line out with `eshell-history-ignore'.
+
+THE SHELLS
+    `eshell-shells' is the list of the shells eshell can run, each a name
+    and how to run it. `eshell-shell' names the one M-x eshell runs: nil,
+    the default, is cmd on Windows, and elsewhere the shell your login
+    shell is, as $SHELL says, when the list has it, or sh.
+
+        bash            bash --noediting -i: the shell reads your
+                        .bashrc, and prints its prompt
+        sh              sh -i, with a prompt of $
+        cmd             cmd.exe, with UTF-8 in and out
+        powershell      powershell.exe, Windows PowerShell
+        pwsh            pwsh, PowerShell 6 and later, on any system
+
+    Each comes with what it needs to run without a terminal. bash and sh
+    are given TERM=dumb, which tells a program there is no screen to draw
+    on, and PAGER=cat and GIT_PAGER=cat, so that man and git print what
+    they would have shown a page at a time. cmd is told to use UTF-8, as
+    the editor does, and its copy of each line, which it prints back as
+    it reads it, is taken out. PowerShell prints no prompt when it reads
+    from the editor: it is asked to print one after each line.
+
+    A shell is described by properties after its name:
+
+        :program        the program, found as a command is
+        :args           the list of its arguments
+        :environment    variables given to it, each "NAME=VALUE", or
+                        "NAME" to take NAME away
+        :newline        what ends a line sent to it: "\n" unless given,
+                        "\r\n" for the shells of Windows
+        :init           lines sent to it once, as soon as it has started
+        :prompt         a line sent after each line you send, for a
+                        shell that prints no prompt of its own
+        :echoes         non-nil for a shell that prints back each line
+                        it reads: the copy is taken out
+        :prompt-regexp  what its prompt looks like, for Return on an
+                        earlier line; a line up to $, #, % or > when
+                        not given
+
+    Any program that reads a line and answers is a shell to eshell: a
+    REPL, a database's client, a debugger. EXAMPLES has one.
+
+WHERE THE SHELL IS
+    The buffer's directory follows the shell's: after cd in the shell,
+    C-x C-f in its buffer starts from where the shell is, M-! runs a
+    command there, and a Lisp line reads a relative name there.
+
+    The shell says where it is in its prompt, in a sequence a terminal
+    takes out, OSC 7, and eshell reads it and takes it out too. bash is
+    given a PROMPT_COMMAND that prints it, sh a prompt that has it and
+    cmd a PROMPT. A .bashrc that sets PROMPT_COMMAND of its own, and a
+    shell whose prompt does not print it, leave the buffer where the
+    shell started. PowerShell does not say.
+
+STOPPING
+    C-c C-c interrupts the command running, as C-c does in a terminal:
+    the command stops, and the shell gives a new prompt. C-c C-d closes
+    the shell's input, as C-d at its prompt in a terminal: most shells
+    end there. C-c C-k stops the shell, and all it started, as C-c C-k
+    stops a shell command: asked, then made to two seconds later.
+
+    When the shell has ended, the buffer says how, on a line of its own:
+
+        --- exited 0 ---        it ended by itself, with that code
+        --- killed ---          it was stopped, or a signal ended it
+
+    The buffer stays, for reading; M-x eshell starts the same shell in
+    it again. Closing the buffer stops its shell, and leaving the editor
+    stops every shell still running.
+
+FROM LISP
+    `eshell-start' starts a shell, by its name in `eshell-shells', in a
+    buffer, a new one unless you name one, without showing it, and
+    returns the handle of the shell's process. The process runs, and is
+    read, on threads of its own; the handle is the name the functions
+    of the processes page take, and the name of the buffer:
+
+        (setq my-shell (eshell-start 'bash))
+        (process-send my-shell "make\n")
+        (process-status my-shell)               ; run
+        (process-signal my-shell 'interrupt)
+
+    What process-send writes reaches the shell as if typed, but is not
+    in the buffer nor in the history. `eshell-process' returns the handle
+    of the shell of a buffer, the current one unless you name another,
+    or nil once that shell has said how it ended. M-x eshell returns the
+    handle too.
+
+LIMITS
+    A shell buffer is not a terminal. A program that draws on the screen
+    -- vim, less, top, a menu -- cannot run in it, and one that asks for
+    a password at the terminal, as sudo and ssh do, does not find one:
+    sudo -S reads the password from its input, ssh can use a key.
+    Colours, and what else a program asks a terminal for, are taken out
+    rather than drawn. A carriage return that redraws a line, as a
+    progress bar does, starts a line of its own.
+
+    A program that is not writing to a terminal may keep what it prints
+    until it has a lot of it, or until it ends: python -u, or stdbuf -oL
+    in front of the command, has it print each line as it comes.
+
+    There is no job control. bash says so when it starts: & runs a
+    command in the background, but C-z, fg and bg do not work.
+
+    C-c C-d ends the input of the shell, not of the command it runs: a
+    program reading its input to the end, cat or a here-typed mail, ends
+    with the shell. C-c C-c stops it instead.
+
+    On Windows a command cannot be interrupted: Windows has no way to
+    send a C-c to a program it has not started in a console it shares
+    with the editor. C-c C-c says so; C-c C-k stops the shell, and only
+    the shell, as a shell command is stopped there: what it started goes
+    on.
+
+    cmd prints back each line it reads. The copy is taken out when it
+    comes first in what the shell prints after the line was sent; a line
+    typed while a command runs may still show twice.
+
+    PowerShell, reading from the editor, waits for a blank line after a
+    block that goes on over several lines, and the line that asks for
+    its prompt comes while it waits, as part of the block. A command
+    that reads its input, as Read-Host does, reads that line too.
+    Windows PowerShell reads what is typed in the code page of the
+    system, and a character outside it arrives as another.
+
+    A Lisp line is one expression: what follows it on the line is not
+    evaluated. It runs as a command does, and the editor waits for it.
+
+    The buffer keeps all that was printed in it: C-c M-o, or closing it,
+    lets it go.
+
+EXAMPLES
+    A key that opens the shell from anywhere:
+
+        (define-key nil "C-c s" 'eshell)
+
+    PowerShell rather than cmd, on Windows:
+
+        (setq eshell-shell 'powershell)
+
+    Only the newest copy of each line in the history, and nothing that
+    starts with a space, as HISTCONTROL=erasedups:ignorespace in bash:
+
+        (setq eshell-history-duplicates 'erase)
+        (setq eshell-history-ignore "^ ")
+
+    bash without your .bashrc, with a plain prompt:
+
+        (add-to-list 'eshell-shells
+                     '(clean-bash :program "bash"
+                                  :args ("--norc" "--noprofile"
+                                         "--noediting" "-i")
+                                  :environment ("TERM=dumb" "PS1=$ ")))
+
+    Python's REPL as a shell, in a buffer of its own, its prompts known
+    for Return on an earlier line:
+
+        (add-to-list 'eshell-shells
+                     '(python :program "python3" :args ("-i" "-u" "-q")
+                              :prompt-regexp "^(>>>|\\.\\.\\.) "))
+        (eshell-start 'python "*python*")
+        (switch-to-buffer "*python*")
+
+    Every line to the shell, none evaluated as Lisp:
+
+        (setq eshell-lisp-prefix nil)
+
+KEYS IN ESHELL MODE
+    <ret>                   eshell-send-input
+    M-p                     eshell-previous-input
+    M-n                     eshell-next-input
+    M-r                     eshell-search-history
+    C-a                     eshell-beginning-of-line
+    C-c C-c                 eshell-interrupt
+    C-c C-d                 eshell-send-eof
+    C-c C-k                 eshell-kill
+    C-c C-u                 eshell-kill-input
+    C-c M-o                 eshell-clear
+
+SEE ALSO
+    shell, processes, session, repl, minibuffer, background

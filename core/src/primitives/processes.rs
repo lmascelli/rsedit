@@ -1,18 +1,19 @@
 //! Talking with a process: starting it with its input and output, writing to
-//! it, closing its input, asking how it is; three threads of its own to read
-//! its output and its errors and write its input; its output cut into pieces,
-//! lines or `Content-Length` messages before it is delivered.
+//! it, closing its input, signalling it, asking how it is; threads of its own
+//! to read its output, its errors unless they come with the output, and to
+//! write its input; its output cut into pieces, lines or `Content-Length`
+//! messages before it is delivered.
 //!
 //! Design: `doc/architettura-editor.typ, <processi-dialoganti>`.
 use super::child_process::{
-    BATCH, Process, abandon, cannot_run, in_own_group, incomplete_tail, read_some, reap,
-    stop_process,
+    BATCH, Process, Signal, abandon, cannot_run, in_own_session, incomplete_tail, read_some,
+    reap, signal, stop_process,
 };
 use super::*;
 use crate::editor::processes::{Delivery, Exchange, Form, INPUT_QUEUE, Status, status_value};
 use crate::work::Stop;
-use std::io::Write;
-use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
+use std::io::{Read, Write};
+use std::process::{ChildStderr, ChildStdin, Command, Stdio};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 
@@ -164,28 +165,58 @@ pub(crate) fn framed(text: &str) -> Vec<u8> {
 /// The pipes of a process just started.
 struct Pipes {
     input: ChildStdin,
-    output: ChildStdout,
-    errors: ChildStderr,
+    /// Its standard output, and its standard error too when they were
+    /// merged.
+    output: Box<dyn Read + Send>,
+    /// Its standard error, when it has a pipe of its own.
+    errors: Option<ChildStderr>,
+}
+
+/// Variables given to one process: a value, or `None` to take the variable
+/// away.
+type Variables = Vec<(String, Option<String>)>;
+
+/// How a process is started, past its program and its arguments.
+struct Options {
+    /// Its standard error goes into the pipe of its output, in the order it
+    /// was written, rather than a pipe of its own.
+    merged: bool,
+    /// Variables given to it over the editor's environment.
+    environment: Variables,
 }
 
 /// Starts PROGRAM with ARGUMENTS, as they are and with no shell between, in
-/// DIRECTORY, with the environment of CTX and pipes for its input, output and
-/// errors, in a group of its own.
+/// DIRECTORY, with the environment of CTX and that of OPTIONS over it, and
+/// pipes for its input, output and errors -- one for both of the two last
+/// when OPTIONS merges them -- in a session and a group of its own.
 fn start<B: BufferTrait>(
     ctx: &EditorState<B>,
     program: &str,
     arguments: &[String],
     directory: &str,
+    options: &Options,
 ) -> std::io::Result<(std::process::Child, Pipes)> {
     let mut command = Command::new(program);
     command
         .args(arguments)
         .current_dir(directory)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stdin(Stdio::piped());
+    let merged = if options.merged {
+        let (reader, writer) = std::io::pipe()?;
+        command.stdout(writer.try_clone()?).stderr(writer);
+        Some(reader)
+    } else {
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        None
+    };
     ctx.apply_environment(&mut command);
-    in_own_group(&mut command);
+    for (name, value) in &options.environment {
+        match value {
+            Some(value) => command.env(name, value),
+            None => command.env_remove(name),
+        };
+    }
+    in_own_session(&mut command);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -195,8 +226,20 @@ fn start<B: BufferTrait>(
         command.creation_flags(CREATE_NO_WINDOW);
     }
     let mut child = command.spawn()?;
-    let pipes = match (child.stdin.take(), child.stdout.take(), child.stderr.take()) {
-        (Some(input), Some(output), Some(errors)) => Pipes {
+    // The writing ends of a merged pipe that the command still holds go with
+    // it: until they have, the pipe never ends, however long ago the process
+    // did.
+    drop(command);
+    let output: Option<Box<dyn Read + Send>> = match merged {
+        Some(reader) => Some(Box::new(reader)),
+        None => child
+            .stdout
+            .take()
+            .map(|output| Box::new(output) as Box<dyn Read + Send>),
+    };
+    let errors = child.stderr.take();
+    let pipes = match (child.stdin.take(), output) {
+        (Some(input), Some(output)) if options.merged || errors.is_some() => Pipes {
             input,
             output,
             errors,
@@ -230,7 +273,7 @@ fn read_output<B: BufferTrait>(
     state: &EditorState<B>,
     exchange: &Exchange,
     stop: &Stop,
-    mut output: ChildStdout,
+    mut output: impl Read,
     form: Form,
 ) {
     let mut batch = vec![0; BATCH];
@@ -337,8 +380,9 @@ fn write_input(mut input: ChildStdin, queued: Receiver<Vec<u8>>) {
 }
 
 /// The life of a process, on the thread that has its name: reads its output
-/// here, and its errors and its input on two threads of its own, scoped to
-/// this one; then waits for it, and delivers how it ended.
+/// here, and its errors -- unless they come with the output -- and its input
+/// on threads of their own, scoped to this one; then waits for it, and
+/// delivers how it ended.
 fn converse<B: BufferTrait>(
     state: &EditorState<B>,
     stop: &Stop,
@@ -362,13 +406,16 @@ fn converse<B: BufferTrait>(
     } = pipes;
     let status = std::thread::scope(|scope| {
         let exchange = &*exchange;
-        let reading = std::thread::Builder::new()
-            .name(format!("{name} errors"))
-            .spawn_scoped(scope, move || read_errors(state, exchange, stop, errors));
+        // No thread for the errors when they come with the output.
+        let reading = errors.map(|errors| {
+            std::thread::Builder::new()
+                .name(format!("{name} errors"))
+                .spawn_scoped(scope, move || read_errors(state, exchange, stop, errors))
+        });
         let writing = std::thread::Builder::new()
             .name(format!("{name} input"))
             .spawn_scoped(scope, move || write_input(input, queued));
-        if reading.is_err() || writing.is_err() {
+        if reading.as_ref().is_some_and(Result::is_err) || writing.is_err() {
             hand(
                 state,
                 exchange,
@@ -379,7 +426,7 @@ fn converse<B: BufferTrait>(
             stop_process(exchange.process());
         }
         read_output(state, exchange, stop, output, form);
-        if let Ok(reading) = reading {
+        if let Some(Ok(reading)) = reading {
             let _ = reading.join();
         }
         let status = reap(exchange.process());
@@ -441,23 +488,65 @@ fn form<B: BufferTrait>(form: Option<&ELispExp<B>>) -> Result<Form, EvalError<Ed
     }
 }
 
-pub const PROCESS_START_DOC: &str = "(process-start NAME PROGRAM ARGS FUNCTION &optional FORM): \
-         Start PROGRAM with ARGS, a list of strings passed as they are with no shell, in \
-         `working-directory', and return NAME. Between commands FUNCTION is called with NAME, a \
-         kind and a value: output and what it printed, cut as FORM says -- lines, the default, \
-         chunks, or messages framed by Content-Length --; error and a line of its standard \
-         error; last, exit and how it ended. A NAME in use is an error; nil, saying why, when \
-         PROGRAM cannot be started.\n\n\
+pub const PROCESS_START_DOC: &str = "(process-start NAME PROGRAM ARGS FUNCTION &optional FORM \
+         &key :errors :environment): Start PROGRAM with ARGS, a list of strings passed as they \
+         are with no shell, in `working-directory', and return NAME. Between commands FUNCTION \
+         is called with NAME, a kind and a value: output and what it printed, cut as FORM says \
+         -- lines, chunks or messages --; error and a line of its standard error; last, exit and \
+         how it ended. :errors merged sends the standard error with the output, in order. \
+         :environment is a list of \"NAME=VALUE\", or \"NAME\" to unset one. A NAME in use is \
+         an error; nil, saying why, when PROGRAM cannot be started.\n\n\
          Example:\n\
          (process-start 'echo \"cat\" nil (lambda (name kind value) (message \"%s\" value)))";
 
-primitive!(process_start, args, _env, ctx, {
-    if !(4..=5).contains(&args.len()) {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 4,
-            got: args.len(),
-        });
+/// The keywords `process-start` takes.
+const PROCESS_START_KEYWORDS: &[&str] = &[":errors", ":environment"];
+
+/// Returns whether ERRORS, the value of `:errors`, merges the standard error
+/// into the output: `merged`, or `separate`, the default, and nil.
+fn merged<B: BufferTrait>(errors: Option<&ELispExp<B>>) -> Result<bool, EvalError<EditorState<B>>> {
+    match args::optional_name(errors, "Symbol naming where the errors go")?.as_deref() {
+        None | Some("separate") => Ok(false),
+        Some("merged") => Ok(true),
+        Some(_) => Err(EvalError::WrongArgumentType {
+            expected: "merged or separate".into(),
+            got: errors.cloned().unwrap_or_else(ELispExp::nil),
+        }),
     }
+}
+
+/// Returns the variables of ENVIRONMENT, the value of `:environment`: a list
+/// of strings, each `NAME=VALUE` to set NAME, or `NAME` to take it away.
+fn environment<B: BufferTrait>(
+    environment: Option<&ELispExp<B>>,
+) -> Result<Variables, EvalError<EditorState<B>>> {
+    let refused = |got: ELispExp<B>| EvalError::WrongArgumentType {
+        expected: "a list of strings NAME=VALUE or NAME".into(),
+        got,
+    };
+    arguments(environment)
+        .map_err(|why| match why {
+            EvalError::WrongArgumentType { got, .. } => refused(got),
+            other => other,
+        })?
+        .into_iter()
+        .map(|entry| {
+            let (name, value) = match entry.split_once('=') {
+                Some((name, value)) => (name, Some(value.to_string())),
+                None => (entry.as_str(), None),
+            };
+            if name.is_empty() {
+                Err(refused(ELispExp::string(entry.clone())))
+            } else {
+                Ok((name.to_string(), value))
+            }
+        })
+        .collect()
+}
+
+primitive!(process_start, args, _env, ctx, {
+    let (args, keywords) =
+        args::with_keywords("process-start", args, 4, 5, PROCESS_START_KEYWORDS)?;
     let name = args::name(args.first())?;
     let Some(ELispExp::String(program)) = args.get(1) else {
         return Err(EvalError::WrongArgumentType {
@@ -474,13 +563,17 @@ primitive!(process_start, args, _env, ctx, {
         });
     }
     let form = form(args.get(4))?;
+    let options = Options {
+        merged: merged(keywords.get(":errors"))?,
+        environment: environment(keywords.get(":environment"))?,
+    };
     if !ctx.dialogue_name_free(&name) {
         return Err(EvalError::RuntimeMessage(format!(
             "process-start: {name} is in use"
         )));
     }
     let directory = ctx.default_directory();
-    let (child, pipes) = match start(ctx, program, &arguments, &directory) {
+    let (child, pipes) = match start(ctx, program, &arguments, &directory, &options) {
         Ok(started) => started,
         Err(why) => {
             ctx.set_echo_message(&cannot_run(program, &directory, &why));
@@ -571,6 +664,41 @@ primitive!(process_stop, args, _env, ctx, {
     Ok(ELispExp::boolean(stopped))
 });
 
+pub const PROCESS_SIGNAL_DOC: &str = "(process-signal NAME SIGNAL): Send SIGNAL to the process \
+         NAME and to what it started, and return t: interrupt, as C-c at a terminal, quit, \
+         hangup, terminate or kill. Return nil when there is no such process running, or when \
+         this system cannot send SIGNAL: on Windows only terminate and kill, which kill it.\n\n\
+         Example:\n\
+         (process-signal 'shell 'interrupt)";
+
+/// Returns the signal SIGNAL names.
+fn signal_named<B: BufferTrait>(
+    signal: Option<&ELispExp<B>>,
+) -> Result<Signal, EvalError<EditorState<B>>> {
+    let refused = || EvalError::WrongArgumentType {
+        expected: "interrupt, quit, hangup, terminate or kill".into(),
+        got: signal.cloned().unwrap_or_else(ELispExp::nil),
+    };
+    match args::optional_name(signal, "Symbol naming a signal")?.as_deref() {
+        Some("interrupt") => Ok(Signal::Interrupt),
+        Some("quit") => Ok(Signal::Quit),
+        Some("hangup") => Ok(Signal::Hangup),
+        Some("terminate") => Ok(Signal::Terminate),
+        Some("kill") => Ok(Signal::Kill),
+        _ => Err(refused()),
+    }
+}
+
+primitive!(process_signal, args, _env, ctx, {
+    exact_arity(args, 2)?;
+    let name = args::name(args.first())?;
+    let wanted = signal_named(args.get(1))?;
+    let sent = ctx.dialogue(&name).is_some_and(|dialogue| {
+        dialogue.exchange.status() == Status::Running && signal(dialogue.exchange.process(), wanted)
+    });
+    Ok(ELispExp::boolean(sent))
+});
+
 pub const PROCESS_STATUS_DOC: &str = "(process-status NAME): Return how the process NAME is: run, \
          (exit CODE) once it has ended by itself, killed once it was stopped or killed by a \
          signal, nil when there is no such process.\n\n\
@@ -597,5 +725,6 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         PROCESS_CLOSE_INPUT_DOC,
     );
     into.function("process-stop", process_stop, PROCESS_STOP_DOC);
+    into.function("process-signal", process_signal, PROCESS_SIGNAL_DOC);
     into.function("process-status", process_status, PROCESS_STATUS_DOC);
 }

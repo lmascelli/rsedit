@@ -575,6 +575,108 @@ mod tests {
         }
 
         #[test]
+        fn merged_errors_come_with_the_output_in_the_order_they_were_written() {
+            let (ctx, env) = editor();
+            run(
+                r#"(process-start 'p "/bin/sh" '("-c" "echo one; echo two >&2; echo three")
+                                 'record 'lines :errors 'merged)"#,
+                &env,
+                &ctx,
+            );
+            settle(&env, &ctx);
+            assert_eq!(
+                run("(reverse outputs)", &env, &ctx),
+                strings(&["one", "two", "three"])
+            );
+            assert!(run("errors", &env, &ctx).is_nil());
+            assert_eq!(run("ended", &env, &ctx), exited(0));
+        }
+
+        #[test]
+        fn the_environment_given_sets_and_takes_away_variables() {
+            let (ctx, env) = editor();
+            run(
+                r#"(process-start 'p "/bin/sh" '("-c" "echo \"$RSEDIT_GIVEN-${HOME:-none}\"")
+                                 'record nil :environment '("RSEDIT_GIVEN=a=b" "HOME"))"#,
+                &env,
+                &ctx,
+            );
+            settle(&env, &ctx);
+            assert_eq!(run("outputs", &env, &ctx), strings(&["a=b-none"]));
+        }
+
+        #[test]
+        fn an_unknown_keyword_or_value_is_refused_before_anything_starts() {
+            let (ctx, env) = editor();
+            for call in [
+                r#"(process-start 'p "cat" nil 'record :colour 'red)"#,
+                r#"(process-start 'p "cat" nil 'record nil :errors 'elsewhere)"#,
+                r#"(process-start 'p "cat" nil 'record nil :environment '(1))"#,
+                r#"(process-start 'p "cat" nil 'record nil :environment '("=x"))"#,
+            ] {
+                assert!(eval_str(call, &env, &ctx).is_err(), "{call} was taken");
+            }
+            assert!(run("(process-status 'p)", &env, &ctx).is_nil());
+        }
+
+        #[test]
+        fn an_interrupt_reaches_what_the_process_started_and_it_goes_on() {
+            let (ctx, env) = editor();
+            // The shell waits for its child, and sees the interrupt end it.
+            run(
+                r#"(process-start 'p "/bin/sh"
+                                 '("-c" "trap 'echo caught' INT; sleep 33.25; echo after; sleep 0.1")
+                                 'record)"#,
+                &env,
+                &ctx,
+            );
+            // The trap is set before the sleep starts: wait until it runs.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while processes_running("sleep 33.25") == 0 {
+                assert!(Instant::now() < deadline, "the sleep never started");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(run("(process-signal 'p 'interrupt)", &env, &ctx).is_truthy());
+            settle(&env, &ctx);
+            gone("sleep 33.25");
+            let outputs = run("(reverse outputs)", &env, &ctx);
+            assert_eq!(outputs, strings(&["caught", "after"]));
+            assert_eq!(run("ended", &env, &ctx), exited(0));
+        }
+
+        #[test]
+        fn a_process_leads_a_session_of_its_own_with_no_terminal() {
+            let (ctx, env) = editor();
+            run(
+                r#"(process-start 'p "/bin/sh" '("-c" "echo $$ $(ps -o sid= -p $$)")
+                                 'record)"#,
+                &env,
+                &ctx,
+            );
+            settle(&env, &ctx);
+            let outputs = run("outputs", &env, &ctx);
+            let line = match outputs.iter().next() {
+                Some(LispExp::String(line)) => line.to_string(),
+                other => panic!("no output: {other:?}"),
+            };
+            let ids: Vec<&str> = line.split_whitespace().collect();
+            assert_eq!(ids.len(), 2, "{line}");
+            assert_eq!(ids[0], ids[1], "the process is not its session's leader");
+        }
+
+        #[test]
+        fn a_signal_to_no_process_or_an_unknown_signal_is_refused() {
+            let (ctx, env) = editor();
+            assert!(run("(process-signal 'nobody 'interrupt)", &env, &ctx).is_nil());
+            run(r#"(process-start 'p "cat" nil 'record)"#, &env, &ctx);
+            assert!(eval_str("(process-signal 'p 'usr1)", &env, &ctx).is_err());
+            assert!(run("(process-signal 'p 'terminate)", &env, &ctx).is_truthy());
+            settle(&env, &ctx);
+            assert_eq!(run("ended", &env, &ctx), killed());
+            assert!(run("(process-signal 'p 'interrupt)", &env, &ctx).is_nil());
+        }
+
+        #[test]
         fn a_process_does_not_outlive_the_editor() {
             let (ctx, env) = editor();
             run(

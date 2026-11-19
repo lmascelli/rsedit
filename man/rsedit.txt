@@ -48,6 +48,7 @@ MODULES
     buffer-list          C-x b, and C-x C-b
     recent-files         M-g r, a file opened before
     shell                M-! and its output buffer
+    eshell               M-x eshell, a shell in a buffer, Lisp at its prompt
     manpage              this
     help                 C-h f, C-h k, C-h b -- the editor describing itself
     risp-repl            M-x risp-repl, Lisp evaluated as you write it
