@@ -182,6 +182,14 @@ apply one."
 (define-key 'theme-list-mode "p" 'previous-line)
 (define-key 'theme-list-mode "q" '(close-buffer theme-list-buffer-name))
 
+;; The Themes menu, on the bar of the list: the `menus' page.
+(menu-bar-add '("Themes" "Apply") 'theme-list-select nil :mode 'theme-list-mode)
+(menu-bar-add '("Themes" "Refresh") 'theme-list-refresh nil :mode 'theme-list-mode)
+(menu-bar-add '("Themes" "No Theme") 'reset-theme nil :mode 'theme-list-mode)
+(menu-bar-add '("Themes" "--close") nil nil :mode 'theme-list-mode)
+(menu-bar-add '("Themes" "Close") '(close-buffer theme-list-buffer-name) nil
+              :mode 'theme-list-mode)
+
 ;; The mark on the theme in force.
 (add-syntax-rule 'theme-list-mode "^\\* (.*)$" 'keyword 1)
 

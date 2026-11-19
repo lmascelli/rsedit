@@ -43,5 +43,13 @@
 
 (add-auto-mode "\\.toml$" 'toml-mode)
 (add-auto-mode "(^|[/\\\\])Cargo\\.lock$" 'toml-mode)
+
+;; The TOML menu, on the bar of a TOML buffer: the comments. The `menus'
+;; page.
+(menu-bar-add '("TOML" "Comment Line") 'comment-line nil :mode 'toml-mode)
+(menu-bar-add '("TOML" "Comment Region") 'comment-region 'use-region-p :mode 'toml-mode)
+(menu-bar-add '("TOML" "Uncomment Region") 'uncomment-region 'use-region-p
+              :mode 'toml-mode)
+
 (log "toml-mode loaded")
 (provide 'toml-mode)

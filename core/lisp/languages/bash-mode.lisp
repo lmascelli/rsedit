@@ -205,5 +205,16 @@ DELIMITER is a word, without white space or quotes."
 
 (add-auto-mode "\\.(sh|bash)$" 'bash-mode)
 (add-auto-mode "(^|[/\\\\])\\.?(bashrc|bash_profile|bash_login|bash_logout|profile)$" 'bash-mode)
+
+;; The Bash menu, on the bar of a script: the script run, and the comments.
+;; The `menus' page.
+(menu-bar-add '("Bash" "Run File") '(compile-buffer-file "bash") 'buffer-file-name
+              :mode 'bash-mode)
+(menu-bar-add '("Bash" "--comment") nil nil :mode 'bash-mode)
+(menu-bar-add '("Bash" "Comment Line") 'comment-line nil :mode 'bash-mode)
+(menu-bar-add '("Bash" "Comment Region") 'comment-region 'use-region-p :mode 'bash-mode)
+(menu-bar-add '("Bash" "Uncomment Region") 'uncomment-region 'use-region-p
+              :mode 'bash-mode)
+
 (log "bash-mode loaded")
 (provide 'bash-mode)

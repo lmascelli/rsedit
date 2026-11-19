@@ -585,10 +585,11 @@ fn a_menu_of_the_bar_the_keys_open_shows_under_its_label() {
         r#"(progn (menu-bar-add '("File" "Open") 'find-file)
                   (menu-bar-add '("Help" "Entry") 'describe-key))"#,
     );
+    // File, the rule before Help, which ends the bar, and Help.
     let label = Rect::from_min_size(Pos2::new(40., 0.), Vec2::new(30., 18.));
-    app.bar_rects = vec![Rect::NOTHING, label];
+    app.bar_rects = vec![Rect::NOTHING, Rect::NOTHING, label];
     let request = rsedit_core::MenuRequest {
-        kind: rsedit_core::MenuKind::Bar { open: 1 },
+        kind: rsedit_core::MenuKind::Bar { open: 2 },
         menu: app.core.state.menu_bar(&app.core.env),
         at: None,
     };
@@ -683,10 +684,15 @@ fn a_click_on_a_label_of_the_bar_opens_its_menu_resolved_then() {
         r#"(progn (menu-bar-add '("File" "Open") 'find-file)
                   (menu-bar-add '("Help" "Keys") 'describe-key))"#,
     );
-    app.bar_labels = vec!["File".into(), "Help".into()];
+    app.bar_labels = vec!["File".into(), "--".into(), "Help".into()];
     let ctx = egui::Context::default();
     bar_frame(&mut app, &ctx, Vec::new());
-    assert_eq!(app.bar_rects.len(), 2, "each label drawn");
+    assert_eq!(app.bar_rects.len(), 3, "each label drawn, the rule's too");
+    let [file, rule, help] = [0, 1, 2].map(|at| app.bar_rects[at]);
+    assert!(
+        file.max.x <= rule.center().x && rule.center().x <= help.min.x,
+        "the rule between File and Help: {file:?} {rule:?} {help:?}"
+    );
     assert!(app.bar_menu.is_none(), "nothing resolved while closed");
 
     let at = app.bar_rects[0].center();

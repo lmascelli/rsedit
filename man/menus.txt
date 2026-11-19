@@ -2,9 +2,9 @@ NAME
     menus - the menu bar, the context menu, and adding to them
 
 SYNOPSIS
-    (menu-bar-add PATH COMMAND &optional ENABLE)
-    (menu-bar-add-dynamic PATH FUNCTION)
-    (menu-bar-remove PATH)
+    (menu-bar-add PATH COMMAND &optional ENABLE &key :mode)
+    (menu-bar-add-dynamic PATH FUNCTION &key :mode)
+    (menu-bar-remove PATH &key :mode)
     (menu-bar-items)
     (menu-bar-open)
     (context-menu-add MODE PATH COMMAND &optional ENABLE)
@@ -13,6 +13,7 @@ SYNOPSIS
     (context-menu-items)
     (context-menu-open)
     menu-bar-mode
+    menu-bar-final-items
 
 DESCRIPTION
     Two kinds of menu offer commands to choose with the mouse or the arrows:
@@ -28,15 +29,30 @@ DESCRIPTION
     turns `menu-bar-mode' on.
 
 THE MENU BAR
-    It comes with three menus. File opens, saves, closes and quits; Buffers
+    It comes with four menus of the editor's own. File opens, saves, closes
+    and quits; Edit undoes, cuts, copies and pastes, finds and replaces,
+    goes to a line, indents, fills and records keyboard macros; Buffers
     lists the buffers, the current one marked with <, and ends with the
     whole buffer list; Help opens the manual and describes functions,
     variables, keys and modes.
 
+    Between Buffers and Help go the menus of the modes of the buffer you
+    are in: first those of its major mode, then those of each minor mode on
+    in it, in the order they were turned on. A line separates the editor's
+    menus, the major mode's, the minor modes' and Help, so that in a Rust
+    file with a language server the bar reads
+
+        File  Edit  Buffers  |  Rust  |  LSP  |  Help
+
+    and in a buffer whose modes have no menus, File Edit Buffers | Help.
+    While a prompt is open, the bar keeps the menus of the buffer the
+    prompt was opened from.
+
     Click a label, or press F10 to open the first menu from the keyboard,
     whether the bar is shown or not. In the terminal the arrows walk the
     menus: up and down within one, right into a menu inside it or on to the
-    next menu of the bar, left back out or to the menu before. Return or
+    next menu of the bar, past the lines between them, left back out or to
+    the menu before. Return or
     the space chooses, a letter goes to the next entry it begins, and Esc,
     C-g or F10 close the menus. A click outside them closes them too.
 
@@ -54,6 +70,31 @@ THE CONTEXT MENU
     separates two groups. In a buffer with a language server, lsp-mode adds
     Find Definition, Find References, Go Back and Code Action.
 
+THE MENUS OF THE MODES
+    Each module puts the menus of its modes on the bar, next to the keys it
+    binds, so that a module left out takes its menus with it:
+
+        Rust, Python, C, C++, CMake, Bash, TOML, Risp
+                        the languages: building, testing or running at
+                        the root of the project, or the file itself, the
+                        comments, and a language server to start
+        LSP             in a buffer with a language server: definitions,
+                        references, code actions, the server restarted
+        Dired           a directory: open, mark, copy, rename, delete
+        Buffer List     the list of buffers: switch, mark, save, kill
+        Compile         a build's output: the places, run it again, stop
+        Occur           a list of matches, from occur or grep
+        Findings        the list of findings
+        Page, Manual    a help page and a page of the manual
+        Themes          the list of themes
+        Shell           a shell command's output
+        Locations       the places a language server listed
+
+    The menus kept for the end of the bar are the editor's own whose labels
+    menu-bar-final-items lists, in its order: ("Help") at first. Set it to
+    nil to keep Help where it was added, or add a label of yours to put
+    that menu at the end too.
+
 ADDING ENTRIES
     An entry is named by a path: the labels of the menus it is in, then its
     own. menu-bar-add makes the menus on the way when they are missing, and
@@ -67,6 +108,12 @@ ADDING ENTRIES
     ENABLE is a function's name or a form, evaluated each time the menu
     opens, with the buffer the menu is for current: while it says nil, the
     entry is greyed out. nil for ENABLE, like leaving it out, means always.
+
+    With :mode, menu-bar-add puts the entry in the menus that mode, major
+    or minor, puts on the bar of the buffers where it is on, rather than in
+    the editor's own: they go between Buffers and Help. ENABLE may be left
+    out before the keyword. menu-bar-add-dynamic and menu-bar-remove take
+    :mode as well, for the menus of that mode. The mode need not exist yet.
 
     context-menu-add takes a mode first: the entry is in the context menu
     of the buffers where that mode, major or minor, is on, or of every
@@ -104,6 +151,20 @@ LIMITS
     finish the prompt, or cancel it with C-g, first.
 
 EXAMPLES
+    A Rust menu, on the bar of the Rust buffers only:
+
+        (menu-bar-add '("Rust" "Doc") '(project-compile-command "cargo doc")
+                      nil :mode 'rust-mode)
+
+    A menu of a minor mode of yours, while it is on:
+
+        (menu-bar-add '("Shout" "Stop Shouting") 'shout-mode nil
+                      :mode 'shout-mode)
+
+    Help where it was added, rather than at the end:
+
+        (setq menu-bar-final-items nil)
+
     A Tools menu on the bar, with a menu inside it:
 
         (menu-bar-add '("Tools" "Grep...") 'grep)
@@ -139,4 +200,4 @@ KEYS
     S-<f10>                 context-menu-open
 
 SEE ALSO
-    mouse, keymaps, themes, buffers, lsp
+    mouse, keymaps, themes, buffers, lsp, modes, compile, project

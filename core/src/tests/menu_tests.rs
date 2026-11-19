@@ -1,7 +1,8 @@
 //! The menus: what Lisp registers, how a menu comes out when it opens --
-//! conditions, generated entries, keys, the groups of a context menu -- what
-//! choosing an entry runs, what a right click and `menu-bar-open` ask the
-//! front end, and the double click that chooses a line of a list.
+//! conditions, generated entries, keys, the groups of a context menu, the
+//! menus of the modes on the bar -- what choosing an entry runs, what a right
+//! click and `menu-bar-open` ask the front end, and the double click that
+//! chooses a line of a list.
 //!
 //! Design: `doc/architettura-editor.typ, <menu>`.
 #[cfg(test)]
@@ -368,6 +369,189 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
+    // The menus of the modes on the bar
+    // ----------------------------------------------------------------
+
+    /// An editor whose bar has File and Help of its own, whose *scratch* is
+    /// in my-mode, with Major on the bar, and where the minor modes one and
+    /// two put One and Two on it: neither is on yet.
+    fn editor_with_mode_menus() -> (Ctx, Arc<Env<Ctx>>) {
+        let (ctx, env) = editor_with_commands(3);
+        run(
+            r#"(make-mode 'my-mode)
+               (define-minor-mode one "1" "A minor mode for the test.")
+               (define-minor-mode two "2" "Another.")
+               (menu-bar-add '("File" "Open") 'find-file)
+               (menu-bar-add '("Help" "Guide") '(manpage "guide"))
+               (menu-bar-add '("Major" "Act") '(insert "major") nil :mode 'my-mode)
+               (menu-bar-add '("One" "Act") '(insert "one") nil :mode 'one)
+               (menu-bar-add '("Two" "Act") '(insert "two") nil :mode 'two)
+               (menu-bar-add '("Elsewhere" "Act") 'undo nil :mode 'other-mode)
+               (set-major-mode 'my-mode)"#,
+            &env,
+            &ctx,
+        );
+        (ctx, env)
+    }
+
+    #[test]
+    fn the_menus_of_the_modes_go_between_the_editors_and_help() {
+        let (ctx, env) = editor_with_mode_menus();
+        assert_eq!(
+            labels(&ctx.menu_bar(&env)),
+            ["File", "--", "Major", "--", "Help"]
+        );
+        // The minor modes' after the major mode's, in the order they were
+        // turned on, with no line between two of them.
+        run("(two) (one)", &env, &ctx);
+        assert_eq!(
+            labels(&ctx.menu_bar(&env)),
+            ["File", "--", "Major", "--", "Two", "One", "--", "Help"]
+        );
+        run("(two)", &env, &ctx);
+        assert_eq!(
+            labels(&ctx.menu_bar(&env)),
+            ["File", "--", "Major", "--", "One", "--", "Help"]
+        );
+    }
+
+    #[test]
+    fn a_buffer_whose_modes_have_no_menus_shows_the_editors_and_help() {
+        let (ctx, env) = editor_with_mode_menus();
+        run("(set-major-mode 'fundamental-mode)", &env, &ctx);
+        assert_eq!(labels(&ctx.menu_bar(&env)), ["File", "--", "Help"]);
+        run(r#"(menu-bar-remove "Help")"#, &env, &ctx);
+        assert_eq!(
+            labels(&ctx.menu_bar(&env)),
+            ["File"],
+            "no line before nothing"
+        );
+    }
+
+    #[test]
+    fn an_entry_of_a_modes_menu_runs_as_any_other() {
+        let (ctx, env) = editor_with_mode_menus();
+        let bar = ctx.menu_bar(&env);
+        let id = action(submenu(&bar, "Major"), "Act", true);
+        assert!(ctx.run_menu_item(id, &env));
+        assert!(matches!(
+            run("(buffer-string)", &env, &ctx),
+            LispExp::String(text) if text.starts_with("major")
+        ));
+    }
+
+    #[test]
+    fn menu_bar_final_items_says_which_menus_end_the_bar() {
+        let (ctx, env) = editor_with_mode_menus();
+        run(r#"(menu-bar-add '("Tools" "Grep") 'grep)"#, &env, &ctx);
+        assert_eq!(
+            labels(&ctx.menu_bar(&env)),
+            ["File", "Tools", "--", "Major", "--", "Help"]
+        );
+        // In the order of the list, each once, and one that is not there
+        // passed over.
+        run(
+            r#"(setq menu-bar-final-items '("Help" "Nowhere" "File" "Help"))"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            labels(&ctx.menu_bar(&env)),
+            ["Tools", "--", "Major", "--", "Help", "File"]
+        );
+        run("(setq menu-bar-final-items nil)", &env, &ctx);
+        assert_eq!(
+            labels(&ctx.menu_bar(&env)),
+            ["File", "Help", "Tools", "--", "Major"]
+        );
+    }
+
+    #[test]
+    fn the_menus_of_a_mode_are_taken_away_with_mode() {
+        let (ctx, env) = editor_with_mode_menus();
+        run(
+            r#"(menu-bar-add '("Major" "More") 'undo nil :mode 'my-mode)"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            labels(submenu(&ctx.menu_bar(&env), "Major")),
+            ["Act", "More"]
+        );
+        assert!(run(r#"(menu-bar-remove '("Major" "Act"))"#, &env, &ctx).is_nil());
+        assert!(
+            !run(
+                r#"(menu-bar-remove '("Major" "Act") :mode 'my-mode)"#,
+                &env,
+                &ctx
+            )
+            .is_nil()
+        );
+        assert_eq!(labels(submenu(&ctx.menu_bar(&env), "Major")), ["More"]);
+        assert!(!run(r#"(menu-bar-remove "Major" :mode 'my-mode)"#, &env, &ctx).is_nil());
+        assert_eq!(labels(&ctx.menu_bar(&env)), ["File", "--", "Help"]);
+    }
+
+    #[test]
+    fn a_mode_fills_a_menu_of_its_own_each_time_it_opens() {
+        let (ctx, env) = editor_with_mode_menus();
+        run(
+            r#"(defvar my-count 0)
+               (defun my-entries ()
+                 (setq my-count (+ my-count 1))
+                 (list (list (format "Opened %s" my-count) 'undo)))
+               (menu-bar-add-dynamic "Major" 'my-entries :mode 'my-mode)"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            labels(submenu(&ctx.menu_bar(&env), "Major")),
+            ["Act", "Opened 1"]
+        );
+        assert_eq!(
+            labels(submenu(&ctx.menu_bar(&env), "Major")),
+            ["Act", "Opened 2"]
+        );
+    }
+
+    #[test]
+    fn the_menu_bars_keyword_is_mode_and_only_mode() {
+        let (ctx, env) = editor_with_mode_menus();
+        for src in [
+            r#"(menu-bar-add '("M" "A") 'undo nil :major 'my-mode)"#,
+            r#"(menu-bar-add '("M" "A") 'undo nil :mode)"#,
+            r#"(menu-bar-add '("M" "A") 'undo nil :mode 'my-mode :mode 'my-mode)"#,
+            r#"(menu-bar-add '("M" "A") 'undo nil :mode 3)"#,
+            r#"(menu-bar-remove "M" :mode)"#,
+        ] {
+            assert!(eval_str(src, &env, &ctx).is_err(), "{src} is refused");
+        }
+        // ENABLE may be left out before the keyword; nil is the editor's own.
+        run(
+            r#"(menu-bar-add '("Major" "Short") 'undo :mode 'my-mode)
+               (menu-bar-add '("Own" "A") 'undo nil :mode nil)"#,
+            &env,
+            &ctx,
+        );
+        let bar = ctx.menu_bar(&env);
+        assert_eq!(labels(submenu(&bar, "Major")), ["Act", "Short"]);
+        assert_eq!(labels(&bar), ["File", "Own", "--", "Major", "--", "Help"]);
+    }
+
+    #[test]
+    fn the_frame_names_the_menus_of_the_modes_with_a_line_between_groups() {
+        let (ctx, env) = editor_with_mode_menus();
+        run("(setq menu-bar-mode t) (one)", &env, &ctx);
+        let names = ["File", "--", "Major", "--", "One", "--", "Help"];
+        assert_eq!(ctx.snapshot(&env, W, H).menu_bar, names);
+        assert_eq!(ctx.menu_bar(&env).bar_labels(), names, "one for each entry");
+        // While a prompt is open, the bar stays that of the buffer it was
+        // opened from rather than becoming the prompt's.
+        run(r#"(minibuffer-read "Q:" 'ignore nil nil)"#, &env, &ctx);
+        assert_eq!(ctx.snapshot(&env, W, H).menu_bar, names);
+    }
+
+    // ----------------------------------------------------------------
     // Choosing
     // ----------------------------------------------------------------
 
@@ -540,7 +724,7 @@ mod tests {
         let request = ctx.snapshot(&env, W, H).menu.expect("a menu to open");
         assert_eq!(request.kind, MenuKind::Bar { open: 0 });
         assert_eq!(request.at, None);
-        assert_eq!(labels(&request.menu), ["File", "Help"]);
+        assert_eq!(labels(&request.menu), ["File", "--", "Help"]);
     }
 
     #[test]
@@ -623,11 +807,16 @@ mod tests {
     }
 
     #[test]
-    fn the_menu_bar_comes_with_file_buffers_and_help() {
+    fn the_menu_bar_comes_with_file_edit_buffers_and_help() {
         let (ctx, env) = shipped_editor();
         assert!(!run("menu-bar-mode", &env, &ctx).is_nil());
         let bar = ctx.menu_bar(&env);
-        assert_eq!(labels(&bar), ["File", "Buffers", "Help"]);
+        assert_eq!(labels(&bar), ["File", "Edit", "Buffers", "--", "Help"]);
+        let edit = submenu(&bar, "Edit");
+        action(edit, "Cut", false);
+        action(edit, "Paste", true);
+        assert_eq!(keys_of(edit, "Replace..."), "M-%");
+        submenu(edit, "Keyboard Macro");
         assert_eq!(keys_of(submenu(&bar, "File"), "Open File..."), "C-x C-f");
         let buffers = labels(submenu(&bar, "Buffers"));
         assert!(
@@ -636,6 +825,107 @@ mod tests {
         );
         assert_eq!(buffers.last().map(String::as_str), Some("List All Buffers"));
         submenu(submenu(&bar, "Help"), "Describe");
+    }
+
+    /// Puts the current buffer in MAJOR, with MINORS on, as their modes
+    /// leave it but without running their hooks: no server started, no
+    /// listing read.
+    fn put_in_modes(ctx: &Ctx, major: &str, minors: &[&str]) {
+        ctx.with_current_buffer_mut(|b| {
+            b.current_mode = major.into();
+            b.minor_modes = minors
+                .iter()
+                .map(|name| crate::buffer::ActiveMinor {
+                    name: name.to_string(),
+                    lighter: String::new(),
+                })
+                .collect();
+        });
+    }
+
+    #[test]
+    fn a_rust_buffer_with_a_server_has_the_rust_and_lsp_menus_before_help() {
+        let (ctx, env) = shipped_editor();
+        put_in_modes(&ctx, "rust-mode", &["lsp-mode"]);
+        let bar = ctx.menu_bar(&env);
+        assert_eq!(
+            labels(&bar),
+            [
+                "File", "Edit", "Buffers", "--", "Rust", "--", "LSP", "--", "Help"
+            ]
+        );
+        action(submenu(&bar, "Rust"), "Build", true);
+        action(submenu(&bar, "Rust"), "Start Language Server", false);
+        assert_eq!(keys_of(submenu(&bar, "LSP"), "Find Definition"), "M-.");
+    }
+
+    /// Returns the name of the function the command of ACTION, an entry of
+    /// a menu resolved, calls: its name, or the head of its form.
+    fn called(ctx: &Ctx, id: MenuItemId) -> Option<String> {
+        let command = ctx.menu_item_command(id);
+        let head = match &command {
+            LispExp::Symbol(_) => Some(command.clone()),
+            other => other.iter().next(),
+        };
+        match head {
+            Some(LispExp::Symbol(name)) => Some(name.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Returns the functions MENU's actions call that do not exist, with the
+    /// labels of where they are.
+    fn missing(ctx: &Ctx, env: &Arc<Env<Ctx>>, menu: &Menu, path: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for item in &menu.items {
+            match item {
+                MenuItem::Action { label, id, .. } => match called(ctx, *id) {
+                    Some(name) if env.get_function(&name).is_some() => {}
+                    other => out.push(format!("{path} > {label}: {other:?}")),
+                },
+                MenuItem::Submenu { label, menu } => {
+                    out.extend(missing(ctx, env, menu, &format!("{path} > {label}")))
+                }
+                MenuItem::Separator => {}
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn every_entry_of_the_shipped_menus_calls_a_function_there_is() {
+        let (ctx, env) = shipped_editor();
+        let modes: &[(&str, &[&str], &str)] = &[
+            ("fundamental-mode", &[], "Edit"),
+            ("rust-mode", &["lsp-mode"], "Rust"),
+            ("python-mode", &[], "Python"),
+            ("c-mode", &[], "C"),
+            ("cpp-mode", &[], "C++"),
+            ("cmake-mode", &[], "CMake"),
+            ("bash-mode", &[], "Bash"),
+            ("toml-mode", &[], "TOML"),
+            ("risp-mode", &[], "Risp"),
+            ("dired-mode", &[], "Dired"),
+            ("buffer-list-mode", &[], "Buffer List"),
+            ("compilation-mode", &[], "Compile"),
+            ("occur-mode", &[], "Occur"),
+            ("findings-list-mode", &[], "Findings"),
+            ("help-mode", &[], "Page"),
+            ("manpage-mode", &[], "Manual"),
+            ("theme-list-mode", &[], "Themes"),
+            ("shell-output-mode", &[], "Shell"),
+            ("lsp-locations-mode", &[], "Locations"),
+        ];
+        let mut wrong = Vec::new();
+        for (major, minors, menu) in modes {
+            put_in_modes(&ctx, major, minors);
+            let bar = ctx.menu_bar(&env);
+            if !labels(&bar).iter().any(|label| label == menu) {
+                wrong.push(format!("{major}: no {menu} in {:?}", labels(&bar)));
+            }
+            wrong.extend(missing(&ctx, &env, &bar, major));
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     #[test]

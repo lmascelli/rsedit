@@ -529,6 +529,33 @@ files go, and without one they go after it. What it prints is shown as by
 (define-key 'dired-mode "p" 'previous-line)
 (define-key 'dired-mode "q" '(close-buffer dired-buffer-name))
 
+;; The Dired menu, on the bar of a listing: the `menus' page.
+(menu-bar-add '("Dired" "Open") 'dired-find-file nil :mode 'dired-mode)
+(menu-bar-add '("Dired" "Open in Other Window") 'dired-find-file-other-window nil
+              :mode 'dired-mode)
+(menu-bar-add '("Dired" "Up Directory") 'dired-up-directory nil :mode 'dired-mode)
+(menu-bar-add '("Dired" "Refresh") 'dired-refresh nil :mode 'dired-mode)
+(menu-bar-add '("Dired" "--mark") nil nil :mode 'dired-mode)
+(menu-bar-add '("Dired" "Mark") 'dired-mark nil :mode 'dired-mode)
+(menu-bar-add '("Dired" "Flag for Deletion") 'dired-flag-file-deletion nil
+              :mode 'dired-mode)
+(menu-bar-add '("Dired" "Unmark") 'dired-unmark nil :mode 'dired-mode)
+(menu-bar-add '("Dired" "Unmark All") 'dired-unmark-all-marks nil :mode 'dired-mode)
+(menu-bar-add '("Dired" "Toggle Marks") 'dired-toggle-marks nil :mode 'dired-mode)
+(menu-bar-add '("Dired" "--do") nil nil :mode 'dired-mode)
+(menu-bar-add '("Dired" "Copy...") 'dired-do-copy nil :mode 'dired-mode)
+(menu-bar-add '("Dired" "Rename...") 'dired-do-rename nil :mode 'dired-mode)
+(menu-bar-add '("Dired" "Delete...") 'dired-do-delete nil :mode 'dired-mode)
+(menu-bar-add '("Dired" "Delete Flagged...") 'dired-do-flagged-delete nil
+              :mode 'dired-mode)
+(menu-bar-add '("Dired" "Shell Command...") 'dired-do-shell-command nil
+              :mode 'dired-mode)
+(menu-bar-add '("Dired" "--find") nil nil :mode 'dired-mode)
+(menu-bar-add '("Dired" "Find File Below...") 'dired-find-recursive nil
+              :mode 'dired-mode)
+(menu-bar-add '("Dired" "Close") '(close-buffer dired-buffer-name) nil
+              :mode 'dired-mode)
+
 
 ;; ---------------------------------------------------------------------------
 ;; Finding a file anywhere below here

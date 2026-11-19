@@ -130,8 +130,9 @@ pub use crate::{
         XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_STATE_HOME, app_dir,
     },
     ui::{
-        Color, Face, FrameSnapshot, GutterCell, Highlight, Menu, MenuItem, MenuItemId, MenuKind,
-        MenuRequest, NAMED_COLORS, Rect, RenderableWindowView, Separator, Style, Theme, width,
+        Color, Face, FrameSnapshot, GutterCell, Highlight, MENU_SEPARATOR, Menu, MenuItem,
+        MenuItemId, MenuKind, MenuRequest, NAMED_COLORS, Rect, RenderableWindowView, Separator,
+        Style, Theme, is_menu_separator, width,
     },
 };
 pub use risp::{Env, LispContext, Parser, eval};

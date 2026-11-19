@@ -323,6 +323,16 @@ pub fn create_global_env<B: BufferTrait>()
     env.set_variable(MOUSE_MODE.into(), ELispExp::nil());
     // The same for the menu bar, which takes a row of the terminal.
     env.set_variable(MENU_BAR_MODE.into(), ELispExp::nil());
+    // Help at the end of the bar, after the menus of the modes, as in Emacs.
+    env.set_variable(
+        MENU_BAR_FINAL_ITEMS.into(),
+        ELispExp::proper_list(
+            DEFAULT_MENU_BAR_FINAL_ITEMS
+                .iter()
+                .map(|label| ELispExp::string(label.to_string()))
+                .collect(),
+        ),
+    );
 
     // The blank lines at the end of a buffer cleaned with the blanks at the
     // ends of its lines.

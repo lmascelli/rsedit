@@ -161,6 +161,16 @@ here."
 (define-key 'findings-list-mode "p" 'previous-line)
 (define-key 'findings-list-mode "q" 'results-quit)
 
+;; The Findings menu, on the bar of the list: the `menus' page.
+(menu-bar-add '("Findings" "Go to Finding") 'findings-list-goto nil
+              :mode 'findings-list-mode)
+(menu-bar-add '("Findings" "Show Finding") 'findings-list-show nil
+              :mode 'findings-list-mode)
+(menu-bar-add '("Findings" "Refresh") 'findings-list-refresh nil
+              :mode 'findings-list-mode)
+(menu-bar-add '("Findings" "--quit") nil nil :mode 'findings-list-mode)
+(menu-bar-add '("Findings" "Close") 'results-quit nil :mode 'findings-list-mode)
+
 (add-syntax-rule 'findings-list-mode "^--- .* ---$" 'comment)
 (add-syntax-rule 'findings-list-mode ": (error):" 'finding-error-sign 1)
 (add-syntax-rule 'findings-list-mode ": (warning):" 'finding-warning-sign 1)

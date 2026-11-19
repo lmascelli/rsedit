@@ -107,5 +107,22 @@ interpreter for them again."
 (add-auto-mode "\\.lisp$" 'risp-mode)
 (add-auto-mode "\\.risp$" 'risp-mode)
 
+;; The Risp menu, on the bar of a Lisp buffer: evaluating, the REPL, and the
+;; comments. The `menus' page.
+(menu-bar-add '("Risp" "Evaluate Block Before Point") 'risp-repl-eval-print-block nil
+              :mode 'risp-mode)
+(menu-bar-add '("Risp" "Evaluate Expression...") 'eval-expression-prompt nil
+              :mode 'risp-mode)
+(menu-bar-add '("Risp" "Load Saved File") '(eval-file (buffer-file-name))
+              '(and (buffer-file-name) (not (buffer-modified-p))) :mode 'risp-mode)
+(menu-bar-add '("Risp" "REPL") 'risp-repl nil :mode 'risp-mode)
+(menu-bar-add '("Risp" "Refresh Vocabulary") 'risp-refresh-vocabulary nil
+              :mode 'risp-mode)
+(menu-bar-add '("Risp" "--comment") nil nil :mode 'risp-mode)
+(menu-bar-add '("Risp" "Comment Line") 'comment-line nil :mode 'risp-mode)
+(menu-bar-add '("Risp" "Comment Region") 'comment-region 'use-region-p :mode 'risp-mode)
+(menu-bar-add '("Risp" "Uncomment Region") 'uncomment-region 'use-region-p
+              :mode 'risp-mode)
+
 (log "risp-mode loaded")
 (provide 'risp-mode)

@@ -222,6 +222,19 @@ does: its output keeps the root, so g runs it there again."
         (project--ask-and-run root "Shell command in project"
                               "project-shell-command" 'shell-command))))
 
+(defun project-compile-command (command)
+  "Run COMMAND, a string, at the current project's root, as `project-compile'
+runs what it asks for, and return t; nil, after saying why, outside a
+project. What the menus of the languages run to build and test.
+
+Example:
+  (project-compile-command \"cargo test\")"
+  (let ((root (project--current)))
+    (if root
+        (progn (with-directory root (lambda () (compile command)))
+               t)
+        nil)))
+
 ;; ---------------------------------------------------------------------------
 ;; Going to another project, declaring one, forgetting one
 ;; ---------------------------------------------------------------------------

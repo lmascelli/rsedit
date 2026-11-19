@@ -277,5 +277,33 @@ item rather than going on with a statement."
 
 (add-auto-mode "\\.(c|h)$" 'c-mode)
 (add-auto-mode "\\.(cpp|hpp|cc|hh|cxx|hxx|c\\+\\+|h\\+\\+|C|H|ipp|tpp|ixx|cppm)$" 'cpp-mode)
+
+;; The C and C++ menus, on the bar of their buffers: a build at the
+;; project's root, and the comments. The `menus' page.
+(menu-bar-add '("C" "Make") '(project-compile-command "make") nil :mode 'c-mode)
+(menu-bar-add '("C" "CMake Build") '(project-compile-command "cmake --build build")
+              nil :mode 'c-mode)
+(menu-bar-add '("C" "Build...") 'project-compile nil :mode 'c-mode)
+(menu-bar-add '("C" "--comment") nil nil :mode 'c-mode)
+(menu-bar-add '("C" "Comment Line") 'comment-line nil :mode 'c-mode)
+(menu-bar-add '("C" "Comment Region") 'comment-region 'use-region-p :mode 'c-mode)
+(menu-bar-add '("C" "Uncomment Region") 'uncomment-region 'use-region-p
+              :mode 'c-mode)
+(menu-bar-add '("C" "--server") nil nil :mode 'c-mode)
+(menu-bar-add '("C" "Start Language Server") 'lsp-mode
+              '(not (minor-mode-p 'lsp-mode)) :mode 'c-mode)
+(menu-bar-add '("C++" "Make") '(project-compile-command "make") nil :mode 'cpp-mode)
+(menu-bar-add '("C++" "CMake Build") '(project-compile-command "cmake --build build")
+              nil :mode 'cpp-mode)
+(menu-bar-add '("C++" "Build...") 'project-compile nil :mode 'cpp-mode)
+(menu-bar-add '("C++" "--comment") nil nil :mode 'cpp-mode)
+(menu-bar-add '("C++" "Comment Line") 'comment-line nil :mode 'cpp-mode)
+(menu-bar-add '("C++" "Comment Region") 'comment-region 'use-region-p :mode 'cpp-mode)
+(menu-bar-add '("C++" "Uncomment Region") 'uncomment-region 'use-region-p
+              :mode 'cpp-mode)
+(menu-bar-add '("C++" "--server") nil nil :mode 'cpp-mode)
+(menu-bar-add '("C++" "Start Language Server") 'lsp-mode
+              '(not (minor-mode-p 'lsp-mode)) :mode 'cpp-mode)
+
 (log "cc-mode loaded")
 (provide 'cc-mode)

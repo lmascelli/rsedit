@@ -5,6 +5,7 @@ SYNOPSIS
     (project-find-file)
     (project-grep)
     (project-compile)
+    (project-compile-command COMMAND)
     (project-shell-command)
     (project-switch)
     (project-declare-root DIRECTORY)
@@ -95,6 +96,11 @@ WORKING AT THE ROOT
     builds there again, and the places a build names are read from the
     root. The `compile' and `shell' pages have the output.
 
+    project-compile-command runs a command it is given rather than one it
+    asks for, at the root, and returns t; outside a project it says so and
+    returns nil. The Build, Test and Run entries of the menus of the
+    languages call it, as Rust's Build runs cargo build: the `menus' page.
+
     Each of the three keeps its own history: C-p at the prompt gives back
     what you asked for last, in any project.
 
@@ -126,6 +132,10 @@ EXAMPLES
                 (with-directory root (lambda () (compile "make -k")))
                 (message "Not in a project"))))
         (define-key nil "C-c m" 'my-make)
+
+    The same in one line, the message included:
+
+        (define-key nil "C-c m" '(project-compile-command "make -k"))
 
 LIMITS
     A repository around your home directory, as some keep for their

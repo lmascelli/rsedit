@@ -3,6 +3,7 @@ NAME
 
 SYNOPSIS
     (compile COMMAND)
+    (compile-buffer-file PROGRAM)
     (compilation-recompile)
     (compilation-goto)
     (compilation-next)
@@ -43,6 +44,12 @@ RUNNING A BUILD
 
     C-c C-k, and killing the output buffer, ask the command and everything
     it started to stop, and stop them outright two seconds later.
+
+    compile-buffer-file saves the current buffer when it has changes and
+    runs a program on its file, in the file's directory, as compile runs
+    a command: (compile-buffer-file "python3") runs the script you are
+    editing. The Run File entries of the Python and Bash menus call it;
+    the `menus' page has the menus of the languages.
 
 GOING TO THE PLACES
         M-g n           open the next place, in the window you are in
@@ -121,6 +128,10 @@ EXAMPLES
     Build with cargo from a key of its own:
 
         (define-key nil "C-c b" '(compile "cargo build"))
+
+    Run the Ruby script you are editing, from a key of its own:
+
+        (define-key nil "C-c r" '(compile-buffer-file "ruby"))
 
     Recognise a tool that writes "ERROR in FILE at line N":
 

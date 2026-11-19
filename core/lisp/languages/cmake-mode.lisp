@@ -140,5 +140,18 @@
 
 (add-auto-mode "(^|[/\\\\])CMakeLists\\.txt$" 'cmake-mode)
 (add-auto-mode "\\.cmake$" 'cmake-mode)
+
+;; The CMake menu, on the bar of a CMake buffer: configure and build in
+;; build/ under the project's root, and the comments. The `menus' page.
+(menu-bar-add '("CMake" "Configure") '(project-compile-command "cmake -S . -B build")
+              nil :mode 'cmake-mode)
+(menu-bar-add '("CMake" "Build") '(project-compile-command "cmake --build build")
+              nil :mode 'cmake-mode)
+(menu-bar-add '("CMake" "--comment") nil nil :mode 'cmake-mode)
+(menu-bar-add '("CMake" "Comment Line") 'comment-line nil :mode 'cmake-mode)
+(menu-bar-add '("CMake" "Comment Region") 'comment-region 'use-region-p :mode 'cmake-mode)
+(menu-bar-add '("CMake" "Uncomment Region") 'uncomment-region 'use-region-p
+              :mode 'cmake-mode)
+
 (log "cmake-mode loaded")
 (provide 'cmake-mode)

@@ -15,22 +15,6 @@ Comandi di testo
 - Narrowing (C-x n n).
 
 * Fixes todo
-- In the TUI C-_ is still seen as C-7
-  Nel repository lmascelli/rsedit correggi la normalizzazione dei
-  tasti nella TUI. Problema: crossterm 0.29 decodifica i byte legacy
-  0x1C…0x1F come Ctrl+4…Ctrl+7. Di conseguenza C-_ arriva come C-7 e
-  non attiva undo. In src/tui/input.rs, dentro translate_key,
-  normalizza i caratteri con Ctrl: 4 → \, 5 → ], 6 → ^, 7 → _.
-  Preserva gli altri modificatori e lascia invariati i tasti senza
-  Ctrl. Limita la modifica alla TUI. Aggiungi test mirati in
-  src/tests/tui_tests.rs per le quattro conversioni, la conservazione
-  di Alt e i numeri senza Ctrl. Verifica che C-7 normalizzato
-  corrisponda al binding C-_ di undo. Esegui i test pertinenti.
-  Documenta brevemente che i tasti legacy sono ambigui: un vero Ctrl+7
-  riceverà la stessa normalizzazione. Non aggiungere protocolli
-  tastiera estesi né cambiare i binding globali. Leggi AGENTS.md se
-  presente. Evita esplorazioni e refactor estranei. Riporta file
-  modificati e risultato dei test; non effettuare commit o push.
 --------------------------------------------------
 
 * Macro todo

@@ -7,11 +7,26 @@
 use super::colour::ColorDepth;
 use super::render::{Clip, apply_style, draw_clipped_row, page, reset};
 use rsedit_core::width::{cells, fit};
-use rsedit_core::{Face, KeyCode, KeyEvent, Menu, MenuItem, MenuItemId, Style, Theme};
+use rsedit_core::{
+    Face, KeyCode, KeyEvent, Menu, MenuItem, MenuItemId, Style, Theme, is_menu_separator,
+};
 use std::io::Write;
 
 /// The cells between two labels of the bar, and before the first.
 const BAR_GAP: usize = 2;
+
+/// What the bar shows between two groups of its menus: the editor's, the
+/// major mode's, the minor modes', those kept for the end.
+const BAR_SEPARATOR: &str = "│";
+
+/// Returns the cells the entry LABEL of the bar takes: a separator's, one.
+fn bar_cells(label: &str) -> usize {
+    if is_menu_separator(label) {
+        cells(BAR_SEPARATOR)
+    } else {
+        cells(label)
+    }
+}
 
 /// What a key or a click did to the menus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,13 +40,13 @@ pub enum Outcome {
 }
 
 /// Returns the cells each of LABELS takes on the bar, start and end, in
-/// order: one gap before the first and between two.
+/// order: one gap before the first and between two, a separator's included.
 pub fn bar_layout(labels: &[String]) -> Vec<(usize, usize)> {
     let mut x = BAR_GAP / 2;
     labels
         .iter()
         .map(|label| {
-            let span = (x, x + cells(label));
+            let span = (x, x + bar_cells(label));
             x = span.1 + BAR_GAP;
             span
         })
@@ -39,11 +54,13 @@ pub fn bar_layout(labels: &[String]) -> Vec<(usize, usize)> {
 }
 
 /// Returns which of LABELS the cell X of the bar is over, its gaps counted
-/// with the label they come before.
+/// with the label they come before; `None` past the last, and over a
+/// separator, which opens nothing.
 pub fn bar_label_at(labels: &[String], x: usize) -> Option<usize> {
     bar_layout(labels)
         .iter()
         .position(|&(start, end)| x + BAR_GAP / 2 >= start && x < end + BAR_GAP / 2)
+        .filter(|&at| !is_menu_separator(&labels[at]))
 }
 
 /// Returns how FACE is drawn in THEME, or FALLBACK while nothing styles it:
@@ -79,7 +96,8 @@ impl MenuStyles {
 }
 
 /// Draws the menu bar on row 0 of a terminal WIDTH cells wide: LABELS, the
-/// one at OPEN, if any, as selected.
+/// one at OPEN, if any, as selected, and a separator as a rule in the face
+/// of what cannot be chosen.
 pub fn draw_bar<W: Write>(
     out: &mut W,
     labels: &[String],
@@ -98,6 +116,14 @@ pub fn draw_bar<W: Write>(
     apply_style(out, &styles.plain, depth)?;
     draw_clipped_row(out, 0, 0, &" ".repeat(width), clip)?;
     for (index, (label, (start, _))) in labels.iter().zip(bar_layout(labels)).enumerate() {
+        if is_menu_separator(label) {
+            reset(out, &base, depth)?;
+            apply_style(out, &styles.disabled, depth)?;
+            draw_clipped_row(out, start as isize, 0, BAR_SEPARATOR, clip)?;
+            reset(out, &base, depth)?;
+            apply_style(out, &styles.plain, depth)?;
+            continue;
+        }
         if open == Some(index) {
             reset(out, &base, depth)?;
             apply_style(out, &styles.selected, depth)?;
@@ -312,11 +338,10 @@ impl OpenMenus {
         menus
     }
 
-    /// Returns the labels of the bar the menus were opened from, if they were.
+    /// Returns the labels of the bar the menus were opened from, if they were,
+    /// a separator's among them: one for each of its entries.
     pub fn bar_labels(&self) -> Option<Vec<String>> {
-        self.bar
-            .as_ref()
-            .map(|(bar, _)| bar.labels().into_iter().map(str::to_string).collect())
+        self.bar.as_ref().map(|(bar, _)| bar.bar_labels())
     }
 
     /// Returns which entry of the bar is open, if the menus were opened from
@@ -347,8 +372,9 @@ impl OpenMenus {
         };
         *at = open.min(bar.items.len().saturating_sub(1));
         self.levels.clear();
-        let labels: Vec<String> = bar.labels().into_iter().map(str::to_string).collect();
-        let x = bar_layout(&labels).get(*at).map_or(0, |(start, _)| *start);
+        let x = bar_layout(&bar.bar_labels())
+            .get(*at)
+            .map_or(0, |(start, _)| *start);
         if let Some(MenuItem::Submenu { menu, .. }) = bar.items.get(*at) {
             self.levels.push(Level::new(
                 menu.clone(),
@@ -360,15 +386,20 @@ impl OpenMenus {
         }
     }
 
-    /// Moves to the entry of the bar STEP on, round the ends.
+    /// Moves to the entry of the bar STEP on, round the ends, past the
+    /// separators.
     fn step_bar(&mut self, step: isize, screen: (usize, usize)) {
         let Some((bar, open)) = &self.bar else {
             return;
         };
         let count = bar.items.len() as isize;
-        if count > 0 {
-            let next = (*open as isize + step).rem_euclid(count) as usize;
-            self.open_bar_entry(next, screen, true);
+        let mut next = *open as isize;
+        for _ in 0..count {
+            next = (next + step).rem_euclid(count);
+            if !matches!(bar.items[next as usize], MenuItem::Separator) {
+                self.open_bar_entry(next as usize, screen, true);
+                return;
+            }
         }
     }
 

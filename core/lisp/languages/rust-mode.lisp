@@ -164,5 +164,28 @@ on, going back over the lines it continues. Point ends at that line's start."
 
 (add-auto-mode "\\.rs$" 'rust-mode)
 
+;; The Rust menu, on the bar of a Rust buffer: cargo at the project's root,
+;; and the comments. The `menus' page.
+(menu-bar-add '("Rust" "Build") '(project-compile-command "cargo build") nil
+              :mode 'rust-mode)
+(menu-bar-add '("Rust" "Check") '(project-compile-command "cargo check") nil
+              :mode 'rust-mode)
+(menu-bar-add '("Rust" "Test") '(project-compile-command "cargo test") nil
+              :mode 'rust-mode)
+(menu-bar-add '("Rust" "Run") '(project-compile-command "cargo run") nil
+              :mode 'rust-mode)
+(menu-bar-add '("Rust" "Clippy") '(project-compile-command "cargo clippy") nil
+              :mode 'rust-mode)
+(menu-bar-add '("Rust" "Format Project") '(project-compile-command "cargo fmt") nil
+              :mode 'rust-mode)
+(menu-bar-add '("Rust" "--comment") nil nil :mode 'rust-mode)
+(menu-bar-add '("Rust" "Comment Line") 'comment-line nil :mode 'rust-mode)
+(menu-bar-add '("Rust" "Comment Region") 'comment-region 'use-region-p :mode 'rust-mode)
+(menu-bar-add '("Rust" "Uncomment Region") 'uncomment-region 'use-region-p
+              :mode 'rust-mode)
+(menu-bar-add '("Rust" "--server") nil nil :mode 'rust-mode)
+(menu-bar-add '("Rust" "Start Language Server") 'lsp-mode
+              '(not (minor-mode-p 'lsp-mode)) :mode 'rust-mode)
+
 (log "rust-mode loaded")
 (provide 'rust-mode)

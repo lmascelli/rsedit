@@ -122,6 +122,7 @@ impl<B: BufferTrait> EditorState<B> {
         let separator_char = window_separator(env);
         let gutter = line_numbers(env);
         let scroll_conservatively = scroll_conservatively(env);
+        let bar_layout = menu_bar_mode(env).then(|| super::menus::BarLayout::read(env));
         // The names out of the registry and its lock given back, then each
         // mode's property read from the environment: no lock of the editor is
         // held while the environment's is taken.
@@ -138,12 +139,11 @@ impl<B: BufferTrait> EditorState<B> {
             .flatten();
         // The findings and the windows, then the buffers: one at a time.
         let findings = self.finding_marks();
-        // The menus, a leaf: their labels copied out, and the request taken.
-        let menu_bar = if menu_bar_mode(env) {
-            self.menus(|menus| menus.bar_labels())
-        } else {
-            Vec::new()
-        };
+        // The modes of the buffer the bar is for, and then the menus, a leaf:
+        // their labels copied out, and the request taken.
+        let menu_bar = bar_layout
+            .map(|layout| self.menu_bar_labels(&layout))
+            .unwrap_or_default();
         let menu = self.take_menu_request();
 
         // A message that has expired is not reported. The state keeps it, and

@@ -1,6 +1,7 @@
-//! The menus as Lisp reaches them: adding entries to the menu bar and to the
-//! context menus, taking them away, reading a menu back as it would open
-//! now, and the commands that open one from the keyboard.
+//! The menus as Lisp reaches them: adding entries to the menu bar, the
+//! editor's or a mode's, and to the context menus, taking them away, reading
+//! a menu back as it would open now, and the commands that open one from the
+//! keyboard.
 //!
 //! Design: `doc/architettura-editor.typ, <menu>`.
 use super::*;
@@ -33,14 +34,37 @@ fn path_arg<B: BufferTrait>(
         .collect()
 }
 
+/// What a mode is given as, to the menus.
+const MODE_EXPECTED: &str = "Symbol naming a mode, or nil";
+
 /// Returns ARG as the mode a context menu belongs to: nil for every buffer.
 fn mode_arg<B: BufferTrait>(
     arg: Option<&ELispExp<B>>,
 ) -> Result<MenuOwner, EvalError<EditorState<B>>> {
-    Ok(MenuOwner::Context(args::optional_name(
-        arg,
-        "Symbol naming a mode, or nil",
-    )?))
+    Ok(MenuOwner::Context(args::optional_name(arg, MODE_EXPECTED)?))
+}
+
+/// The keyword of the menu bar's primitives that names the mode whose menus
+/// they are about.
+const MODE_KEYWORD: &str = ":mode";
+
+/// The positional arguments of a primitive of the menu bar, and the bar
+/// they are about.
+type BarArgs<'a, B> = (&'a [ELispExp<B>], MenuOwner);
+
+/// Splits ARGS, those FUNCTION was called with, into its REQUIRED to
+/// MAX_POSITIONAL positional arguments and the menu bar they are about: the
+/// editor's own, or that of the mode the keyword `:mode` names.
+fn bar_args<'a, B: BufferTrait>(
+    function: &str,
+    args: &'a [ELispExp<B>],
+    required: usize,
+    max_positional: usize,
+) -> Result<BarArgs<'a, B>, EvalError<EditorState<B>>> {
+    let (positional, keywords) =
+        args::with_keywords(function, args, required, max_positional, &[MODE_KEYWORD])?;
+    let mode = args::optional_name(keywords.get(MODE_KEYWORD), MODE_EXPECTED)?;
+    Ok((positional, MenuOwner::Bar(mode)))
 }
 
 /// Returns the error NAME reports for a path that could not take an entry.
@@ -159,28 +183,26 @@ fn menu_as_lisp<B: BufferTrait>(menu: &Menu, ctx: &EditorState<B>) -> ELispExp<B
     )
 }
 
-pub const MENU_BAR_ADD_DOC: &str = "(menu-bar-add PATH COMMAND &optional ENABLE): Add to the menu \
-         bar the entry PATH ends with, a list of labels such as '(\"File\" \"Open...\"), and \
-         return t. The menus on the way are made; an entry already there with the label is \
-         replaced. COMMAND is a command's name or a form; the entry is greyed out while ENABLE, \
-         a function's name or a form, says nil. A label that begins with -- is a separator.\n\n\
+pub const MENU_BAR_ADD_DOC: &str = "(menu-bar-add PATH COMMAND &optional ENABLE &key :mode): Add \
+         to the menu bar the entry PATH ends with, a list of labels such as '(\"File\" \
+         \"Open...\"), and return t. The menus on the way are made; an entry already there with \
+         the label is replaced. COMMAND is a command's name or a form; the entry is greyed out \
+         while ENABLE, a function's name or a form, says nil. A label that begins with -- is a \
+         separator. With :mode, a major or minor mode, the entry is in the menus that mode puts \
+         on the bar of the buffers where it is on, between the editor's menus and Help.\n\n\
          Example:\n\
-         (menu-bar-add '(\"File\" \"Revert\") 'revert-buffer 'buffer-file-name)";
+         (menu-bar-add '(\"File\" \"Revert\") 'revert-buffer 'buffer-file-name)\n\
+         (menu-bar-add '(\"Rust\" \"Build\") '(compile \"cargo build\") nil :mode 'rust-mode)";
 
 primitive!(menu_bar_add, args, _env, ctx, {
-    if !(2..=3).contains(&args.len()) {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
-    let path = path_arg(args.first())?;
+    let (positional, owner) = bar_args("menu-bar-add", args, 2, 3)?;
+    let path = path_arg(positional.first())?;
     add_entry(
         "menu-bar-add",
-        MenuOwner::Bar,
+        owner,
         path,
-        args.get(1),
-        args.get(2),
+        positional.get(1),
+        positional.get(2),
         ctx,
     )
 });
@@ -210,24 +232,19 @@ primitive!(context_menu_add, args, _env, ctx, {
     )
 });
 
-pub const MENU_BAR_ADD_DYNAMIC_DOC: &str = "(menu-bar-add-dynamic PATH FUNCTION): Fill the menu at \
-         PATH in the menu bar, each time it opens, with the entries FUNCTION returns, after those \
-         before it; return t. Each is (LABEL COMMAND), (LABEL COMMAND ENABLED) or a string \
-         beginning with -- for a separator.\n\n\
+pub const MENU_BAR_ADD_DYNAMIC_DOC: &str = "(menu-bar-add-dynamic PATH FUNCTION &key :mode): Fill \
+         the menu at PATH in the menu bar, each time it opens, with the entries FUNCTION returns, \
+         after those before it; return t. Each is (LABEL COMMAND), (LABEL COMMAND ENABLED) or a \
+         string beginning with -- for a separator. With :mode, the menu is one of that mode's, \
+         as for `menu-bar-add'.\n\n\
          Example:\n\
          (defun my-entries () (list (list \"Scratch\" '(switch-to-buffer \"*scratch*\"))))\n\
          (menu-bar-add-dynamic \"Buffers\" 'my-entries)";
 
 primitive!(menu_bar_add_dynamic, args, _env, ctx, {
-    exact_arity(args, 2)?;
-    let path = path_arg(args.first())?;
-    add_generator(
-        "menu-bar-add-dynamic",
-        MenuOwner::Bar,
-        path,
-        args.get(1),
-        ctx,
-    )
+    let (positional, owner) = bar_args("menu-bar-add-dynamic", args, 2, 2)?;
+    let path = path_arg(positional.first())?;
+    add_generator("menu-bar-add-dynamic", owner, path, positional.get(1), ctx)
 });
 
 pub const CONTEXT_MENU_ADD_DYNAMIC_DOC: &str = "(context-menu-add-dynamic MODE PATH FUNCTION): \
@@ -242,16 +259,18 @@ primitive!(context_menu_add_dynamic, args, _env, ctx, {
     add_generator("context-menu-add-dynamic", owner, path, args.get(2), ctx)
 });
 
-pub const MENU_BAR_REMOVE_DOC: &str = "(menu-bar-remove PATH): Take away the entry at PATH in the \
-         menu bar, a menu with everything in it, and return t, or nil when there was none.\n\n\
+pub const MENU_BAR_REMOVE_DOC: &str = "(menu-bar-remove PATH &key :mode): Take away the entry at \
+         PATH in the menu bar, a menu with everything in it, and return t, or nil when there was \
+         none. With :mode, the entry is taken from the menus of that mode.\n\n\
          Example:\n\
-         (menu-bar-remove \"Help\")";
+         (menu-bar-remove \"Help\")\n\
+         (menu-bar-remove \"Dired\" :mode 'dired-mode)";
 
 primitive!(menu_bar_remove, args, _env, ctx, {
-    exact_arity(args, 1)?;
-    let path = path_arg(args.first())?;
+    let (positional, owner) = bar_args("menu-bar-remove", args, 1, 1)?;
+    let path = path_arg(positional.first())?;
     Ok(ELispExp::boolean(
-        ctx.menus_mut(|menus| menus.remove(&MenuOwner::Bar, &path)),
+        ctx.menus_mut(|menus| menus.remove(&owner, &path)),
     ))
 });
 
@@ -269,10 +288,11 @@ primitive!(context_menu_remove, args, _env, ctx, {
 });
 
 pub const MENU_BAR_ITEMS_DOC: &str = "(menu-bar-items): Return the menu bar as it would open now \
-         in the current buffer: a separator as \"--\", an entry as (LABEL COMMAND ENABLED KEYS), \
-         KEYS nil when no key runs COMMAND, and a menu as (LABEL ITEMS).\n\n\
+         in the current buffer, the menus of its modes included: a separator as \"--\", an entry \
+         as (LABEL COMMAND ENABLED KEYS), KEYS nil when no key runs COMMAND, and a menu as \
+         (LABEL ITEMS).\n\n\
          Example:\n\
-         (mapcar 'car (menu-bar-items))   ; (\"File\" \"Buffers\" \"Help\")";
+         (mapcar 'car (menu-bar-items))   ; (\"File\" \"Edit\" \"Buffers\" \"--\" \"Help\")";
 
 primitive!(menu_bar_items, args, env, ctx, {
     exact_arity(args, 0)?;

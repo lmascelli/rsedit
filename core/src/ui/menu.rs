@@ -5,6 +5,18 @@
 //!
 //! Design: `doc/architettura-editor.typ, <menu>`.
 
+/// What a label begins with to be a separator's: in the menus Lisp registers,
+/// and in the labels of a menu bar, [`Menu::bar_labels`] and
+/// [`FrameSnapshot::menu_bar`](crate::FrameSnapshot::menu_bar), where the
+/// line drawn between two groups of menus is written so. No menu's label
+/// begins with it.
+pub const MENU_SEPARATOR: &str = "--";
+
+/// Returns whether LABEL, one of a menu bar's, is a separator's.
+pub fn is_menu_separator(label: &str) -> bool {
+    label.starts_with(MENU_SEPARATOR)
+}
+
 /// A menu resolved for the moment it is opened: what it holds, in order.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Menu {
@@ -21,6 +33,16 @@ impl Menu {
     /// names of the menus of a menu bar.
     pub fn labels(&self) -> Vec<&str> {
         self.items.iter().filter_map(MenuItem::label).collect()
+    }
+
+    /// Returns a label for each of the menu's entries, a separator's written
+    /// as [`MENU_SEPARATOR`]: what a front end draws on a menu bar, the label
+    /// at an index naming the entry at the same index.
+    pub fn bar_labels(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .map(|item| item.label().unwrap_or(MENU_SEPARATOR).to_string())
+            .collect()
     }
 }
 

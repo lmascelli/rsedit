@@ -51,6 +51,10 @@ pub(crate) fn set_minibuffer_content<B: BufferTrait>(ctx: &EditorState<B>, conte
 /// incremental search's included.
 pub(crate) const PROMPT_BUFFER: &str = "*Minibuffer*";
 
+/// The name of the Lisp variable holding the name of the buffer that was
+/// current when the prompt open was opened, and nil while none is.
+pub(crate) const PREVIOUS_BUFFER: &str = "*minibuffer-previous-buffer*";
+
 /// The symbol property a reader of `*minibuffer-read-function*` sets to t
 /// to say that it takes the role of its prompt's buffer as a seventh
 /// argument, ROLE, after those `minibuffer-read` has always passed. Both
@@ -103,13 +107,13 @@ pub(crate) fn reset_prompt_state<B: BufferTrait>(
     env: &Arc<Env<EditorState<B>>>,
     ctx: &EditorState<B>,
 ) {
-    if let Some(ELispExp::String(previous)) = env.get_variable("*minibuffer-previous-buffer*") {
+    if let Some(ELispExp::String(previous)) = env.get_variable(PREVIOUS_BUFFER) {
         ctx.switch_to_buffer(&previous);
     }
     setq(env, "*minibuffer-on-confirm*", ELispExp::nil());
     setq(env, "*minibuffer-on-change*", ELispExp::nil());
     setq(env, "*minibuffer-on-cancel*", ELispExp::nil());
-    setq(env, "*minibuffer-previous-buffer*", ELispExp::nil());
+    setq(env, PREVIOUS_BUFFER, ELispExp::nil());
     setq(env, "*minibuffer-completions*", ELispExp::nil());
     setq(env, MINIBUFFER_COMPLETIONS_FOR, ELispExp::nil());
     setq(env, "*minibuffer-completion-index*", ELispExp::number(0f64));

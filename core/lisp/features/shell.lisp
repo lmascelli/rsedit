@@ -68,6 +68,12 @@ and ends with --- killed ---."
 (define-key 'shell-output-mode "q" 'delete-window)
 (define-key 'shell-output-mode "C-c C-k" 'shell-command-kill)
 
+;; The Shell menu, on the bar of an output: the `menus' page.
+(menu-bar-add '("Shell" "Stop") 'shell-command-kill nil :mode 'shell-output-mode)
+(menu-bar-add '("Shell" "New Command...") 'shell-command nil :mode 'shell-output-mode)
+(menu-bar-add '("Shell" "--close") nil nil :mode 'shell-output-mode)
+(menu-bar-add '("Shell" "Close") 'delete-window nil :mode 'shell-output-mode)
+
 ;; The exit line, coloured by its number: a failure seen at a glance.
 (add-syntax-rule 'shell-output-mode "^--- exited 0 ---$" 'comment)
 (add-syntax-rule 'shell-output-mode "^--- exited [1-9][0-9]* ---$" 'error)

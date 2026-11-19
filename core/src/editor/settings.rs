@@ -197,6 +197,12 @@ pub const SETTINGS: &[Setting] = &[
               way.",
     },
     Setting {
+        name: MENU_BAR_FINAL_ITEMS,
+        doc: "The labels of the editor's menus the menu bar puts at its end, in this order, \
+              after the menus of the modes of the buffer: a list of strings, (\"Help\") to \
+              begin with.",
+    },
+    Setting {
         name: WINDOW_SEPARATOR,
         doc: "The character drawn between windows side by side, as a string; nil draws a \
               space.\n\n\
@@ -479,6 +485,13 @@ pub const MOUSE_MODE: &str = "mouse-mode";
 /// The name of the Lisp variable that shows the menu bar.
 pub const MENU_BAR_MODE: &str = "menu-bar-mode";
 
+/// The name of the Lisp variable listing the editor's menus the menu bar ends
+/// with, after those of the modes.
+pub const MENU_BAR_FINAL_ITEMS: &str = "menu-bar-final-items";
+
+/// What [`MENU_BAR_FINAL_ITEMS`] holds until something changes it.
+pub const DEFAULT_MENU_BAR_FINAL_ITEMS: &[&str] = &["Help"];
+
 /// The name of the property of a mode naming the command a double click on
 /// a line of its buffers runs.
 pub const DOUBLE_CLICK_COMMAND: &str = "double-click-command";
@@ -629,6 +642,23 @@ pub fn mouse_mode<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
 pub fn menu_bar_mode<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
     env.get_variable(MENU_BAR_MODE)
         .is_some_and(|value| !value.is_nil())
+}
+
+/// Returns the labels of the editor's menus the menu bar ends with, after the
+/// menus of the modes of the buffer, as Lisp defines them now: a list of
+/// strings, or one string; anything else in it is passed over.
+pub fn menu_bar_final_items<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Vec<String> {
+    match env.get_variable(MENU_BAR_FINAL_ITEMS) {
+        Some(ELispExp::String(label)) => vec![label.to_string()],
+        Some(value @ (ELispExp::Cons(_) | ELispExp::Form(_))) => value
+            .iter()
+            .filter_map(|item| match item {
+                ELispExp::String(label) => Some(label.to_string()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// Returns how the gutter is set, as Lisp defines it now: the numbers of a

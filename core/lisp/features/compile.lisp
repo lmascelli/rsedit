@@ -346,6 +346,24 @@ it names, and they replace the findings of `compile'."
         (compile command)
         (message "This buffer does not say what command it ran"))))
 
+(defun compile-buffer-file (program)
+  "Save the current buffer when it has changes, and run PROGRAM on its file,
+in the file's directory, as `compile' does: what the Run File entries of the
+menus of the languages run. Nothing, after saying so, where the buffer visits
+no file.
+
+Example:
+  (compile-buffer-file \"python3\")"
+  (let ((file (buffer-file-name)))
+    (if (null file)
+        (message "This buffer visits no file")
+        (progn
+          (if (buffer-modified-p) (save-buffer))
+          (with-directory (file-name-directory file)
+                          (lambda ()
+                            (compile (concat program " "
+                                             (shell-quote-argument file)))))))))
+
 ;; ---------------------------------------------------------------------------
 ;; Keys and faces
 ;; ---------------------------------------------------------------------------
@@ -363,6 +381,19 @@ it names, and they replace the findings of `compile'."
 (define-key 'compilation-mode "q" 'results-quit)
 ;; A compilation is a shell command, and is stopped as one.
 (define-key 'compilation-mode "C-c C-k" 'shell-command-kill)
+
+;; The Compile menu, on the bar of an output: the `menus' page.
+(menu-bar-add '("Compile" "Go to Place") 'compilation-goto nil :mode 'compilation-mode)
+(menu-bar-add '("Compile" "Next Place") 'compilation-next nil :mode 'compilation-mode)
+(menu-bar-add '("Compile" "Previous Place") 'compilation-previous nil
+              :mode 'compilation-mode)
+(menu-bar-add '("Compile" "--run") nil nil :mode 'compilation-mode)
+(menu-bar-add '("Compile" "Run Again") 'compilation-recompile nil
+              :mode 'compilation-mode)
+(menu-bar-add '("Compile" "Stop") 'shell-command-kill nil :mode 'compilation-mode)
+(menu-bar-add '("Compile" "New Build...") 'compile nil :mode 'compilation-mode)
+(menu-bar-add '("Compile" "--quit") nil nil :mode 'compilation-mode)
+(menu-bar-add '("Compile" "Close") 'results-quit nil :mode 'compilation-mode)
 
 ;; The exit line, as in `shell-output-mode': a failure should be visible at a
 ;; glance rather than read.

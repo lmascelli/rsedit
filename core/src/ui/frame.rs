@@ -58,10 +58,14 @@ pub struct FrameSnapshot {
     pub clipboard: Option<String>,
 
     /// The labels of the menu bar's menus, in order, while `menu-bar-mode` is
-    /// on; empty when it is off. Where and how the bar is drawn is the front
-    /// end's: what each menu holds it asks
+    /// on; empty when it is off. They are the editor's menus, then those of
+    /// the major mode of the buffer the bar is for, then those of its minor
+    /// modes, then the menus kept for the end, such as Help: a label that
+    /// [`is_menu_separator`](super::is_menu_separator) stands for the line
+    /// between two of those groups. Where and how the bar is drawn is the
+    /// front end's: what each menu holds it asks
     /// [`EditorState::menu_bar`](crate::EditorState::menu_bar) when one
-    /// opens.
+    /// opens, whose entry at an index is the one labelled at that index.
     pub menu_bar: Vec<String>,
 
     /// A menu the editor asks the front end to open -- after a right click,

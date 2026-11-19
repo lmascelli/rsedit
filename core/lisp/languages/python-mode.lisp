@@ -143,5 +143,21 @@ suggested column. Rust orders the alternatives and handles repeated Tabs."
         levels))))
 
 (add-auto-mode "\\.(py|pyw|pyi)$" 'python-mode)
+
+;; The Python menu, on the bar of a Python buffer: the file run, the tests
+;; of the project, and the comments. The `menus' page.
+(menu-bar-add '("Python" "Run File") '(compile-buffer-file "python3")
+              'buffer-file-name :mode 'python-mode)
+(menu-bar-add '("Python" "Run Tests") '(project-compile-command "python3 -m pytest")
+              nil :mode 'python-mode)
+(menu-bar-add '("Python" "--comment") nil nil :mode 'python-mode)
+(menu-bar-add '("Python" "Comment Line") 'comment-line nil :mode 'python-mode)
+(menu-bar-add '("Python" "Comment Region") 'comment-region 'use-region-p :mode 'python-mode)
+(menu-bar-add '("Python" "Uncomment Region") 'uncomment-region 'use-region-p
+              :mode 'python-mode)
+(menu-bar-add '("Python" "--server") nil nil :mode 'python-mode)
+(menu-bar-add '("Python" "Start Language Server") 'lsp-mode
+              '(not (minor-mode-p 'lsp-mode)) :mode 'python-mode)
+
 (log "python-mode loaded")
 (provide 'python-mode)

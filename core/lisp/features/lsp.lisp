@@ -1570,12 +1570,28 @@ and the changes elsewhere that go with the one chosen, an import, are made."
 (context-menu-add 'lsp-mode "Go Back" 'lsp-go-back)
 (context-menu-add 'lsp-mode "Code Action..." 'lsp-code-action)
 
+;; And the LSP menu, on the bar of the same buffers.
+(menu-bar-add '("LSP" "Find Definition") 'lsp-find-definition nil :mode 'lsp-mode)
+(menu-bar-add '("LSP" "Find References") 'lsp-find-references nil :mode 'lsp-mode)
+(menu-bar-add '("LSP" "Go Back") 'lsp-go-back nil :mode 'lsp-mode)
+(menu-bar-add '("LSP" "Code Action...") 'lsp-code-action nil :mode 'lsp-mode)
+(menu-bar-add '("LSP" "Complete") 'lsp-complete nil :mode 'lsp-mode)
+(menu-bar-add '("LSP" "--server") nil nil :mode 'lsp-mode)
+(menu-bar-add '("LSP" "Restart Server") 'lsp-restart nil :mode 'lsp-mode)
+(menu-bar-add '("LSP" "Shut Down Server") 'lsp-shutdown nil :mode 'lsp-mode)
+(menu-bar-add '("LSP" "Turn Off LSP") '(lsp-mode -1) nil :mode 'lsp-mode)
+
 (define-key 'lsp-locations-mode "<ret>" 'lsp-locations-goto)
 ;; A double click on a line chooses it, as Return does: the `mouse' page.
 (put 'lsp-locations-mode 'double-click-command 'lsp-locations-goto)
 (define-key 'lsp-locations-mode "n" 'next-line)
 (define-key 'lsp-locations-mode "p" 'previous-line)
 (define-key 'lsp-locations-mode "q" 'results-quit)
+
+;; The Locations menu, on the bar of a list of them.
+(menu-bar-add '("Locations" "Go to Location") 'lsp-locations-goto nil
+              :mode 'lsp-locations-mode)
+(menu-bar-add '("Locations" "Close") 'results-quit nil :mode 'lsp-locations-mode)
 
 (add-syntax-rule 'lsp-locations-mode "^--- .* ---$" 'comment)
 

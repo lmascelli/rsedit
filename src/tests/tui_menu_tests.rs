@@ -27,7 +27,7 @@ fn editor() -> (Ctx, Arc<Env<Ctx>>) {
            (menu-bar-add '("File" "Off") '(insert "off") '(not t))
            (menu-bar-add '("File" "Recent" "One") '(insert "one"))
            (menu-bar-add '("File" "Save") '(insert "save"))
-           (menu-bar-add '("Help" "Guide") '(insert "guide"))
+           (menu-bar-add '("Edit" "Guide") '(insert "guide"))
            (menu-bar-add "Run" '(insert "run"))"#,
         &env,
         &ctx,
@@ -95,6 +95,91 @@ fn the_labels_of_the_bar_are_spaced_and_each_owns_its_gaps() {
     assert_eq!(bar_label_at(&labels, 6), Some(1));
     assert_eq!(bar_label_at(&labels, 15), Some(2));
     assert_eq!(bar_label_at(&labels, 40), None);
+}
+
+#[test]
+fn a_separator_of_the_bar_takes_one_cell_and_opens_nothing() {
+    let labels: Vec<String> = ["File", "--", "Rust", "--", "Help"]
+        .map(String::from)
+        .to_vec();
+    assert_eq!(
+        bar_layout(&labels),
+        [(1, 5), (7, 8), (10, 14), (16, 17), (19, 23)]
+    );
+    assert_eq!(bar_label_at(&labels, 6), None, "the gap before the rule");
+    assert_eq!(bar_label_at(&labels, 7), None, "the rule");
+    assert_eq!(bar_label_at(&labels, 9), Some(2));
+    assert_eq!(bar_label_at(&labels, 19), Some(4));
+}
+
+/// The editor of [`editor`], with a mode of its own on in *scratch*, which
+/// puts Mode on the bar, and Help at the end of it: File Edit Run | Mode |
+/// Help.
+fn editor_with_mode_menus() -> (Ctx, Arc<Env<Ctx>>) {
+    let (ctx, env) = editor();
+    run(
+        r#"(menu-bar-add '("Help" "Keys") '(insert "keys"))
+           (make-mode 'menu-test-mode)
+           (set-major-mode 'menu-test-mode)
+           (menu-bar-add '("Mode" "Act") '(insert "act") nil :mode 'menu-test-mode)"#,
+        &env,
+        &ctx,
+    );
+    (ctx, env)
+}
+
+#[test]
+fn the_bar_draws_a_rule_between_the_editors_menus_the_modes_and_help() {
+    let (ctx, env) = editor_with_mode_menus();
+    run("(setq menu-bar-mode t)", &env, &ctx);
+    let frame = ctx.snapshot(&env, SCREEN.0, SCREEN.1 - 1);
+    assert_eq!(
+        frame.menu_bar,
+        ["File", "Edit", "Run", "--", "Mode", "--", "Help"]
+    );
+    let mut out = Vec::new();
+    render_screen(&mut out, &frame, ColorDepth::TrueColor, 1, None).expect("render");
+    let drawn = String::from_utf8(out).expect("UTF-8");
+    let rule = bar_layout(&frame.menu_bar)[3].0 + 1;
+    assert!(drawn.contains(&format!("\u{1b}[1;{rule}H│")), "{drawn:?}");
+    assert!(
+        !drawn.contains(&format!("\u{1b}[1;{rule}H--")),
+        "the separator not drawn as its label"
+    );
+}
+
+#[test]
+fn left_and_right_on_the_bar_step_over_its_rules() {
+    let (ctx, env) = editor_with_mode_menus();
+    let bar = ctx.menu_bar(&env);
+    assert_eq!(
+        bar.bar_labels(),
+        ["File", "Edit", "Run", "--", "Mode", "--", "Help"]
+    );
+    let mut menus = OpenMenus::bar(bar, 2, SCREEN, true);
+    menus.key(&key(KeyCode::Right), SCREEN);
+    assert_eq!(menus.bar_open(), Some(4), "Mode, past the rule");
+    let outcome = menus.key(&key(KeyCode::Enter), SCREEN);
+    act(outcome, &ctx, &env);
+    assert!(text(&ctx, &env).starts_with("act"), "{}", text(&ctx, &env));
+    menus.key(&key(KeyCode::Right), SCREEN);
+    assert_eq!(menus.bar_open(), Some(6), "Help");
+    menus.key(&key(KeyCode::Left), SCREEN);
+    menus.key(&key(KeyCode::Left), SCREEN);
+    assert_eq!(menus.bar_open(), Some(2), "back to Run");
+}
+
+#[test]
+fn a_press_on_a_rule_of_the_bar_opens_nothing() {
+    let (ctx, env) = editor_with_mode_menus();
+    let mut menus = OpenMenus::bar(ctx.menu_bar(&env), 0, SCREEN, false);
+    let labels = menus.bar_labels().expect("opened from the bar");
+    let rule = bar_layout(&labels)[3].0;
+    assert_eq!(menus.click(rule, 0, SCREEN), Outcome::Close);
+    let mut menus = OpenMenus::bar(ctx.menu_bar(&env), 0, SCREEN, false);
+    let mode = bar_layout(&labels)[4].0;
+    assert_eq!(menus.click(mode, 0, SCREEN), Outcome::Stay);
+    assert_eq!(menus.bar_open(), Some(4));
 }
 
 // -----------------------------------------------------------------
@@ -192,11 +277,11 @@ fn a_press_on_another_label_of_the_bar_opens_its_menu() {
     let (ctx, env) = editor();
     let labels = bar_labels(&ctx, &env);
     let mut menus = OpenMenus::bar(ctx.menu_bar(&env), 0, SCREEN, false);
-    let help = bar_layout(&labels)[1].0;
-    assert_eq!(menus.click(help, 0, SCREEN), Outcome::Stay);
+    let edit = bar_layout(&labels)[1].0;
+    assert_eq!(menus.click(edit, 0, SCREEN), Outcome::Stay);
     assert_eq!(menus.bar_open(), Some(1));
     assert_eq!(
-        menus.click(help, 0, SCREEN),
+        menus.click(edit, 0, SCREEN),
         Outcome::Close,
         "the open one's label closes it"
     );
@@ -206,7 +291,7 @@ fn a_press_on_another_label_of_the_bar_opens_its_menu() {
 fn a_box_near_an_edge_opens_where_it_fits() {
     let (ctx, env) = editor();
     let mut menus = OpenMenus::context(ctx.menu_bar(&env), (79, 23), SCREEN, true);
-    // Its three entries, File, Help and Run, in a box that ends on the last
+    // Its three entries, File, Edit and Run, in a box that ends on the last
     // row and column.
     let mut out = Vec::new();
     menus
@@ -255,7 +340,7 @@ fn with_the_bar_the_frame_is_drawn_a_row_down_and_the_bar_on_top() {
     let (ctx, env) = editor();
     run("(setq menu-bar-mode t)", &env, &ctx);
     let frame = ctx.snapshot(&env, SCREEN.0, SCREEN.1 - 1);
-    assert_eq!(frame.menu_bar, ["File", "Help", "Run"]);
+    assert_eq!(frame.menu_bar, ["File", "Edit", "Run"]);
     let mut out = Vec::new();
     render_screen(&mut out, &frame, ColorDepth::TrueColor, 1, None).expect("render");
     let drawn = String::from_utf8(out).expect("UTF-8");

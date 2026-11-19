@@ -356,6 +356,31 @@ once first when some of those have unsaved changes."
 (define-key 'buffer-list-mode "p" 'previous-line)
 (define-key 'buffer-list-mode "q" '(close-buffer buffer-list-buffer-name))
 
+;; The Buffer List menu, on the bar of the list: the `menus' page.
+(menu-bar-add '("Buffer List" "Switch to Buffer") 'buffer-list-select nil
+              :mode 'buffer-list-mode)
+(menu-bar-add '("Buffer List" "Refresh") 'buffer-list-refresh nil
+              :mode 'buffer-list-mode)
+(menu-bar-add '("Buffer List" "--mark") nil nil :mode 'buffer-list-mode)
+(menu-bar-add '("Buffer List" "Mark") 'buffer-list-mark nil :mode 'buffer-list-mode)
+(menu-bar-add '("Buffer List" "Flag to Kill") 'buffer-list-flag-kill nil
+              :mode 'buffer-list-mode)
+(menu-bar-add '("Buffer List" "Flag to Save") 'buffer-list-flag-save nil
+              :mode 'buffer-list-mode)
+(menu-bar-add '("Buffer List" "Unmark") 'buffer-list-unmark nil
+              :mode 'buffer-list-mode)
+(menu-bar-add '("Buffer List" "Unmark All") 'buffer-list-unmark-all nil
+              :mode 'buffer-list-mode)
+(menu-bar-add '("Buffer List" "--do") nil nil :mode 'buffer-list-mode)
+(menu-bar-add '("Buffer List" "Save and Kill Flagged") 'buffer-list-execute nil
+              :mode 'buffer-list-mode)
+(menu-bar-add '("Buffer List" "Save Marked") 'buffer-list-save nil
+              :mode 'buffer-list-mode)
+(menu-bar-add '("Buffer List" "Kill Marked") 'buffer-list-kill nil
+              :mode 'buffer-list-mode)
+(menu-bar-add '("Buffer List" "Close") '(close-buffer buffer-list-buffer-name) nil
+              :mode 'buffer-list-mode)
+
 ;; The marks, coloured as dired's are.
 (define-face 'dired-marked "yellow" nil '("bold"))
 (define-face 'dired-flagged "red" nil '("bold"))

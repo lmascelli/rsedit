@@ -10,7 +10,7 @@ use super::paint::{Grid, colors, paint_view, row};
 use eframe::egui::{self, FontId, Rect, Stroke, Vec2};
 use rsedit_core::{
     BufferTrait, Face, FrameSnapshot, Menu, MenuItem, MenuItemId, MenuKind, MenuRequest,
-    MouseButton, MouseKind,
+    MouseButton, MouseKind, is_menu_separator,
 };
 use std::path::PathBuf;
 
@@ -37,14 +37,15 @@ pub(super) struct EditorApp<'editor, B: BufferTrait> {
     pub(super) clipboard_v_seen: bool,
     /// The frame whose input was read, so that an update is not read twice.
     pub(super) last_input_frame: Option<u64>,
-    /// The labels of the menu bar, as the last frame named them: empty while
-    /// `menu-bar-mode` is off.
+    /// The labels of the menu bar, as the last frame named them, a separator
+    /// between two groups of menus among them: empty while `menu-bar-mode` is
+    /// off.
     pub(super) bar_labels: Vec<String>,
     /// The menu bar resolved when one of its menus opened, kept while one is
     /// open: what the editor answers holds for as long as the menu is seen.
     pub(super) bar_menu: Option<Menu>,
-    /// Where each label of the bar was drawn, for a menu of the bar the keys
-    /// open.
+    /// Where each label of the bar was drawn, a separator's included, for a
+    /// menu of the bar the keys open.
     pub(super) bar_rects: Vec<Rect>,
     /// A menu the editor asked for, open as a popup.
     pub(super) popup: Option<PopupMenu>,
@@ -182,7 +183,8 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
     }
 
     /// Draws the menu bar in UI, its menus resolved when one opens and
-    /// greyed out unless ENABLED, with the − and + buttons at its right end;
+    /// greyed out unless ENABLED, a separator as egui's rule between two
+    /// groups of menus, with the − and + buttons at its right end;
     /// returns the action chosen in it, if any, and by how many sizes the
     /// buttons asked for the text to change.
     pub(super) fn menu_bar(
@@ -200,6 +202,10 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.add_enabled_ui(enabled, |ui| {
                 for (index, label) in labels.iter().enumerate() {
+                    if is_menu_separator(label) {
+                        rects.push(ui.separator().rect);
+                        continue;
+                    }
                     let response = ui.menu_button(label.as_str(), |ui| {
                         any_open = true;
                         let bar = cache.get_or_insert_with(|| core.state.menu_bar(&core.env));

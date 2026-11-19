@@ -5422,8 +5422,9 @@ lock in un ordine fisso e non fa I/O; il disegno avviene dopo, senza lock.
   in corso, se `highlight-all-matches` lo chiede (@evidenziazioni).
 + Copia fuori dal deposito le segnalazioni dei file che le finestre mostrano
   (`finding_marks`), un lock alla volta (@segnalazioni-schermo).
-+ Copia da `menus` le etichette della barra, se `menu-bar-mode` è acceso, e
-  ne prende il menu che il front-end deve aprire (@menu).
++ Copia da `menus` le etichette della barra, se `menu-bar-mode` è acceso,
+  composta per i modi del buffer per cui è, e ne prende il menu che il
+  front-end deve aprire (@menu).
 + Legge l'area messaggi, vuota se il messaggio è scaduto.
 + Con `windows` in scrittura (lo scorrimento può dover seguire il punto) e
   `buffers` in lettura, attraverso `windows_mut_with_buffers`, cerca la
@@ -5448,7 +5449,7 @@ compongono dopo, ognuna nel suo rettangolo, senza margine né riga di stato.
   [`focused_window_id`, `width`, `height`], [Come dice il nome.],
   [`colouring_pending`], [La colorazione non ha finito: ridisegnare tra 40 ms.],
   [`clipboard`], [Testo che il front-end deve mettere negli appunti di sistema, se presente.],
-  [`menu_bar`], [Le etichette dei menu della barra, mentre `menu-bar-mode` è acceso; vuoto altrimenti.],
+  [`menu_bar`], [Le etichette dei menu della barra, mentre `menu-bar-mode` è acceso, un separatore tra due gruppi come `--`; vuoto altrimenti.],
   [`menu`], [Un `MenuRequest`: il menu che il front-end deve aprire, su un frame solo (@menu).],
 )
 
@@ -5957,8 +5958,9 @@ Chiudere la finestra chiede all'editor di uscire come `C-x C-c`, con le domande
 sui buffer modificati.
 
 Sopra la griglia, mentre `menu-bar-mode` è acceso, c'è la barra dei menu di
-egui (`egui::MenuBar`), con le etichette dell'ultima fotografia e, in fondo a
-destra, i pulsanti − e + della dimensione del testo, che Ctrl con la rotella
+egui (`egui::MenuBar`), con le etichette dell'ultima fotografia, un separatore
+come la riga verticale di egui, e, in fondo a destra, i pulsanti − e + della
+dimensione del testo, che Ctrl con la rotella
 cambia anche a barra spenta. La barra si risolve con `menu_bar` quando uno dei
 suoi menu si apre, si tiene finché uno resta aperto, ed è disattivata mentre
 un prompt è aperto. Un clic destro nella griglia passa al core come
@@ -6017,7 +6019,8 @@ descrizione.
   columns: (4.2cm, 1fr),
   header: ([Tipo], [Che cosa è]),
   [`MenuEntry` (`managers/menus.rs`)], [Una voce come il Lisp l'ha registrata: `Item` (etichetta, comando, condizione), `Submenu`, `Separator` (con un'etichetta che comincia con `--`), `Generated` (una funzione che dà le voci all'apertura).],
-  [`Menus` (`managers/menus.rs`)], [Il compartimento: le voci della barra, quelle del menu contestuale di ogni buffer e quelle di ogni modo; le azioni dell'ultima barra e dell'ultimo menu contestuale risolti, con il loro numero; il `MenuRequest` in attesa.],
+  [`Menus` (`managers/menus.rs`)], [Il compartimento: le voci della barra, quelle che ogni modo mette sulla barra, quelle del menu contestuale di ogni buffer e quelle di ogni modo; le azioni dell'ultima barra e dell'ultimo menu contestuale risolti, con il loro numero; il `MenuRequest` in attesa.],
+  [`MenuOwner` (`managers/menus.rs`)], [Di quale menu registrato si parla: `Bar(None)` la barra dell'editor, `Bar(Some(modo))` i menu che un modo mette sulla barra, `Context(None)` e `Context(Some(modo))` il menu contestuale.],
   [`Menu`, `MenuItem` (`ui/menu.rs`)], [Un menu risolto: le etichette, se una voce si può scegliere, i tasti dello stesso comando, un `MenuItemId` per ogni azione.],
   [`MenuItemId`], [Il numero del menu risolto e l'indice dell'azione: l'id di un menu risolto di nuovo dopo non vale più.],
   [`MenuRequest`], [Il menu che l'editor chiede di aprire, di quale genere (`Context`, `Bar { open }`) e dove; viaggia nella fotografia.],
@@ -6049,6 +6052,21 @@ modi minori accesi, nell'ordine in cui si sono accesi, e di ogni buffer, con un
 separatore tra due gruppi; `tidy` toglie i separatori in testa, in coda e
 doppi, e un sottomenu vuoto si toglie, tranne i menu della barra.
 
+La barra si compone per il buffer per cui è: il corrente o, mentre un prompt è
+aperto, quello da cui il prompt si è aperto (`*minibuffer-previous-buffer*`),
+così che la barra non cambi a ogni `M-x`. `Menus::bar_places` mette in fila
+quattro gruppi: i menu dell'editor tranne quelli che `menu-bar-final-items`
+nomina, quelli del modo maggiore, quelli dei modi minori accesi, nell'ordine in
+cui si sono accesi, e infine i menu dell'editor che `menu-bar-final-items`
+nomina, nel suo ordine (all'inizio `("Help")`). Tra due gruppi non vuoti c'è un
+separatore, che la barra disegna: File Edit Buffers │ Rust │ LSP │ Help.
+`bar_for` ne copia fuori le voci per `menu_bar`, che le risolve come ogni altro
+menu; `bar_labels` ne dà le etichette alla fotografia senza valutare Lisp, un
+separatore come `--`, con le stesse regole di `tidy`, così che l'etichetta a un
+indice sia la voce allo stesso indice della barra risolta. Un modo mette i suoi
+menu sulla barra con `menu-bar-add` e la parola chiave `:mode`, che vale anche
+per `menu-bar-add-dynamic` e `menu-bar-remove`.
+
 Un clic destro, in `handle_mouse_event`, esegue `mouse-set-point` se non cade
 nella selezione, poi chiede il menu contestuale nella cella del clic;
 `menu-bar-open` e `context-menu-open` chiedono la barra o il menu al punto, e
@@ -6064,7 +6082,9 @@ pila dei riquadri aperti, il primo quello aperto, gli altri un sottomenu del
 precedente, con la barra risolta quando sono stati aperti da lei; `key` e
 `click` ne dicono il risultato (`Outcome`: restare, chiudere, eseguire un id) e
 il ciclo esegue. Un clic sulla riga della barra, a menu chiusi, risolve la
-barra in quel momento e apre il menu dell'etichetta. La GUI usa i menu di
+barra in quel momento e apre il menu dell'etichetta. Un separatore della
+barra è una riga verticale di una cella, nella faccia `menu-disabled`: un clic
+su di lui non apre nulla, e le frecce lo saltano. La GUI usa i menu di
 egui, come dice @gui.
 
 === Le decisioni <decisioni-menu>
@@ -6112,6 +6132,23 @@ egui, come dice @gui.
   comando esegue il doppio clic con `double-click-command`, come dice
   `tab-width`. Scartati i tasti del mouse nelle keymap, che avrebbero chiesto
   un nuovo genere di tasto a tutto il percorso dei tasti per un uso solo.
++ *I menu dei modi stanno tra quelli dell'editor e Help.* Come in Emacs, con
+  la sua `menu-bar-final-items`: i menu di tutti i buffer prima, quelli che
+  cambiano con il buffer in mezzo, l'aiuto in fondo, dove lo si cerca.
+  Scartato un segnaposto da mettere nella barra con `menu-bar-add`, che
+  avrebbe chiesto a chi la riempie di sapere dove va.
++ *Un separatore tra i gruppi della barra.* Si vede dove finiscono i menu
+  dell'editor e dove cominciano quelli del buffer. Nella fotografia è
+  un'etichetta che comincia con `--`, come i separatori che il Lisp registra,
+  e nessun menu ne ha una così: scartato un tipo nuovo, che avrebbe cambiato
+  ogni front-end per dire una cosa sola.
++ *Un modo dice i suoi menu con una parola chiave.* `:mode` a `menu-bar-add`,
+  `menu-bar-add-dynamic` e `menu-bar-remove`: le stesse primitive per la barra
+  dell'editor e per quella di un modo. Scartate primitive parallele, come
+  quelle del menu contestuale, che avrebbero raddoppiato i nomi da imparare.
++ *Durante un prompt la barra resta quella del buffer di prima.* Il buffer
+  corrente, mentre si scrive in un prompt, è quello del prompt, che non ha
+  menu: la barra perderebbe e ritroverebbe i menu del buffer a ogni `M-x`.
 
 == Le decisioni <decisioni-frame>
 
@@ -8766,17 +8803,24 @@ che non può uscire dalla directory delle pagine.
 
 === `menus` <mod-menus>
 
-Riempie la barra con File, Buffers e Help e il menu contestuale di ogni buffer
-con Undo, Redo, Cut, Copy, Paste e Select All, lega `<f10>` a `menu-bar-open`
+Riempie la barra con File, Edit, Buffers e Help e il menu contestuale di ogni
+buffer con Undo, Redo, Cut, Copy, Paste e Select All, lega `<f10>` a `menu-bar-open`
 e `S-<f10>` a `context-menu-open`, e definisce le facce `menu`,
 `menu-selected` e `menu-disabled` con cui la TUI disegna (@menu).
 
 + *Buffers è una voce generata.* `menus--buffer-entries` elenca i buffer ogni
   volta che il menu si apre, il corrente segnato, il prompt escluso; ogni voce
   è la forma `(switch-to-buffer NOME)`.
++ *Edit non ripete i commenti.* Commentare dipende dal linguaggio: le voci
+  stanno nel menu di ogni modo di un linguaggio, che sa come si commenta.
 + *Le voci dei modi stanno nei loro moduli.* `lsp` aggiunge le sue al menu di
-  `lsp-mode`, e ogni elenco dice il suo `double-click-command` accanto al suo
-  `<ret>`: chi toglie un modulo toglie anche le sue voci.
+  `lsp-mode` e il menu LSP alla barra, ogni elenco (dired, la lista dei
+  buffer, compile, occur, le segnalazioni, l'aiuto, il manuale, i temi,
+  l'uscita della shell) mette il suo menu sulla barra e dice il suo
+  `double-click-command` accanto al suo `<ret>`, e ogni modo di un linguaggio
+  ha il suo menu, con la build alla radice del progetto
+  (`project-compile-command`) o il file eseguito (`compile-buffer-file`): chi
+  toglie un modulo toglie anche le sue voci.
 
 === `occur` <mod-occur>
 

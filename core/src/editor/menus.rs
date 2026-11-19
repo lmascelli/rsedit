@@ -1,11 +1,13 @@
 //! The menus' half of the facade: a menu resolved for the moment it opens --
 //! its conditions evaluated, its generated entries asked for, the keys of its
-//! commands looked up in the current buffer -- the menu a front end is asked
-//! to open, and the entry it chose, run as a key runs its command.
+//! commands looked up in the current buffer -- the menu bar laid out for the
+//! modes of the buffer it is for, the menu a front end is asked to open, and
+//! the entry it chose, run as a key runs its command.
 //!
 //! Design: `doc/architettura-editor.typ, <menu>`.
 
 use super::*;
+use crate::feature::minibuffer::PREVIOUS_BUFFER;
 use crate::managers::{MenuEntry, SEPARATOR_PREFIX};
 use crate::ui::{Menu, MenuItem, MenuItemId, MenuKind, MenuRequest};
 use std::collections::HashMap;
@@ -84,6 +86,28 @@ fn tidy(items: Vec<MenuItem>) -> Vec<MenuItem> {
     tidied
 }
 
+/// What lays the menu bar out, read from Lisp before any of the editor's
+/// locks is taken: the editor's menus kept for its end, and the buffer a
+/// prompt open was opened from, whose menus the bar keeps while the prompt
+/// is open rather than those of the prompt's own buffer.
+pub(crate) struct BarLayout {
+    finals: Vec<String>,
+    origin: Option<String>,
+}
+
+impl BarLayout {
+    /// Returns the layout as Lisp defines it now.
+    pub(crate) fn read<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Self {
+        Self {
+            finals: menu_bar_final_items(env),
+            origin: match env.get_variable(PREVIOUS_BUFFER) {
+                Some(ELispExp::String(name)) => Some(name.to_string()),
+                _ => None,
+            },
+        }
+    }
+}
+
 /// What resolving one menu gathers as it goes: the keys of the commands, and
 /// what each of its actions runs, in the order of their ids.
 struct Resolution<B: BufferTrait> {
@@ -115,6 +139,34 @@ impl<B: BufferTrait> Resolution<B> {
 }
 
 impl<B: BufferTrait> EditorState<B> {
+    /// Returns the major mode, and the minor modes on in the order they were
+    /// turned on, of the buffer the menu bar is for: the one the prompt open
+    /// was opened from, as LAYOUT says, or else the current buffer.
+    fn bar_modes(&self, layout: &BarLayout) -> (String, Vec<String>) {
+        let modes = |buf: &Buffer<B>| {
+            (
+                buf.current_mode.clone(),
+                buf.minor_modes
+                    .iter()
+                    .map(|on| on.name.clone())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        layout
+            .origin
+            .as_deref()
+            .and_then(|name| self.with_buffer(name, modes))
+            .unwrap_or_else(|| self.with_current_buffer(modes))
+    }
+
+    /// Returns the labels of the menu bar, laid out by LAYOUT for the buffer
+    /// it is for, a separator's as `--`: what a frame names, with no Lisp
+    /// evaluated. The buffers, then the menus: one lock at a time.
+    pub(crate) fn menu_bar_labels(&self, layout: &BarLayout) -> Vec<String> {
+        let (major, minors) = self.bar_modes(layout);
+        self.menus(|menus| menus.bar_labels(&major, &minors, &layout.finals))
+    }
+
     /// Returns the shortest keys that run each command in the current buffer,
     /// fewest keys first, then the shortest to write: what a menu shows
     /// beside an entry, as Emacs' menus do.
@@ -262,15 +314,22 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// Returns the menu bar, resolved for the current buffer: each of its
-    /// menus, with what each can do now. The ids of its actions are good
+    /// menus, with what each can do now. The editor's menus come first, then
+    /// those of the buffer's major mode, then those of each minor mode on in
+    /// it, in the order they were turned on, then the editor's menus
+    /// `menu-bar-final-items` names, such as Help: a separator between two of
+    /// those groups, the empty ones left out. The ids of its actions are good
     /// until the menu bar is resolved again.
     ///
     /// Evaluates Lisp -- the conditions, the generated entries -- so it is
     /// asked on the thread that runs the commands, when a menu opens, and not
-    /// at every frame: [`FrameSnapshot::menu_bar`] has the labels a bar shows.
+    /// at every frame: [`FrameSnapshot::menu_bar`] has the labels a bar shows,
+    /// one for each entry of the bar, in the same order.
     pub fn menu_bar(&self, env: &Arc<Env<EditorState<B>>>) -> Menu {
         let _budget = self.begin_command();
-        let entries = self.menus(|menus| menus.bar());
+        let layout = BarLayout::read(env);
+        let (major, minors) = self.bar_modes(&layout);
+        let entries = self.menus(|menus| menus.bar_for(&major, &minors, &layout.finals));
         let mut resolution = self.begin_resolution();
         let items = self.resolve_entries(&entries, env, &mut resolution, true);
         self.menus_mut(|menus| menus.keep_bar_actions(resolution.generation, resolution.actions));

@@ -31,7 +31,9 @@ pub use findings::{BufferFindings, FindingMark, FindingMarks, finding_message_at
 pub(crate) use faces::Registry as FaceRegistry;
 pub use frame::FrameSnapshot;
 pub use gutter::{GutterCell, GutterSpec, LineNumbers};
-pub use menu::{Menu, MenuItem, MenuItemId, MenuKind, MenuRequest};
+pub use menu::{
+    MENU_SEPARATOR, Menu, MenuItem, MenuItemId, MenuKind, MenuRequest, is_menu_separator,
+};
 pub use windows::{
     Division, FloatingWindow, Focus, LayoutNode, Orientation, Prompt, Rect, Side, SplitPath,
     Window, WindowId, WrappedWindow,

@@ -1,8 +1,11 @@
 ;;; menus --- the menu bar and the context menu the editor comes with.
 ;;;
-;;; File, Buffers and Help on the menu bar, Undo, Cut, Copy and Paste in the
+;;; File, Edit, Buffers and Help on the menu bar, the menus of the modes of
+;;; the buffer between Buffers and Help, Undo, Cut, Copy and Paste in the
 ;;; context menu of every buffer, F10 for the bar and S-F10 for the context
-;;; menu from the keyboard, and the faces a terminal draws them in.
+;;; menu from the keyboard, and the faces a terminal draws them in. Each mode
+;;; puts its own menus on the bar in its own module, with `menu-bar-add' and
+;;; :mode.
 ;;; User manual: the `menus' page.
 ;;; Design: `doc/architettura-editor.typ, <mod-menus>`.
 
@@ -22,6 +25,37 @@
 (menu-bar-add '("File" "Close Buffer") 'kill-buffer)
 (menu-bar-add '("File" "--quit") nil)
 (menu-bar-add '("File" "Quit") 'quit)
+
+;; ---------------------------------------------------------------------------
+;; Edit
+;; ---------------------------------------------------------------------------
+
+(menu-bar-add '("Edit" "Undo") 'undo)
+(menu-bar-add '("Edit" "Redo") 'redo)
+(menu-bar-add '("Edit" "--kill") nil)
+(menu-bar-add '("Edit" "Cut") 'kill-region 'use-region-p)
+(menu-bar-add '("Edit" "Copy") 'kill-ring-save 'use-region-p)
+(menu-bar-add '("Edit" "Paste") 'yank)
+(menu-bar-add '("Edit" "Select All") 'mark-whole-buffer)
+(menu-bar-add '("Edit" "--search") nil)
+(menu-bar-add '("Edit" "Find...") 'isearch-forward)
+(menu-bar-add '("Edit" "Find Backward...") 'isearch-backward)
+(menu-bar-add '("Edit" "Find Regexp...") 'isearch-forward-regexp)
+(menu-bar-add '("Edit" "Replace...") 'query-replace)
+(menu-bar-add '("Edit" "Replace Regexp...") 'query-replace-regexp)
+(menu-bar-add '("Edit" "Go to Line...") 'goto-line)
+(menu-bar-add '("Edit" "--change") nil)
+(menu-bar-add '("Edit" "Indent Right") 'indent-rigidly-right)
+(menu-bar-add '("Edit" "Indent Left") 'indent-rigidly-left)
+(menu-bar-add '("Edit" "Fill Paragraph") 'fill-paragraph)
+(menu-bar-add '("Edit" "Duplicate Line") 'duplicate-line)
+(menu-bar-add '("Edit" "Delete Trailing Whitespace") 'delete-trailing-whitespace)
+(menu-bar-add '("Edit" "--macro") nil)
+(menu-bar-add '("Edit" "Keyboard Macro" "Start Recording") 'kmacro-start-macro)
+(menu-bar-add '("Edit" "Keyboard Macro" "Stop Recording") 'kmacro-end-macro)
+(menu-bar-add '("Edit" "Keyboard Macro" "Play") 'kmacro-call-macro)
+(menu-bar-add '("Edit" "--state") nil)
+(menu-bar-add '("Edit" "Toggle Read Only") 'read-only-mode)
 
 ;; ---------------------------------------------------------------------------
 ;; Buffers
@@ -47,6 +81,9 @@ the current one marked."
 ;; ---------------------------------------------------------------------------
 ;; Help
 ;; ---------------------------------------------------------------------------
+;;
+;; At the end of the bar, after the menus of the modes, for it is in
+;; `menu-bar-final-items'.
 
 (menu-bar-add '("Help" "Manual...") 'manpage-prompt)
 (menu-bar-add '("Help" "Guide") '(manpage "guide"))

@@ -10,7 +10,7 @@ use crate::editor::{
     COMPLETION_INVALIDATED_FUNCTION, COMPLETION_READ_FUNCTION, DEFAULT_MINIBUFFER_LINES,
     MINIBUFFER_LINES, MINIBUFFER_READ_FUNCTION,
 };
-use crate::feature::minibuffer::{self, READER_TAKES_ROLE};
+use crate::feature::minibuffer::{self, PREVIOUS_BUFFER, READER_TAKES_ROLE};
 use crate::managers::Recalled;
 use risp::call_callable;
 use std::sync::Arc;
@@ -320,7 +320,7 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
 
     minibuffer::setq(
         &env,
-        "*minibuffer-previous-buffer*",
+        PREVIOUS_BUFFER,
         ELispExp::string(ctx.get_current_buffer_name()),
     );
     minibuffer::setq(&env, "*minibuffer-on-confirm*", args[1].clone());

@@ -366,6 +366,15 @@ string, or nil: the page C-h f and C-h v name."
 (define-key 'manpage-mode "p" 'previous-line)
 (define-key 'manpage-mode "K" 'manpage-at-point)
 
+;; The Manual menu, on the bar of a page of the manual: the `menus' page.
+(menu-bar-add '("Manual" "Page of the Word") 'manpage-at-point nil :mode 'manpage-mode)
+(menu-bar-add '("Manual" "Open Page...") 'manpage-prompt nil :mode 'manpage-mode)
+(menu-bar-add '("Manual" "Look for Pages Again") 'manpage-reindex nil
+              :mode 'manpage-mode)
+(menu-bar-add '("Manual" "--close") nil nil :mode 'manpage-mode)
+(menu-bar-add '("Manual" "Close") '(close-buffer manpage-buffer-name) nil
+              :mode 'manpage-mode)
+
 ;; The headings, recovered from the layout.
 
 ;; A section heading is a word alone at the left margin, in capitals.

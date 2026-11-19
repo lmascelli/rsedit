@@ -120,6 +120,13 @@ directory. The list fills in as the files are read."
 (define-key 'occur-mode "q" 'results-quit)
 (define-key 'occur-mode "C-c C-k" 'grep-kill)
 
+;; The Occur menu, on the bar of a list of matches: the `menus' page.
+(menu-bar-add '("Occur" "Go to Match") 'occur-goto nil :mode 'occur-mode)
+(menu-bar-add '("Occur" "Show Match") 'occur-show nil :mode 'occur-mode)
+(menu-bar-add '("Occur" "--search") nil nil :mode 'occur-mode)
+(menu-bar-add '("Occur" "Stop Search") 'grep-kill nil :mode 'occur-mode)
+(menu-bar-add '("Occur" "Close") 'results-quit nil :mode 'occur-mode)
+
 ;; The header and the trailer, so the shape of the list reads at a glance.
 (add-syntax-rule 'occur-mode "^--- .* ---$" 'comment)
 ;; What each line is in, up to the colon before the line number. A path may

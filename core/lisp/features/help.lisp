@@ -592,6 +592,12 @@ those still bound under the key they were under before."
 ;; A double click on a line chooses it, as Return does: the `mouse' page.
 (put 'help-mode 'double-click-command 'help-follow)
 
+;; The Page menu, on the bar of a help page: the `menus' page.
+(menu-bar-add '("Page" "Follow") 'help-follow nil :mode 'help-mode)
+(menu-bar-add '("Page" "Back") 'help-back nil :mode 'help-mode)
+(menu-bar-add '("Page" "--close") nil nil :mode 'help-mode)
+(menu-bar-add '("Page" "Close") '(close-buffer help-buffer-name) nil :mode 'help-mode)
+
 ;; The shape of a page, recovered from the structure: a heading is a word
 ;; alone at the left margin, and everything a page quotes is `like this'.
 (add-syntax-rule 'help-mode "^[A-Za-z][A-Za-z0-9 -]*$" 'keyword)
