@@ -1051,11 +1051,16 @@ mod tests {
             let case = format!("floating {floating}");
             meta_x(&ctx, &env);
             assert_eq!(vim_state(PROMPT, &env, &ctx), "nil", "{case}");
-            // By hand neither, and it says so.
+            // By hand neither, and it says so, as any minor mode the role
+            // does not admit.
             run("(vim-mode 1)", &env, &ctx);
             assert_eq!(vim_state(PROMPT, &env, &ctx), "nil", "{case}");
+            assert!(!on("vim-mode", PROMPT, &env, &ctx), "{case}");
             let echo = ctx.snapshot(&env, 80, 24).echo_message;
-            assert!(echo.contains("Vim does not go in"), "{case}: {echo}");
+            assert!(
+                echo.contains("vim-mode is not admitted in *Minibuffer*"),
+                "{case}: {echo}"
+            );
             assert!(
                 !text(&run("(buffer-get 'local-keymap)", &env, &ctx)).starts_with("vim-"),
                 "{case}"

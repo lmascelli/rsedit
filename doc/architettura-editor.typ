@@ -3739,7 +3739,7 @@ ognuna `Permit` o `Revoke`.
   [Le richieste automatiche], [`apply_minor_rules` passa oltre un rifiuto senza messaggi, in `initialize_buffer` e in `change_major_mode`. `define-globalized-minor-mode` chiede `minor-mode-refusal` prima di TURN-ON, nei buffer aperti (`NOME--apply`) e in quelli nuovi (`NOME--enter-buffer`); lo spegnimento globale resta in tutti i buffer.],
   [I comandi], [Il comando di `define-minor-mode`, se il ruolo rifiuta, scrive il motivo nell'area dell'eco e salta il corpo; spegnere non è mai rifiutato.],
   [Permessi e revoche], [`EditorState::set_minor_policy` cambia il registro e poi, senza lock, spegne con `minor_mode_off`, e quindi con il suo hook, il modo dove è acceso e non è più ammesso. Un permesso non accende nulla: vale dalla richiesta successiva.],
-  [Le regole distribuite], [`minor-mode--distributed-policy MODE POLICY ROLE` (`allow`, `deny`, `inherit`) scrive l'origine `Distributed`; i moduli la chiamano accanto al modo, prima della macro globale. Oggi sono due permessi: `show-paren-mode` in `prompt` (`show-paren.lisp`) e `visual-line-mode` in `document-view` (`visual-line.lisp`). Gli altri modi distribuiti non hanno regole e valgono quindi solo dove vale `editing`; `lsp-mode` tiene in più i suoi controlli sul file e sul server.],
+  [Le regole distribuite], [`minor-mode--distributed-policy MODE POLICY ROLE` (`allow`, `deny`, `inherit`) scrive l'origine `Distributed`; i moduli la chiamano accanto al modo, prima della macro globale. Oggi sono tre permessi: `show-paren-mode` in `prompt` (`show-paren.lisp`), `visual-line-mode` in `document-view` (`visual-line.lisp`) e `vim-mode` in `view` (`vim.lisp`). Gli altri modi distribuiti non hanno regole e valgono quindi solo dove vale `editing`; `lsp-mode` tiene in più i suoi controlli sul file e sul server.],
 )
 
 Le decisioni:
@@ -3970,6 +3970,7 @@ tiene al massimo `keep`. È il limite che rende la scansione economica:
   [`balance_point(pos)`], [La prima posizione dopo `pos` in cui tutte le liste aperte in `pos` sono chiuse. Non chiede se il buffer è bilanciato alla fine: una funzione chiusa resta chiusa anche se quella sotto è ancora da finire.],
   [`enclosing(pos)`], [La lista più interna che contiene `pos`, per intero (fino alla fine del testo se non è chiusa); `None` al livello zero.],
   [`pairing(point, reach)`], [Il delimitatore accanto al punto, se è codice, con quello che gli corrisponde e se sono dello stesso tipo: per un'apertura, passi finché la pila non torna alla sua profondità; per una chiusura, il frame in cima. Non legge più di `reach` caratteri per parte (@evidenziazioni).],
+  [`pairing_under(at, reach)`], [Lo stesso per il solo carattere in `at`, apertura o chiusura: il carattere sotto un cursore a blocco (@evidenziazioni).],
 )
 
 === Riprendere da metà: `Resume` e il `Prescanner` <riprendere>
@@ -5513,7 +5514,7 @@ disegnano dove il rispettivo modo è acceso. Le corrispondenze le spegne
   header: ([], [Le parentesi], [Le corrispondenze]),
   [Dove], [La sola finestra con il focus, affiancata o flottante.], [Ogni finestra che mostra il buffer cercato.],
   [Che cosa si legge prima dei lock], [Il buffer della finestra con il focus, il suo modo e la tabella sintattica del modo (`paren_table`), se il buffer ha `show-paren-mode` acceso.], [Il `Pattern` della ricerca in corso, o quello della sostituzione con il suo intervallo, da `Runtime` (`search_marks`).],
-  [Dove si calcola], [In `paren_spots`, dentro `windows_mut_with_buffers`, con il buffer letto lì, se è ancora in quel modo e ha ancora `show-paren-mode` acceso: `sexp::pairing` dà un `Pair`, e due `SpotMarks` in posizioni del buffer.], [In `match_highlights`, durante la composizione di ogni foglia, dopo lo scorrimento: `Pattern::scan` sulle sole righe visibili.],
+  [Dove si calcola], [In `paren_spots`, dentro `windows_mut_with_buffers`, con il buffer letto lì, se è ancora in quel modo e ha ancora `show-paren-mode` acceso: `sexp::pairing`, o `sexp::pairing_under` dove il buffer ha la proprietà `block-cursor`, dà un `Pair`, e due `SpotMarks` in posizioni del buffer.], [In `match_highlights`, durante la composizione di ogni foglia, dopo lo scorrimento: `Pattern::scan` sulle sole righe visibili.],
   [Faccia], [`show-paren-match`; `show-paren-mismatch` per due delimitatori di tipo diverso o per uno senza compagno.], [`lazy-highlight`, sotto gli overlay e la regione.],
   [Costo massimo], [`SHOW_PAREN_REACH` caratteri (102 400) per parte del punto.], [Le righe visibili, e al più `MATCHES_PER_WINDOW` (2000) corrispondenze per finestra.],
 )
@@ -5567,6 +5568,14 @@ l'ultimo carattere letto. Per una chiusura il compagno è il `delimiter` del
 frame in cima alla pila, che è quello che la chiusura toglierà, come fa lo
 scanner con ogni chiusura. Il tipo si confronta con i caratteri che
 `SyntaxClass::Open` e `Close` portano.
+
+Dove il buffer ha la proprietà `block-cursor` non nulla (`BLOCK_CURSOR`, in
+`editor/frame.rs`, letta da `paren_spots` sotto il lock del buffer che ha già),
+il cursore è un blocco che sta sul carattere dopo il punto, come in Vim negli
+stati Normal e Visual: `paren_spots` chiede allora `pairing_under`, che guarda
+quel carattere soltanto, apertura o chiusura, con le stesse due funzioni.
+La proprietà la mette e la toglie `vim` (@mod-vim) a ogni cambio di stato;
+la GUI la legge per disegnare il blocco.
 
 La sessione di ricerca tiene il modello compilato (`Isearch::pattern`), che
 `isearch-update` scrive a ogni tasto: `None` quando non c'è nulla di scritto,
@@ -5623,6 +5632,14 @@ Le decisioni:
   avere.
 + *Una regexp vuota non si disegna.* Una corrispondenza vuota, come quella di
   `x*` tra due caratteri, non ha un carattere su cui stare.
++ *Sotto un blocco, il carattere sotto.* Un blocco copre il carattere dopo il
+  punto: la chiusura prima del punto gli sta accanto, e accenderla direbbe
+  che appartiene a ciò su cui il cursore non è. Si accoppia solo il carattere
+  sotto, come fa il `matchparen` di Vim in Normal. Chi lo chiede è il buffer,
+  con una proprietà, e non `vim-mode`: il nucleo non sa nulla di Vim, e un
+  altro modulo modale può chiedere lo stesso. Scartato: spostare il punto
+  avanti di uno per la durata della ricerca quando sotto c'è una chiusura,
+  che altrove accenderebbe ancora la chiusura accanto al blocco.
 
 == Le segnalazioni sullo schermo <segnalazioni-schermo>
 
@@ -9029,13 +9046,18 @@ modo maggiore tramite le regole comuni dei modi minori.
 
 === `vim` <mod-vim>
 
-L'editing modale di Vim, in un modulo. `M-x vim-mode` lo accende in un buffer,
+L'editing modale di Vim, in un modulo. `vim-mode` è un modo minore
+(@modi-minori), senza etichetta: `M-x vim-mode` lo accende in un buffer,
 `global-vim-mode` in ogni buffer adatto.
 
 Uno stato --- Normal, Insert, Replace, Visual --- è una keymap locale
-(`vim-normal-map`, `vim-insert-map`, `vim-replace-map`), consultata prima della
-keymap del modo; la keymap locale che il buffer aveva si salva e si rende
-quando Vim si spegne. In Normal ogni tasto
+(`vim-normal-map`, `vim-insert-map`, `vim-replace-map`), consultata prima delle
+keymap dei modi minori e di quella del modo; la keymap locale che il buffer
+aveva si salva e si rende quando Vim si spegne. Accensione e spegnimento passano
+dal `minor-mode-hook` del modo (`vim--toggled`): chiunque accenda il modo --- il
+comando, `minor-mode-on`, una regola di `minor-mode-enable`, le regole di Vim
+--- è lo hook a mettere lo stato Normal (`vim--setup`) o a toglierlo
+(`vim--teardown`), e uno stato che c'è già resta. In Normal ogni tasto
 stampabile è legato a `(vim--key TASTO)`, così nessun tasto scrive testo:
 `vim--dispatch` interpreta il conteggio, l'operatore, il registro e il tasto
 in attesa, che stanno in proprietà del buffer. Un movimento restituisce
@@ -9049,26 +9071,55 @@ Non copia il buffer: entrare e uscire costa quanto ciò che si è scritto, in un
 file di due megabyte come in uno di una riga. Il cambiamento è cercato nel solo
 tratto toccato, così una `a` scritta davanti a un'altra `a` è dove la si è
 scritta, e `.` la scrive lì; i comandi della sessione si
-uniscono in un passo di undo (`undo-join` su `pre-command-hook`). Replace fa lo
-stesso. I comandi `:` leggono la riga con `minibuffer-read` e passano dai comandi dell'editor; la
-ricerca usa lo scanner di espressioni regolari dell'editor, in offset di
-caratteri.
+uniscono in un passo di undo (`undo-join` nel `pre-command-hook` di `vim-mode`).
+Replace fa lo stesso. I comandi `:` leggono la riga con `minibuffer-read` e
+passano dai comandi dell'editor; la ricerca usa lo scanner di espressioni
+regolari dell'editor, in offset di caratteri.
 
-+ *Uno stato è una keymap locale.* Sintassi, indentazione, hook del modo e
-  prompt restano del loro modo, sotto. Una keymap locale che un hook di modo
-  installa mentre Vim è acceso si salva, e torna quando Vim si spegne.
+Negli stati Normal e Visual il cursore è un blocco sul carattere dopo il punto:
+`vim--set-state` mette la proprietà `block-cursor` del buffer, che
+`show-paren-mode` legge per accoppiare la parentesi sotto il blocco
+(@evidenziazioni) e la GUI per disegnarlo; Insert e Replace la tolgono, e
+`vim--teardown` con loro.
+
++ *Un modo minore.* Elenco dei modi accesi, `minor-mode-p`, `C-h M`, hook che
+  girano solo dove Vim è acceso (`pre-command-hook` e `post-command-hook` sono
+  di `vim-mode`, non globali), e le regole dei ruoli di `MinorPolicies`
+  (@ruoli): sono già dei modi minori, e Vim li prende così com'è. Il comando
+  è quello di `define-minor-mode`; il suo corpo ricorda soltanto la scelta
+  fatta a mano. Scartato: un modo minore che sia lo stato, cioè la sua keymap
+  al posto di quella locale (vedi sotto).
++ *Uno stato è ancora una keymap locale.* Sintassi, indentazione, hook del modo
+  e prompt restano del loro modo, sotto. La keymap locale sta sopra i modi
+  minori: un modo minore acceso dopo Vim che lega un tasto vincerebbe su
+  Normal, se lo stato fosse la keymap di `vim-mode`. Quella keymap resta per
+  i tasti di ogni stato, sotto la keymap dello stato. Una keymap locale che
+  un hook di modo installa mentre Vim è acceso si salva, e torna quando Vim si
+  spegne.
++ *Il cambio di modo maggiore.* `change_major_mode` spegne i modi minori
+  senza hook, e lo stato resta nelle proprietà del buffer:
+  `vim--after-major-mode`, su `after-change-major-mode-hook`, riaccende il
+  modo dove le regole lo vogliono, e lo hook ritrova lo stato com'era, una
+  sessione di Insert compresa; dove non lo vogliono, `vim--teardown` toglie
+  ciò che ne resta. Un `vim-mode` che il modo nuovo ha già acceso, con
+  `minor-mode-enable` o da un suo hook, resta, salvo in un buffer spento a
+  mano: la proprietà `vim-mode-asked` ricorda quel modo, e le regole lo
+  contano finché il buffer lo tiene, anche in `vim-mode-refresh` e dopo
+  `C-x C-w`.
 + *Condiviso e per buffer.* Registri, ricerche, `.` e macro sono dell'editor
   intero, come in Vim; lo stato modale è di ogni buffer.
 + *Quando accendersi.* `global-vim-mode`, `vim-mode-modes`, i modi esclusi ---
   le liste e i buffer dell'editor --- e `vim-mode-predicate` decidono; una
   scelta fatta a mano in un buffer resta finché `vim-mode-auto` non la rende.
   Le regole si riapplicano quando cambia il modo maggiore o il file visitato.
+  `global-vim-mode` non è di `define-globalized-minor-mode`: spento, lascia
+  acceso ciò che si è acceso a mano e i modi di `vim-mode-modes`.
 + *Il ruolo come ambito.* L'accensione automatica vale solo dove il ruolo è
-  `editing` o ne deriva (@ruoli); liste e predicato dell'utente restringono
-  ancora. A mano Vim va anche in una vista, ma non in un `prompt` o in una
-  `completion`, né in un loro derivato: `vim--enable` non installa la keymap
-  e `vim-mode` lo dice. Vim non è un modo minore, quindi questo controllo è
-  suo e non di `MinorPolicies`.
+  `editing` o ne deriva; a mano vale dove `MinorPolicies` ammette `vim-mode`.
+  Il modulo dà un permesso in `view`, e quindi in `document-view`; `prompt` e
+  `completion`, e i loro derivati, non hanno regole e restano chiusi. Il
+  controllo è quello di ogni modo minore, in `minor_mode_on`: il comando dice
+  perché, e `set-minor-mode-policy` lo cambia.
 + *I comandi `:` passano dall'editor.* `:w` e `:q` sono `save-buffer` e
   `quit`, con le loro domande.
 + *Un file solo.* Una funzionalità, una pagina, una feature: divisa in più

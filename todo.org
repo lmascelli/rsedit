@@ -2,17 +2,7 @@
 #+title: rsedit
 
 * Work in progress.
-
-Minor mode
-
-Vim mode
-- vim-mode come minor mode
-- Parentesi in vim mode: nel normal state accoppiare la ) sotto il cursore a blocco.
-
-Comandi di testo
-- sort-lines, spostare una riga su o giù, align-regexp.
-- Registri e segnalibri: C-x r è libero per questo.
-- Narrowing (C-x n n).
+--------------------------------------------------
 
 * Fixes todo
 --------------------------------------------------
@@ -33,24 +23,13 @@ Comandi di testo
 - [ ] gestione dei file molto grandi.
 - [ ] possibilità di connettersi via SSH e lavorare su file remoti (probabilmente un plugin
       nativo una volta che la feature è disponibile in Risp)
+- [ ] Comandi di testo
+      - sort-lines, spostare una riga su o giù, align-regexp.
+      - Registri e segnalibri: C-x r è libero per questo.
+      - Narrowing (C-x n n).
 - [ ] Popup dei tasti dopo un prefisso (come which-key), sopra il C-x C-h che c’è già.
 - [ ] Altri linguaggi: Markdown, JSON, YAML, Zig, MATLAB.
-- [ ] Mouse support. Questa deve comprendere i seguenti punti:
-      - dove possibile gli elementi di una lista devono poter essere selezionati con un
-        doppio click, ad esempio in occur mode
-      - la possibilità di avere un menu col tasto destro deve essere fornita come facility
-        comune a chi implementa una mode, un luogo dove registrare delle coppie di valori
-        (voce menu, azione) o (voce menu, sottomenu) o separatore. Il rendering di questo deve
-        essere affidato a chi implementa una gui o tui. Un esempio sono le voci copia ed incolla
-        su una region o le azioni dell'lsp
-      - una barra dei menu, funziona in maniera simile alla dialog del tasto destro del mouse.
-        un'api per registrare le voci deve essere fornita dall'editor come la struttura dove
-        registrarle ma nessuna renderizzazione forzata. La Tui può implementarla come una
-        split window e la GUI con gli strumenti propri di una GUI. Voci di default della
-        barra dei menu sono File, Buffers ed Help.
-
-
-------------------------------------------------------------
+--------------------------------------------------
 
 
 PROMPT 0 — CONTRATTO COMUNE

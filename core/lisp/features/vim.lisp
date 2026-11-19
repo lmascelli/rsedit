@@ -1,7 +1,7 @@
 ;;; vim --- modal editing, as Vim does it.
 ;;;
-;;; M-x vim-mode gives a buffer Vim's keys, and global-vim-mode gives them to
-;;; every buffer that suits. User manual: the `vim' page.
+;;; The minor mode `vim-mode' gives a buffer Vim's keys, and global-vim-mode
+;;; gives them to every buffer that suits. User manual: the `vim' page.
 ;;; Design: `doc/architettura-editor.typ, <mod-vim>`.
 
 (require 'commands)
@@ -122,11 +122,18 @@ it, unless the line is empty."
 rest of a command."
   (dolist (key '(vim-count vim-operator vim-op-count vim-pending vim-register vim-object))
     (buffer-put key nil)))
+(defun vim--state-keymap (state)
+  "The keymap of Vim state STATE: Insert's, Replace's, or Normal's, which the
+Visual states share."
+  (cond ((eq state 'insert) 'vim-insert-map) ((eq state 'replace) 'vim-replace-map) (t 'vim-normal-map)))
 (defun vim--set-state (state)
-  "Put this buffer in Vim state STATE, with its keymap and its name on the
-status line."
+  "Put this buffer in Vim state STATE, with its keymap, its cursor and its
+name on the status line."
   (buffer-put 'vim-state state)
-  (set-local-keymap (cond ((eq state 'insert) 'vim-insert-map) ((eq state 'replace) 'vim-replace-map) (t 'vim-normal-map)))
+  (set-local-keymap (vim--state-keymap state))
+  ;; A block on a character but where text is typed, between two:
+  ;; show-paren-mode pairs the bracket under the block.
+  (buffer-put 'block-cursor (not (member state '(insert replace))))
   (buffer-put 'mode-line-state
               (cond ((eq state 'insert) "INSERT")
                     ((eq state 'replace) "REPLACE")
@@ -136,73 +143,71 @@ status line."
                     (t "NORMAL")))
   (set-echo-message (concat "-- " (buffer-get 'mode-line-state) " --")))
 
-(defun vim--enable ()
-  "Turn Vim on in this buffer; when it is on, keep its state, and put its
-keymap back if a mode replaced it. Nothing in a prompt or a list of
-candidates: see `vim--keymap-allowed-p'."
-  (cond
-   ((not (vim--keymap-allowed-p)) nil)
-   ((vim--state)
-    (let ((map (cond ((eq (vim--state) 'insert) 'vim-insert-map)
-                     ((eq (vim--state) 'replace) 'vim-replace-map)
-                     (t 'vim-normal-map))))
-      ;; A major-mode hook may have installed a new underlying local map.
-      (when (not (eq (buffer-get 'local-keymap) map))
+(define-minor-mode vim-mode nil
+  "Give the current buffer Vim's keys, in Normal state, or take them away:
+on, off, or the other way with no argument. With a prefix argument, 0, a
+negative number or the - of C-u - turns them off, and anything else on; on
+already, the buffer keeps its state, an Insert session or a command half
+typed. A buffer turned on or off so keeps its choice whatever the automatic
+rules say, until `vim-mode-auto'. A view can have it; a prompt and a list of
+candidates cannot, unless a rule of `set-minor-mode-policy' permits it.
+
+Example:
+  (vim-mode 1)"
+  (buffer-put 'vim-mode-override (if (minor-mode-p 'vim-mode) 'enabled 'disabled))
+  ;; On already: the keymap back, if a mode replaced it.
+  (when (minor-mode-p 'vim-mode) (vim--setup)))
+;; The rules of the roles: see the `modes' page, BUFFER ROLES. A view has
+;; Vim by hand, a text to read with it; a prompt and a list of candidates,
+;; whose keys answer a question, have no rule and so never.
+(minor-mode--distributed-policy 'vim-mode 'allow 'view)
+
+(defun vim--setup ()
+  "Give this buffer Vim's keys, in Normal state; when it has them, keep its
+state, and put its keymap back if a mode replaced it."
+  (if (vim--state)
+      (let ((map (vim--state-keymap (vim--state))))
+        ;; A major-mode hook may have installed a new underlying local map.
+        (when (not (eq (buffer-get 'local-keymap) map))
+          (buffer-put 'vim-saved-keymap (buffer-get 'local-keymap))
+          (set-local-keymap map)))
+      (progn
         (buffer-put 'vim-saved-keymap (buffer-get 'local-keymap))
-        (set-local-keymap map))))
-   (t
-    (buffer-put 'vim-saved-keymap (buffer-get 'local-keymap))
-    (buffer-put 'vim-saved-mode-line-state (buffer-get 'mode-line-state))
-    (vim--reset) (deactivate-mark) (vim--set-state 'normal) (vim--clamp))))
-(defun vim--disable ()
-  "Turn Vim off in this buffer, giving back the keymap and the status line it
-had."
+        (buffer-put 'vim-saved-mode-line-state (buffer-get 'mode-line-state))
+        (vim--reset) (deactivate-mark) (vim--set-state 'normal) (vim--clamp))))
+(defun vim--teardown ()
+  "Take Vim's keys away from this buffer, giving back the keymap and the
+status line it had; an Insert session ends as Escape ends it."
   (when (vim--state)
     (when (member (vim--state) '(insert replace)) (vim--finish-insert))
     (when (member (buffer-get 'local-keymap) '(vim-normal-map vim-insert-map vim-replace-map))
       (set-local-keymap (buffer-get 'vim-saved-keymap)))
     (buffer-put 'mode-line-state (buffer-get 'vim-saved-mode-line-state))
-    (dolist (key '(vim-state vim-anchor vim-insert-watching vim-insert-action vim-insert-start))
+    (dolist (key '(vim-state vim-anchor vim-insert-watching vim-insert-action vim-insert-start block-cursor))
       (buffer-put key nil))
     (remove-overlays 'vim-selection)
-    (vim--reset) (deactivate-mark) (set-echo-message "Vim mode disabled")))
+    (vim--reset) (deactivate-mark)))
+(defun vim--toggled ()
+  "Set Vim up in this buffer as `vim-mode' comes on, and take it away as the
+mode goes off: the mode's own minor-mode-hook."
+  (if (minor-mode-p 'vim-mode) (vim--setup) (vim--teardown)))
 
-(defun vim--turn-on-p (enabled on)
-  "Whether ENABLED, given to a mode that is ON now, leaves it on."
-  ;; ENABLED is a value from Lisp or the raw prefix argument: nil toggles,
-  ;; and - is what C-u - gives, minus one as in Emacs.
-  (cond ((null enabled) (not on))
-        ((eq enabled '-) nil)
-        ((numberp enabled) (> enabled 0))
-        (t t)))
-(defun vim--keymap-allowed-p ()
-  "Non-nil unless the current buffer is a prompt or a list of candidates, by
-its role or one it derives from: their keys answer a question, and a Vim
-keymap in front of them would leave nothing to answer it with."
-  (let ((role (buffer-role)))
-    (not (or (buffer-role-derived-p role 'prompt)
-             (buffer-role-derived-p role 'completion)))))
-(defcommand vim-mode (&optional enabled) ("P")
-  "Turn Vim's keys on in this buffer, or off when they are on. With ENABLED,
-or a prefix argument, 0, a negative number or the - of C-u - turns them off,
-and anything else on. A buffer turned on or off so keeps its choice whatever
-the automatic rules say, until `vim-mode-auto'. A view can have them by hand;
-a prompt and a list of candidates cannot."
-  (if (vim--turn-on-p enabled (vim--state))
-      (if (vim--keymap-allowed-p)
-          (progn (buffer-put 'vim-mode-override 'enabled) (vim--enable))
-          (set-echo-message
-           (concat "Vim does not go in " (current-buffer) ", a buffer of role "
-                   (symbol-name (buffer-role)))))
-      (vim-mode-disable)))
+(defun vim--enable ()
+  "Turn `vim-mode' on in this buffer, keeping the state it had, where its
+role admits the mode; where it does not, take away what is left of Vim."
+  (cond ((minor-mode-p 'vim-mode) (vim--setup))
+        ((not (minor-mode-on 'vim-mode)) (vim--teardown))))
+(defun vim--disable ()
+  "Turn `vim-mode' off in this buffer, or take away what is left of Vim where
+a new major mode turned the mode off without its hook."
+  (if (minor-mode-p 'vim-mode) (minor-mode-off 'vim-mode) (vim--teardown)))
 (defcommand vim-mode-enable () nil
   "Turn Vim on in this buffer; when it is on already, keep its state, an
 Insert session or a command half typed."
-  (vim-mode t))
+  (vim-mode 1))
 (defcommand vim-mode-disable () nil
   "Turn Vim off in this buffer, and give it back the keymap it had before."
-  (buffer-put 'vim-mode-override 'disabled)
-  (vim--disable))
+  (vim-mode 0))
 (defun vim-default-buffer-p ()
   "Non-nil when the current buffer suits automatic Vim: it visits a file, is
 *scratch*, or has a name that does not start with a *, as the editor's own
@@ -212,10 +217,13 @@ buffers do. The first value of `vim-mode-predicate'."
 (defun vim--apply-policy ()
   "Turn Vim on or off in this buffer as the automatic rules say, unless it
 was turned on or off by hand. The rules reach only a buffer whose role is
-editing or derives from it."
+editing or derives from it, but for one whose major mode asked for
+`vim-mode' as the buffer got it."
   (let ((preference (buffer-get 'vim-mode-override)))
     (cond ((eq preference 'enabled) (vim--enable))
           ((eq preference 'disabled) (vim--disable))
+          ;; As `minor-mode-enable' would have it, while the mode lasts.
+          ((equal (buffer-get 'vim-mode-asked) (major-mode)) (vim--enable))
           ;; Automatically only where something is edited; the user's
           ;; lists and predicate narrow that further.
           ((and (buffer-role-derived-p (buffer-role) 'editing)
@@ -226,6 +234,17 @@ editing or derives from it."
                 (or (not vim-mode-predicate) (funcall vim-mode-predicate)))
            (vim--enable))
           (t (vim--disable)))))
+(defun vim--after-major-mode ()
+  "Apply the automatic rules to this buffer, which has just got its major
+mode. `vim-mode' on by now was asked for by that mode, with
+`minor-mode-enable' or from a hook of its own: it stays, while the buffer
+keeps the mode, unless the buffer was turned off by hand."
+  ;; A new major mode turns the minor modes off, so on here is on anew.
+  (buffer-put 'vim-mode-asked
+              (when (and (minor-mode-p 'vim-mode)
+                         (not (eq (buffer-get 'vim-mode-override) 'disabled)))
+                (major-mode)))
+  (vim--apply-policy))
 (defcommand vim-mode-refresh () nil
   "Apply the automatic rules again to every buffer, after `global-vim-mode',
 `vim-mode-modes', `vim-mode-excluded-modes' or `vim-mode-predicate' has
@@ -244,7 +263,12 @@ come, or off when it is on. With ENABLED, or a prefix argument, 0, a negative
 number or the - of C-u - turns it off, and anything else on. A buffer turned
 on by hand, and one whose major mode is in `vim-mode-modes', keeps Vim either
 way."
-  (setq global-vim-mode (vim--turn-on-p enabled global-vim-mode))
+  ;; ENABLED as `minor-mode-wanted-p' reads it, for a mode that is not one
+  ;; buffer's.
+  (setq global-vim-mode (cond ((null enabled) (not global-vim-mode))
+                              ((eq enabled '-) nil)
+                              ((numberp enabled) (> enabled 0))
+                              (t t)))
   (vim-mode-refresh)
   global-vim-mode)
 (defcommand vim-normal-state () nil
@@ -1347,9 +1371,12 @@ names."
 (define-key 'vim-insert-map "C-w" 'backward-kill-word)
 (define-key 'vim-insert-map "C-h" 'delete-backward-char)
 (define-key 'vim-insert-map "C-u" '(delete-region (vim--bol (point)) (point)))
-(add-hook nil "pre-command-hook" 'vim--pre-command)
-(add-hook nil "post-command-hook" 'vim--post-command)
-(add-hook nil "after-change-major-mode-hook" 'vim--apply-policy)
+;; Vim's own, which run only in the buffers where it is on.
+(add-hook 'vim-mode "minor-mode-hook" 'vim--toggled)
+(add-hook 'vim-mode "pre-command-hook" 'vim--pre-command)
+(add-hook 'vim-mode "post-command-hook" 'vim--post-command)
+;; Every buffer's, for the automatic rules.
+(add-hook nil "after-change-major-mode-hook" 'vim--after-major-mode)
 (add-hook nil "after-set-visited-file-name-hook" 'vim--apply-policy)
 (log "End of vim.lisp")
 (provide 'vim)

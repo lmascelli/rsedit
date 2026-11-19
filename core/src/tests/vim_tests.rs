@@ -1271,4 +1271,252 @@ mod tests {
         let expected = run("'(0 7 \"X X\" \"one two\")", &env, &ctx);
         assert_eq!(change, expected);
     }
+
+    // ----------------------------------------------------------------
+    // A minor mode
+    // ----------------------------------------------------------------
+
+    /// What SOURCE evaluates to, as a name: a symbol or a string, nil as
+    /// "nil".
+    fn name(source: &str, ctx: &Ctx, env: &Arc<Env<Ctx>>) -> String {
+        match run(source, env, ctx) {
+            LispExp::Symbol(name) => name.to_string(),
+            LispExp::String(text) => text.to_string(),
+            other if other.is_nil() => "nil".into(),
+            other => format!("{other:?}"),
+        }
+    }
+    fn truthy(source: &str, ctx: &Ctx, env: &Arc<Env<Ctx>>) -> bool {
+        run(source, env, ctx).is_truthy()
+    }
+
+    #[test]
+    fn vim_mode_is_a_minor_mode_whose_hook_sets_vim_up_and_takes_it_away() {
+        let (ctx, env) = editor("abc");
+        assert!(truthy("(minor-mode-p 'vim-mode)", &ctx, &env));
+        assert_eq!(
+            name("(buffer-get 'local-keymap)", &ctx, &env),
+            "vim-normal-map"
+        );
+        assert!(truthy("(buffer-get 'block-cursor)", &ctx, &env));
+        run("(vim-mode -1)", &env, &ctx);
+        assert!(!truthy("(minor-mode-p 'vim-mode)", &ctx, &env));
+        assert_eq!(name("(buffer-get 'vim-state)", &ctx, &env), "nil");
+        assert_eq!(name("(buffer-get 'local-keymap)", &ctx, &env), "nil");
+        assert!(!truthy("(buffer-get 'block-cursor)", &ctx, &env));
+        assert!(
+            ctx.snapshot(&env, 80, 24)
+                .echo_message
+                .contains("vim-mode off"),
+            "it says so, as every minor mode's command does"
+        );
+        keys(&ctx, &env, "l");
+        assert_eq!(text(&ctx), "labc", "the key types again");
+        // From Lisp as any minor mode, with the same hook.
+        run("(minor-mode-on 'vim-mode)", &env, &ctx);
+        assert_eq!(name("(buffer-get 'vim-state)", &ctx, &env), "normal");
+        keys(&ctx, &env, "0x");
+        assert_eq!(text(&ctx), "abc");
+        run("(minor-mode-off 'vim-mode)", &env, &ctx);
+        assert_eq!(name("(buffer-get 'vim-state)", &ctx, &env), "nil");
+        assert_eq!(name("(buffer-get 'local-keymap)", &ctx, &env), "nil");
+    }
+
+    #[test]
+    fn turned_on_again_vim_keeps_the_command_half_typed() {
+        let (ctx, env) = editor("one two");
+        keys(&ctx, &env, "d");
+        run("(vim-mode-enable)", &env, &ctx);
+        keys(&ctx, &env, "w");
+        assert_eq!(text(&ctx), "two");
+    }
+
+    #[test]
+    fn a_new_major_mode_keeps_vim_on_by_hand_with_its_state() {
+        let (ctx, env) = editor("abc");
+        run("(make-mode 'prose-mode)", &env, &ctx);
+        keys(&ctx, &env, "i");
+        run("(set-major-mode 'prose-mode)", &env, &ctx);
+        assert!(truthy("(minor-mode-p 'vim-mode)", &ctx, &env));
+        assert_eq!(name("(buffer-get 'vim-state)", &ctx, &env), "insert");
+        assert_eq!(
+            name("(buffer-get 'local-keymap)", &ctx, &env),
+            "vim-insert-map"
+        );
+        assert!(!truthy("(buffer-get 'block-cursor)", &ctx, &env));
+        keys(&ctx, &env, "x");
+        esc(&ctx, &env);
+        assert_eq!(text(&ctx), "xabc");
+        assert_eq!(name("(buffer-get 'vim-state)", &ctx, &env), "normal");
+    }
+
+    #[test]
+    fn minor_mode_enable_asks_for_vim_in_the_buffers_of_a_major_mode() {
+        let (ctx, env) = editor("abc");
+        // Back to the automatic rules, which want it nowhere here.
+        run("(vim-mode-auto)", &env, &ctx);
+        assert!(!truthy("(minor-mode-p 'vim-mode)", &ctx, &env));
+        run(
+            r#"(make-mode 'prose-mode)
+               (minor-mode-enable 'vim-mode 'prose-mode)
+               (buffer-create "notes" 'prose-mode)
+               (buffer-create "other")"#,
+            &env,
+            &ctx,
+        );
+        assert!(truthy(r#"(minor-mode-p 'vim-mode "notes")"#, &ctx, &env));
+        assert_eq!(
+            name(r#"(buffer-get 'vim-state "notes")"#, &ctx, &env),
+            "normal"
+        );
+        assert_eq!(
+            name(r#"(buffer-get 'vim-state "other")"#, &ctx, &env),
+            "nil"
+        );
+        // vim's own rules, applied again, leave what the mode asked for, and
+        // the state it is in.
+        run(
+            r#"(with-current-buffer "notes" (lambda () (vim--dispatch "i")))
+               (vim-mode-refresh)"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            name(r#"(buffer-get 'vim-state "notes")"#, &ctx, &env),
+            "insert"
+        );
+        // Another mode, which asks for nothing, is the rules' alone.
+        run(
+            r#"(with-current-buffer "notes"
+                 (lambda () (vim-normal-state) (set-major-mode 'fundamental-mode)))"#,
+            &env,
+            &ctx,
+        );
+        assert!(!truthy(r#"(minor-mode-p 'vim-mode "notes")"#, &ctx, &env));
+        run(
+            r#"(with-current-buffer "notes" (lambda () (set-major-mode 'prose-mode)))"#,
+            &env,
+            &ctx,
+        );
+        assert!(truthy(r#"(minor-mode-p 'vim-mode "notes")"#, &ctx, &env));
+        // A buffer turned off by hand stays off in that mode.
+        run(
+            r#"(with-current-buffer "notes"
+                 (lambda () (vim-mode-disable) (set-major-mode 'fundamental-mode)
+                            (set-major-mode 'prose-mode)))"#,
+            &env,
+            &ctx,
+        );
+        assert!(!truthy(r#"(minor-mode-p 'vim-mode "notes")"#, &ctx, &env));
+        assert_eq!(
+            name(r#"(buffer-get 'vim-state "notes")"#, &ctx, &env),
+            "nil"
+        );
+    }
+
+    #[test]
+    fn a_rule_that_revokes_vim_turns_it_off_and_keeps_it_off() {
+        let (ctx, env) = editor("abc");
+        run(
+            "(set-minor-mode-policy 'vim-mode 'deny :role 'editing)",
+            &env,
+            &ctx,
+        );
+        assert!(!truthy("(minor-mode-p 'vim-mode)", &ctx, &env));
+        assert_eq!(name("(buffer-get 'vim-state)", &ctx, &env), "nil");
+        assert_eq!(name("(buffer-get 'local-keymap)", &ctx, &env), "nil");
+        run("(vim-mode 1)", &env, &ctx);
+        assert_eq!(name("(buffer-get 'vim-state)", &ctx, &env), "nil");
+        assert!(
+            ctx.snapshot(&env, 80, 24)
+                .echo_message
+                .contains("vim-mode is not admitted in *scratch*"),
+        );
+        // Permitted again, it comes on from the next time it is asked for.
+        run(
+            "(set-minor-mode-policy 'vim-mode 'inherit :role 'editing) (vim-mode 1)",
+            &env,
+            &ctx,
+        );
+        assert_eq!(name("(buffer-get 'vim-state)", &ctx, &env), "normal");
+    }
+
+    // ----------------------------------------------------------------
+    // The bracket under the cursor
+    // ----------------------------------------------------------------
+
+    /// The cells of *scratch* drawn in show-paren-match, as (row, start, end).
+    fn paired(ctx: &Ctx, env: &Arc<Env<Ctx>>) -> Vec<(usize, usize, usize)> {
+        let view = ctx
+            .snapshot(env, 80, 24)
+            .views
+            .into_iter()
+            .find(|view| view.buffer_name == "*scratch*")
+            .expect("the view of *scratch*");
+        let mut cells: Vec<_> = view
+            .highlights
+            .iter()
+            .filter(|highlight| highlight.face == crate::ui::Face::SHOW_PAREN_MATCH)
+            .map(|highlight| (highlight.row, highlight.start_col, highlight.end_col))
+            .collect();
+        cells.sort();
+        cells
+    }
+    /// The editor of [`editor`], with show-paren-mode on, as the default
+    /// configuration has it.
+    fn editor_with_parens(text: &str) -> (Ctx, Arc<Env<Ctx>>) {
+        let (ctx, env) = editor(text);
+        run(
+            include_str!("../../lisp/features/show-paren.lisp"),
+            &env,
+            &ctx,
+        );
+        assert!(truthy("(minor-mode-p 'show-paren-mode)", &ctx, &env));
+        (ctx, env)
+    }
+
+    #[test]
+    fn in_normal_state_the_closer_under_the_cursor_is_paired() {
+        let (ctx, env) = editor_with_parens("(foo (bar)) x");
+        // f) puts the block on the first closer.
+        keys(&ctx, &env, "f)");
+        assert_eq!(point(&ctx), 9);
+        assert_eq!(paired(&ctx, &env), vec![(0, 5, 6), (0, 9, 10)]);
+        keys(&ctx, &env, ";");
+        assert_eq!(point(&ctx), 10);
+        assert_eq!(
+            paired(&ctx, &env),
+            vec![(0, 0, 1), (0, 10, 11)],
+            "the second closer, under the block, not the first, before point"
+        );
+        // Beside the block, a closer is not the one under it.
+        keys(&ctx, &env, "l");
+        assert_eq!(point(&ctx), 11);
+        assert!(paired(&ctx, &env).is_empty());
+        // An opener under the block, as everywhere.
+        keys(&ctx, &env, "0");
+        assert_eq!(paired(&ctx, &env), vec![(0, 0, 1), (0, 10, 11)]);
+    }
+
+    #[test]
+    fn in_visual_state_the_block_pairs_too_and_in_insert_state_the_bar_as_ever() {
+        let (ctx, env) = editor_with_parens("(a (b))");
+        keys(&ctx, &env, "$v");
+        assert_eq!(point(&ctx), 6);
+        assert_eq!(paired(&ctx, &env), vec![(0, 0, 1), (0, 6, 7)]);
+        esc(&ctx, &env);
+        // Insert before the last closer: the bar is after the first one.
+        keys(&ctx, &env, "i");
+        assert_eq!(point(&ctx), 6);
+        assert_eq!(paired(&ctx, &env), vec![(0, 3, 4), (0, 5, 6)]);
+        esc(&ctx, &env);
+        assert_eq!(point(&ctx), 5);
+        assert_eq!(paired(&ctx, &env), vec![(0, 3, 4), (0, 5, 6)]);
+        // Off, the cursor is a bar again.
+        run("(vim-mode -1)", &env, &ctx);
+        assert!(
+            paired(&ctx, &env).is_empty(),
+            "a bar after b, with no closer before it"
+        );
+    }
 }

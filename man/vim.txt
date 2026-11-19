@@ -2,7 +2,7 @@ NAME
     vim - modal editing, as Vim does it
 
 SYNOPSIS
-    (vim-mode &optional ENABLED)
+    (vim-mode &optional ARG)
     (vim-mode-enable)
     (vim-mode-disable)
     (vim-mode-auto)
@@ -33,13 +33,25 @@ DESCRIPTION
     VISUAL, V-LINE or V-BLOCK -- where mode-line-format has %s, as it has
     unless you change it.
 
+    vim-mode is a minor mode, as the `modes' page describes them: it is on
+    in one buffer at a time, C-h M lists it among the minor modes on, and
+    (minor-mode-p 'vim-mode) says whether it is on. It has no lighter: the
+    state on the status line says so already. `minor-mode-on' and
+    `minor-mode-off' turn it on and off from Lisp as its command does, and
+    its hooks are given as any minor mode's:
+
+        (add-hook 'vim-mode "minor-mode-hook" 'my-vim-changed)
+
+    calls my-vim-changed each time vim comes on or goes off in a buffer.
+
     The default init.lisp loads the module, and leaves it off. M-x vim-mode
-    turns it on, and off again; vim-mode-enable turns it on and
-    vim-mode-disable off, whatever it was, and turning it off gives the
-    buffer back the keymap it had. From Lisp, (vim-mode t), or a positive
-    number, turns it on, and 0 or a negative number off. A prefix argument
-    does the same, C-u - counting as -1, given in a buffer vim is off in:
-    in Normal, Visual and Insert state C-u is one of vim's keys.
+    turns it on, and off again, and says which in the echo area;
+    vim-mode-enable turns it on and vim-mode-disable off, whatever it was,
+    and turning it off gives the buffer back the keymap it had. From Lisp,
+    (vim-mode t), or a positive number, turns it on, and 0 or a negative
+    number off. A prefix argument does the same, C-u - counting as -1,
+    given in a buffer vim is off in: in Normal, Visual and Insert state C-u
+    is one of vim's keys.
 
     Each buffer has a state of its own, and a command half typed in one
     stays there. What vim remembers between commands is shared by all: the
@@ -58,6 +70,12 @@ TURNING IT ON BY ITSELF
         (setq vim-mode-modes '(rust-mode risp-mode))
         (vim-mode-refresh)
 
+    (minor-mode-enable 'vim-mode 'rust-mode) asks for it too, as for any
+    minor mode, in the buffers that get rust-mode from then on, and so does
+    a hook of the major mode that turns it on: such a buffer keeps vim while
+    it keeps the mode, whatever the rules below say, where its role admits
+    vim-mode and unless it is turned off by hand.
+
     A buffer suits when all of these hold:
 
         global-vim-mode is on, or its major mode is in vim-mode-modes
@@ -74,14 +92,24 @@ TURNING IT ON BY ITSELF
     and any buffer whose name does not begin with a *.
 
     The lists and the predicate narrow what the role allows, and never
-    widen it. M-x vim-mode still turns vim on by hand in a view, such as
-    the help or a listing; never in a prompt or a list of candidates, of
-    those roles or of one derived from them, whose keys answer the
-    question: there it says so in the echo area and does nothing.
+    widen it. By hand vim goes where the buffer's role admits vim-mode, as
+    any minor mode does: in what is edited, and, by a rule the module
+    ships, in a view, such as the help or a listing, and in a role derived
+    from view. A prompt and a list of candidates, and the roles derived
+    from them, have no rule for it, and so never have it: their keys answer
+    the question. There M-x vim-mode says why in the echo area and does
+    nothing. `set-minor-mode-policy' changes what a role admits, as for any
+    minor mode:
+
+        (set-minor-mode-policy 'vim-mode 'deny :role 'view)
+
+    keeps vim out of the views, and turns it off in those it is on in.
 
     The rules are applied when a buffer gets a major mode, and when C-x C-w
     gives it a file; vim-mode-refresh applies them again to every buffer,
-    after they have changed. A buffer turned on or off by vim-mode,
+    after they have changed. A new major mode turns every minor mode off,
+    as the `modes' page says; vim comes back on with the rules, in the
+    state it was in. A buffer turned on or off by vim-mode,
     vim-mode-enable or vim-mode-disable stays so whatever the rules say,
     until vim-mode-auto gives it back to them. Applying the rules leaves an
     Insert or Visual session, and a command half typed, as they were.
@@ -112,6 +140,22 @@ MOVING IN NORMAL STATE
     2d3w. Up and down keep the column through shorter lines; sideways stays
     on the line. In Normal state point is on a character, the last one at
     most, unless the line is empty.
+
+THE CURSOR AND THE BRACKETS
+    In Normal and Visual state the cursor is a block on a character, the one
+    x deletes, and show-paren-mode pairs the bracket under it: a closing one
+    as well as an opening one, and no other. On the last ) of (a (b)) the
+    first ( lights with it, not the ( of (b); on the character after a ),
+    unless it is a bracket itself, nothing does. In Insert and Replace state
+    the cursor is between two characters, and pairs as it does without vim:
+    an opening bracket just after it, or else a closing one just before it,
+    so that typing ) shows which ( it closes.
+
+    vim says which with the buffer's property block-cursor, non-nil in
+    Normal and Visual state and nil in the others, and gone with vim.
+    show-paren-mode reads it, and so does the graphical front end, which
+    draws the cursor as a block where it is set; a terminal draws a cursor
+    of its own.
 
 EDITING
     i a I A             Insert before or after point, at the first
@@ -282,6 +326,15 @@ KEYMAPS
     M-x works, and so does C-x C-s; and a question the editor asks takes
     its keys before vim does.
 
+    vim-mode has a keymap of its own, as every minor mode, below the state's
+    and above the major mode's: a key bound there holds in every state where
+    the state's keymap does not bind it.
+
+        (define-key 'vim-mode "C-c v" 'vim-mode-disable)
+
+    Bind there keys that are not characters: a character bound in it would
+    no longer type in Insert state.
+
 LIMITS
     This is much of Vim and not all of it. There is no Vimscript, no
     :global and no Ex range but those above, no folds, no jump list, no
@@ -322,6 +375,18 @@ EXAMPLES
     Q, which vim leaves unused, to turn vim off in the buffer:
 
         (define-key 'vim-normal-map "Q" 'vim-mode-disable)
+
+    Vim in every Rust buffer, as any minor mode:
+
+        (minor-mode-enable 'vim-mode 'rust-mode)
+
+    Never in a listing or the help:
+
+        (set-minor-mode-policy 'vim-mode 'deny :role 'view)
+
+    Whether vim is on in the buffer:
+
+        (minor-mode-p 'vim-mode)
 
     What register a holds:
 

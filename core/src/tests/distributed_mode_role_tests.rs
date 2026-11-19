@@ -1,6 +1,7 @@
-//! The minor modes the editor ships, in the buffer roles: the two rules the
+//! The minor modes the editor ships, in the buffer roles: the three rules the
 //! modules give -- `show-paren-mode` in prompts, `visual-line-mode` in texts
-//! to read -- the modes that have none and so go where editing goes, the
+//! to read, `vim-mode` in views -- the modes that have none and so go where
+//! editing goes, the
 //! global modes reaching only the buffers that admit them, and the ordinary
 //! keys, which move by visual rows where a buffer wraps and give way to a
 //! prompt's history and a list's choosing.
@@ -215,6 +216,35 @@ mod tests {
                 modes.minor_policy(
                     BufferRole::View,
                     "visual-line-mode",
+                    PolicyOrigin::Distributed
+                ),
+                None
+            );
+        });
+    }
+
+    #[test]
+    fn vim_goes_in_views_and_never_in_a_prompt_or_a_list_of_candidates() {
+        let (ctx, env) = booted();
+        for (role, buffer) in one_of_each_role(&env, &ctx) {
+            use BufferRole::*;
+            assert_eq!(
+                admitted("vim-mode", &buffer, &env, &ctx),
+                matches!(role, Editing | View | DocumentView),
+                "vim-mode in {}",
+                role.name()
+            );
+        }
+        ctx.modes(|modes| {
+            assert_eq!(
+                modes.minor_policy(BufferRole::View, "vim-mode", PolicyOrigin::Distributed),
+                Some(Admission::Permit)
+            );
+            // A text to read has it from view, which it derives from.
+            assert_eq!(
+                modes.minor_policy(
+                    BufferRole::DocumentView,
+                    "vim-mode",
                     PolicyOrigin::Distributed
                 ),
                 None

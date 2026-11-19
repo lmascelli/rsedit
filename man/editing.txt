@@ -228,8 +228,16 @@ SEEING WHICH BRACKETS PAIR
 
     The pair is looked for up to 100 kilobytes of text away from the
     cursor; a bracket whose partner is further than that is not drawn at
-    all. A closing bracket under a block cursor, as in Vim's normal state,
-    is after point, not before it, and is paired once point is past it.
+    all.
+
+    Where the cursor is a block standing on a character, as in vim's
+    Normal state, the bracket under it is the one drawn, a closing one as
+    well as an opening one, and a closing bracket just before it is not:
+    the block covers the character after point. A buffer says so with its
+    property block-cursor, which vim sets and clears as its state changes,
+    as the `vim' page says; any buffer can ask the same:
+
+        (buffer-put 'block-cursor t)
 
 COUNTS
     A number before a command means "do it that many times": C-u 20 C-f

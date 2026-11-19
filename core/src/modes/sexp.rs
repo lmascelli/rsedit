@@ -673,7 +673,7 @@ pub fn enclosing<B: BufferTrait>(
 /// A delimiter, and the one it pairs with: what `show-paren-mode` draws.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pair {
-    /// The delimiter next to point.
+    /// The delimiter next to point, or under a block cursor.
     pub at: usize,
     /// The delimiter that closes or opens it, or `None` when the text has
     /// none: an opener never closed, a closer with nothing open.
@@ -699,6 +699,21 @@ pub fn pairing<B: BufferTrait>(
         let at = point.checked_sub(1)?;
         closer_pairing(text, table, resume, at, reach)
     })
+}
+
+/// Returns the delimiter at AT, with its partner, for a cursor that stands on
+/// the character at AT rather than between two, as the block of Vim's Normal
+/// state does: an opener or a closer alike, read as code, and nothing beside
+/// it. `None` when the character is neither, and past REACH, as [`pairing`].
+pub fn pairing_under<B: BufferTrait>(
+    text: &B,
+    table: &SyntaxTable,
+    resume: Option<&Resume>,
+    at: usize,
+    reach: usize,
+) -> Option<Pair> {
+    opener_pairing(text, table, resume, at, reach)
+        .or_else(|| closer_pairing(text, table, resume, at, reach))
 }
 
 /// Returns a scan of TEXT stopped at AT, when AT is where a step of code
