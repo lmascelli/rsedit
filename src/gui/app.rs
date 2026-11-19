@@ -9,14 +9,16 @@ use super::menus::{PopupMenu, entries};
 use super::paint::{Grid, colors, paint_view, row};
 use eframe::egui::{self, FontId, Rect, Stroke, Vec2};
 use rsedit_core::{
-    BufferTrait, Face, Menu, MenuItem, MenuItemId, MenuKind, MenuRequest, MouseButton, MouseKind,
+    BufferTrait, Face, FrameSnapshot, Menu, MenuItem, MenuItemId, MenuKind, MenuRequest,
+    MouseButton, MouseKind,
 };
 use std::path::PathBuf;
 
 /// The editor in a window: what the window remembers between two updates.
 pub(super) struct EditorApp<'editor, B: BufferTrait> {
     pub(super) core: Core<'editor, B>,
-    /// The size of the monospace font, which the − and + buttons change.
+    /// The size of the monospace font, which the − and + buttons of the menu
+    /// bar change, and Ctrl with the wheel.
     pub(super) font_size: f32,
     /// The frame's size in cells, as the editor was last told.
     pub(super) size: (usize, usize),
@@ -28,7 +30,7 @@ pub(super) struct EditorApp<'editor, B: BufferTrait> {
     /// The wheel's motion, in lines, not yet turned into a scroll.
     pub(super) wheel: f32,
     /// Whether the editor is part-way through a key sequence, which disables
-    /// the toolbar.
+    /// the menu bar.
     pub(super) pending: bool,
     /// Whether this press of Ctrl-V arrived as a paste: if not, the release
     /// stands for it.
@@ -48,6 +50,9 @@ pub(super) struct EditorApp<'editor, B: BufferTrait> {
     pub(super) popup: Option<PopupMenu>,
     /// How many popups have been opened, which names the next.
     pub(super) popups: u64,
+    /// Where the right button went down in the grid, while it is down: the
+    /// context menu opens there on its release.
+    pub(super) right_press: Option<egui::Pos2>,
 }
 
 impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
@@ -93,6 +98,7 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
             bar_rects: Vec::new(),
             popup: None,
             popups: 0,
+            right_press: None,
         })
     }
 
@@ -141,34 +147,85 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
         });
     }
 
-    /// Draws the menu bar in UI, its menus resolved when one opens, and
-    /// returns the action chosen in it, if any.
-    pub(super) fn menu_bar(&mut self, ui: &mut egui::Ui) -> Option<MenuItemId> {
+    /// Takes from SNAPSHOT, a frame of GRID in AREA, what it says of the
+    /// menus: the labels of the bar, and a menu to open.
+    pub(super) fn take_menus(&mut self, snapshot: &FrameSnapshot, grid: Grid, area: Rect) {
+        self.bar_labels.clone_from(&snapshot.menu_bar);
+        if let Some(request) = snapshot.menu.clone() {
+            let cursor = snapshot.focused_view().and_then(|view| {
+                let (x, y) = view.cursor_rel_pos?;
+                Some(grid.rect(view.rect.x + x as isize, view.rect.y + y as isize, 1, 1))
+            });
+            self.open_requested(request, grid, area, cursor);
+        }
+    }
+
+    /// Shows the popup in CTX, while it is open, and runs what is chosen in
+    /// it.
+    pub(super) fn show_popup(&mut self, ctx: &egui::Context) {
+        let Some(popup) = self.popup.as_mut() else {
+            return;
+        };
+        let chosen = popup.show(ctx);
+        if !popup.open {
+            self.popup = None;
+        }
+        if let Some(id) = chosen {
+            self.core.state.run_menu_item(id, &self.core.env);
+        }
+    }
+
+    /// Makes the text STEPS sizes larger, or smaller for a negative STEPS,
+    /// within what can be read.
+    pub(super) fn zoom(&mut self, steps: f32) {
+        self.font_size = (self.font_size + steps).clamp(8., 40.);
+    }
+
+    /// Draws the menu bar in UI, its menus resolved when one opens and
+    /// greyed out unless ENABLED, with the − and + buttons at its right end;
+    /// returns the action chosen in it, if any, and by how many sizes the
+    /// buttons asked for the text to change.
+    pub(super) fn menu_bar(
+        &mut self,
+        ui: &mut egui::Ui,
+        enabled: bool,
+    ) -> (Option<MenuItemId>, f32) {
         let mut chosen = None;
+        let mut zoom = 0.;
         let mut any_open = false;
         let mut rects = Vec::with_capacity(self.bar_labels.len());
         let core = &self.core;
         let cache = &mut self.bar_menu;
         let labels = &self.bar_labels;
         egui::MenuBar::new().ui(ui, |ui| {
-            for (index, label) in labels.iter().enumerate() {
-                let response = ui.menu_button(label.as_str(), |ui| {
-                    any_open = true;
-                    let bar = cache.get_or_insert_with(|| core.state.menu_bar(&core.env));
-                    match bar.items.get(index) {
-                        Some(MenuItem::Submenu { menu, .. }) => entries(ui, menu, &mut chosen),
-                        Some(action @ MenuItem::Action { .. }) => entries(
-                            ui,
-                            &Menu {
-                                items: vec![action.clone()],
-                            },
-                            &mut chosen,
-                        ),
-                        _ => {}
-                    }
-                });
-                rects.push(response.response.rect);
-            }
+            ui.add_enabled_ui(enabled, |ui| {
+                for (index, label) in labels.iter().enumerate() {
+                    let response = ui.menu_button(label.as_str(), |ui| {
+                        any_open = true;
+                        let bar = cache.get_or_insert_with(|| core.state.menu_bar(&core.env));
+                        match bar.items.get(index) {
+                            Some(MenuItem::Submenu { menu, .. }) => entries(ui, menu, &mut chosen),
+                            Some(action @ MenuItem::Action { .. }) => entries(
+                                ui,
+                                &Menu {
+                                    items: vec![action.clone()],
+                                },
+                                &mut chosen,
+                            ),
+                            _ => {}
+                        }
+                    });
+                    rects.push(response.response.rect);
+                }
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("+").clicked() {
+                    zoom += 1.;
+                }
+                if ui.small_button("−").clicked() {
+                    zoom -= 1.;
+                }
+            });
         });
         if !any_open {
             // Resolved again when a menu opens next: what it holds may have
@@ -176,7 +233,7 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
             self.bar_menu = None;
         }
         self.bar_rects = rects;
-        chosen
+        (chosen, zoom)
     }
 
     /// Hands the editor this update's events from CTX: keys and text, the
@@ -343,16 +400,27 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
                         );
                     }
                 }
+                // The menu opens on the release, as egui's own do: opened on
+                // the press, the release that ends the same click is a click
+                // outside it, which closes it the frame after.
                 egui::Event::PointerButton {
                     pos,
                     button: egui::PointerButton::Secondary,
                     pressed: true,
+                    ..
+                } => self.right_press = area.contains(*pos).then_some(*pos),
+                egui::Event::PointerButton {
+                    button: egui::PointerButton::Secondary,
+                    pressed: false,
                     modifiers,
-                } if area.contains(*pos) => {
-                    self.core.state.handle_mouse_event(
-                        grid.mouse(*pos, MouseKind::Down(MouseButton::Right), *modifiers),
-                        &self.core.env,
-                    );
+                    ..
+                } => {
+                    if let Some(at) = self.right_press.take() {
+                        self.core.state.handle_mouse_event(
+                            grid.mouse(at, MouseKind::Down(MouseButton::Right), *modifiers),
+                            &self.core.env,
+                        );
+                    }
                 }
                 egui::Event::PointerMoved(pos) if self.dragging => {
                     self.core.state.handle_mouse_event(
@@ -373,6 +441,12 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
                     self.wheel = (self.wheel + lines).clamp(-32., 32.);
                     let steps = (self.wheel.trunc() as i32).clamp(-32, 32);
                     self.wheel -= steps as f32;
+                    // Ctrl and the wheel size the text, as in Emacs and in
+                    // most programs, rather than scroll.
+                    if modifiers.ctrl || modifiers.mac_cmd {
+                        self.zoom(steps as f32);
+                        continue;
+                    }
                     let kind = if steps > 0 {
                         MouseKind::ScrollUp
                     } else {
@@ -411,7 +485,7 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
 }
 
 impl<'editor, B: BufferTrait> eframe::App for EditorApp<'editor, B> {
-    /// Reads the events, once per frame, draws the toolbar and the frame the
+    /// Reads the events, once per frame, draws the menu bar and the frame the
     /// editor composes, and asks for the next update when the editor says.
     /// Closing the window asks the editor to quit, as `C-x C-c` does.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -431,47 +505,20 @@ impl<'editor, B: BufferTrait> eframe::App for EditorApp<'editor, B> {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
-        let mut action = None;
         let mut chosen = None;
-        egui::TopBottomPanel::top("commands").show(ctx, |ui| {
-            if !self.bar_labels.is_empty() {
+        if self.bar_labels.is_empty() {
+            self.bar_rects.clear();
+            self.bar_menu = None;
+        } else {
+            let mut zoom = 0.;
+            egui::TopBottomPanel::top("menu-bar").show(ctx, |ui| {
                 let enabled = !self.core.prompt_open() && !self.pending;
-                ui.add_enabled_ui(enabled, |ui| chosen = self.menu_bar(ui));
-                ui.separator();
-            } else {
-                self.bar_rects.clear();
-            }
-            ui.horizontal_wrapped(|ui| {
-                let enabled = !self.core.prompt_open() && !self.pending;
-                ui.add_enabled_ui(enabled, |ui| {
-                    for (title, command) in [
-                        ("Open", "find-file"),
-                        ("Save", "save-buffer"),
-                        ("Save as", "write-file"),
-                        ("Copy", "kill-ring-save"),
-                        ("Cut", "kill-region"),
-                        ("Undo", "undo"),
-                        ("Vim", "vim-mode"),
-                    ] {
-                        let available = self.core.env.get_function(command).is_some();
-                        if ui
-                            .add_enabled(available, egui::Button::new(title))
-                            .clicked()
-                            && accept_input
-                        {
-                            action = Some(command);
-                        }
-                    }
-                });
-                ui.separator();
-                if ui.small_button("−").clicked() && accept_input {
-                    self.font_size = (self.font_size - 1.).max(8.);
-                }
-                if ui.small_button("+").clicked() && accept_input {
-                    self.font_size = (self.font_size + 1.).min(40.);
-                }
+                (chosen, zoom) = self.menu_bar(ui, enabled);
             });
-        });
+            if accept_input {
+                self.zoom(zoom);
+            }
+        }
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
@@ -494,9 +541,6 @@ impl<'editor, B: BufferTrait> eframe::App for EditorApp<'editor, B> {
                         .state
                         .resize(self.core.env.clone(), grid.columns, grid.rows);
                 }
-                if let Some(command) = action {
-                    self.core.command(command);
-                }
                 if let Some(id) = chosen
                     && accept_input
                 {
@@ -513,14 +557,7 @@ impl<'editor, B: BufferTrait> eframe::App for EditorApp<'editor, B> {
                 if let Some(text) = &snapshot.clipboard {
                     ctx.copy_text(text.clone());
                 }
-                self.bar_labels.clone_from(&snapshot.menu_bar);
-                if let Some(request) = snapshot.menu.clone() {
-                    let cursor = snapshot.focused_view().and_then(|view| {
-                        let (x, y) = view.cursor_rel_pos?;
-                        Some(grid.rect(view.rect.x + x as isize, view.rect.y + y as isize, 1, 1))
-                    });
-                    self.open_requested(request, grid, area, cursor);
-                }
+                self.take_menus(&snapshot, grid, area);
                 self.pending = !snapshot.pending_input.is_empty();
                 let default = snapshot.theme.style(Face::DEFAULT);
                 let (_, background) = colors(default, default);
@@ -592,14 +629,6 @@ impl<'editor, B: BufferTrait> eframe::App for EditorApp<'editor, B> {
                     ctx.request_repaint_after(wake);
                 }
             });
-        if let Some(popup) = self.popup.as_mut() {
-            let chosen = popup.show(ctx);
-            if !popup.open {
-                self.popup = None;
-            }
-            if let Some(id) = chosen {
-                self.core.state.run_menu_item(id, &self.core.env);
-            }
-        }
+        self.show_popup(ctx);
     }
 }

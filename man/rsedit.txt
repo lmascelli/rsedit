@@ -85,11 +85,11 @@ IN A WINDOW
     standard input is not a terminal, it opens a window of its own instead,
     drawn with the monospace font file --font names, or a built-in one.
 
-    The window is the same editor: keys go through the same keymaps, and the
-    toolbar's Open, Save, Save as, Copy, Cut, Undo and Vim run their
-    commands as M-x would; they are greyed out while a prompt is open. Its
-    - and + buttons make the text smaller and larger, and a file dropped on
-    the window is opened.
+    The window is the same editor: keys go through the same keymaps. While
+    `menu-bar-mode' is on, its menu bar holds the menus the `menus' page
+    describes, greyed out while a prompt is open, and the - and + buttons at
+    its right end make the text smaller and larger, as Ctrl with the wheel
+    does anywhere in the window. A file dropped on the window is opened.
 
     On Linux and Windows, Ctrl+Shift+C, Ctrl+Shift+X and Ctrl+Shift+V copy,
     cut and paste; Ctrl+C, Ctrl+X and Ctrl+V keep their bindings, so C-x
@@ -102,6 +102,7 @@ IN A WINDOW
 SEE ALSO
     guide, first-steps, editing, killing, files, searching, getting-help,
     completion, minibuffer, keymaps, modes, writing-modes, configuration,
-    diagnostics, writing-commands, buffers, windows, dired, mouse, overlays,
+    diagnostics, writing-commands, buffers, windows, dired, mouse, menus,
+    overlays,
     compile, shell, regexps, themes, background, indentation, rectangles,
     virtual-text, wrapping, macros, vim, plugins

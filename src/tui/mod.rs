@@ -349,9 +349,7 @@ pub fn tui_main<B: BufferTrait>(
                     // The menus have the mouse while they are open: a press
                     // chooses or closes, a move selects what it is over.
                     let outcome = match mouse_event.kind {
-                        CrossMouseKind::Down(CrossMouseButton::Left) => {
-                            open.click(x, y, screen)
-                        }
+                        CrossMouseKind::Down(CrossMouseButton::Left) => open.click(x, y, screen),
                         CrossMouseKind::Down(_) => Outcome::Close,
                         CrossMouseKind::Moved | CrossMouseKind::Drag(_) => {
                             open.hover(x, y);

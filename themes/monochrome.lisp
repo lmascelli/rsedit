@@ -34,6 +34,13 @@
        (mode-line-inactive nil nil ("bold"))
        (window-separator   nil nil ("bold"))
 
+       ;; The menus a terminal draws. Reverse for the bar and the boxes,
+       ;; which are areas; the entry the keys are on stands out of them
+       ;; by not being reversed.
+       (menu               nil nil ("reverse"))
+       (menu-selected      nil nil ("bold"))
+       (menu-disabled      nil nil ("reverse" "italic"))
+
        ;; The marks other modules make. Reverse, for the same reason.
        (manpage-bold       nil nil ("bold"))
        (manpage-underline  nil nil ("underline"))

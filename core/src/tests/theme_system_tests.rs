@@ -373,6 +373,44 @@ mod tests {
         }
     }
 
+    /// The menus' faces are faces of every shipped theme, and the entry the
+    /// keys are on, and one greyed out, look like neither the other entries
+    /// nor each other: in a box of one colour, the selection would not show.
+    #[test]
+    fn every_shipped_theme_draws_the_selected_and_the_greyed_out_menu_entries_apart() {
+        let (ctx, env) = editor_with_modules();
+        let themes: Vec<String> = run("(available-themes)", &env, &ctx)
+            .iter()
+            .map(|name| match name {
+                LispExp::String(name) => name.to_string(),
+                other => panic!("a theme's name, not {other:?}"),
+            })
+            .collect();
+        assert!(themes.len() > 1, "{themes:?}");
+        for theme in &themes {
+            for face in ["menu", "menu-selected", "menu-disabled"] {
+                let named = run(
+                    &format!("(assq '{face} (theme--faces {theme:?}))"),
+                    &env,
+                    &ctx,
+                );
+                assert!(!named.is_nil(), "{theme} does not name {face}");
+            }
+            run(&format!("(select-theme {theme:?})"), &env, &ctx);
+            let menu = style("menu", &env, &ctx);
+            let selected = style("menu-selected", &env, &ctx);
+            let disabled = style("menu-disabled", &env, &ctx);
+            assert_ne!(selected, menu, "{theme}: the selection would not show");
+            assert_ne!(disabled, menu, "{theme}: a greyed-out entry would not");
+            assert_ne!(selected, disabled, "{theme}");
+            // A theme's colours replace the reverse video the module ships:
+            // kept, it would swap them.
+            if menu.1.is_some() {
+                assert!(!menu.2.iter().any(|a| a == "reverse"), "{theme}: {menu:?}");
+            }
+        }
+    }
+
     // ----------------------------------------------------------------
     // The selector
     // ----------------------------------------------------------------

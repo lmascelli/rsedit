@@ -5956,18 +5956,20 @@ aggiorna: prima lo faceva ogni 250 ms anche quando nulla cambiava.
 Chiudere la finestra chiede all'editor di uscire come `C-x C-c`, con le domande
 sui buffer modificati.
 
-Sopra la barra dei comandi, mentre `menu-bar-mode` è acceso, c'è la barra dei
-menu di egui (`egui::MenuBar`), con le etichette dell'ultima fotografia: la
-barra si risolve con `menu_bar` quando uno dei suoi menu si apre, e si tiene
-finché uno resta aperto. Un clic destro nella griglia passa al core come
-`Down(Right)`; il menu che la fotografia chiede si apre come `egui::Popup` di
-genere menu, accanto alla cella del clic o sotto l'etichetta della barra, e
-finché è aperto i tasti e i clic non arrivano al buffer (`src/gui/menus.rs`,
-@menu).
+Sopra la griglia, mentre `menu-bar-mode` è acceso, c'è la barra dei menu di
+egui (`egui::MenuBar`), con le etichette dell'ultima fotografia e, in fondo a
+destra, i pulsanti − e + della dimensione del testo, che Ctrl con la rotella
+cambia anche a barra spenta. La barra si risolve con `menu_bar` quando uno dei
+suoi menu si apre, si tiene finché uno resta aperto, ed è disattivata mentre
+un prompt è aperto. Un clic destro nella griglia passa al core come
+`Down(Right)` al rilascio del tasto, nella cella in cui era stato premuto; il
+menu che la fotografia chiede si apre come `egui::Popup` di genere menu,
+accanto alla cella del clic o sotto l'etichetta della barra, e finché è aperto
+i tasti e i clic non arrivano al buffer (`src/gui/menus.rs`, @menu).
 
-I comandi della barra (Open, Save, Save as, Copy, Cut, Undo, Vim) passano per
-`M-x`, con i loro hook, il loro passo di undo e la macro in registrazione, e si
-rifiutano mentre un prompt è aperto. I tasti si traducono in `src/gui/keys.rs`.
+Le scorciatoie di macOS (Cmd+O, Cmd+S, …) passano per `M-x`, con i loro hook,
+il loro passo di undo e la macro in registrazione, e si rifiutano mentre un
+prompt è aperto. I tasti si traducono in `src/gui/keys.rs`.
 Con Ctrl o Alt vince il testo che la tastiera riporta, se c'è, perché la
 punteggiatura dipende dalla disposizione dei tasti; il testo di AltGr, e quello
 non ASCII di Option, resta testo da scrivere. egui prende per sé Ctrl-C, Ctrl-X
@@ -6073,9 +6075,18 @@ egui, come dice @gui.
   ogni azione. Scartato un menu fatto di finestre e buffer dell'editor, che
   avrebbe imposto la forma del terminale alla finestra.
 + *La barra della TUI è fuori dal frame.* La riga della barra è della TUI come
-  il pannello della barra dei comandi è della GUI: il core compone un frame di
-  una riga più basso e non sa che c'è. Scartata una riga riservata dal core,
-  che la GUI, con la sua barra, avrebbe lasciato vuota.
+  il pannello della barra dei menu è della GUI: il core compone un frame di una
+  riga più basso e non sa che c'è. Scartata una riga riservata dal core, che
+  la GUI, con la sua barra, avrebbe lasciato vuota.
++ *Nella GUI il menu contestuale si apre al rilascio.* Un popup di egui si
+  chiude a un clic fuori di lui, e il rilascio che completa il clic destro
+  che lo ha aperto è proprio un clic fuori: aperto alla pressione, si
+  chiudeva al frame dopo. Si apre al rilascio, come i menu contestuali di
+  egui; la TUI lo apre alla pressione, perché lì il rilascio, a menu aperto,
+  non conta.
++ *La GUI non ha più una barra dei comandi.* I suoi pulsanti ripetevano il
+  menu File e pochi altri comandi; restano i pulsanti della dimensione del
+  testo, che sono della finestra e non dell'editor.
 + *Un menu si risolve quando si apre, non a ogni frame.* Le condizioni e le
   voci generate sono Lisp, e la fotografia non valuta Lisp: porta solo le
   etichette della barra, che non costano nulla.

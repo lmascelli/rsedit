@@ -23,6 +23,12 @@
        (mode-line-inactive "#888888" "#222222" nil)
        (window-separator "#555555" nil       nil)
 
+       ;; The menus a terminal draws: the bar and its boxes as the status
+       ;; line, the entry the keys are on in the accent, one greyed out dim
+       (menu             "#ffffff" "#333333" nil)
+       (menu-selected    "#ffffff" "#555555" ("bold"))
+       (menu-disabled    "#888888" "#333333" nil)
+
        ;; Module & tool marks
        (manpage-bold     "#ffffff" nil       ("bold"))
        (manpage-underline "#cccccc" nil       ("underline"))

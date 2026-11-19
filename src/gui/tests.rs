@@ -1,6 +1,7 @@
 //! The window front end: egui's keys, text and IME turned into the
 //! editor's keys and text, the shortcuts the platform takes for itself, and
-//! the toolbar's commands run through the core.
+//! the commands the platform's shortcuts run through the core, and the
+//! menus.
 //!
 //! Design: `doc/architettura-editor.typ, <gui>`.
 use super::Core;
@@ -256,7 +257,7 @@ fn gui_commands_keep_vim_and_undo_dispatch() {
 }
 
 #[test]
-fn command_prompt_blocks_unrelated_toolbar_commands() {
+fn a_prompt_blocks_the_commands_of_the_platforms_shortcuts() {
     let core = editor();
     core.command("find-file");
     assert!(core.prompt_open());
@@ -327,6 +328,7 @@ fn app() -> EditorApp<'static, GapBuffer> {
         bar_rects: Vec::new(),
         popup: None,
         popups: 0,
+        right_press: None,
     }
 }
 
@@ -561,16 +563,15 @@ fn a_right_click_in_the_grid_asks_the_editor_for_its_context_menu() {
         r#"(progn (setq mouse-mode t) (context-menu-add nil "Here" 'undo))"#,
     );
     let _ = frame(&app.core);
-    input(
-        &mut app,
-        vec![egui::Event::PointerButton {
-            pos: Pos2::new(20., 30.),
-            button: egui::PointerButton::Secondary,
-            pressed: true,
-            modifiers: egui::Modifiers::NONE,
-        }],
-        egui::Modifiers::NONE,
-    );
+    let button = |pressed| egui::Event::PointerButton {
+        pos: Pos2::new(20., 30.),
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    input(&mut app, vec![button(true)], egui::Modifiers::NONE);
+    assert!(frame(&app.core).menu.is_none(), "nothing yet, on the press");
+    input(&mut app, vec![button(false)], egui::Modifiers::NONE);
     let request = frame(&app.core).menu.expect("a menu to open");
     assert_eq!(request.kind, rsedit_core::MenuKind::Context);
     assert_eq!(request.at, Some((2, 1)), "the cell under the pointer");
@@ -668,7 +669,7 @@ fn bar_frame(
             ..Default::default()
         },
         |ctx| {
-            egui::TopBottomPanel::top("bar").show(ctx, |ui| chosen = app.menu_bar(ui));
+            egui::TopBottomPanel::top("bar").show(ctx, |ui| chosen = app.menu_bar(ui, true).0);
         },
     );
     chosen
@@ -704,4 +705,107 @@ fn a_click_on_a_label_of_the_bar_opens_its_menu_resolved_then() {
     bar_frame(&mut app, &ctx, Vec::new());
     let bar = app.bar_menu.as_ref().expect("resolved as the menu opened");
     assert_eq!(bar.labels(), ["File", "Help"]);
+}
+
+/// Runs one frame of APP in CTX with EVENTS, as `update` does for the menus:
+/// the input, the frame's menus taken, the popup shown.
+fn menu_frame(
+    app: &mut EditorApp<'static, GapBuffer>,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) {
+    let area = Rect::from_min_size(Pos2::ZERO, Vec2::new(800., 640.));
+    let grid = Grid::new(area, Vec2::new(8., 20.));
+    let _ = ctx.run(
+        egui::RawInput {
+            events,
+            screen_rect: Some(area),
+            ..Default::default()
+        },
+        |ctx| {
+            app.input(ctx, area, grid);
+            let snapshot = app
+                .core
+                .state
+                .snapshot(&app.core.env, grid.columns, grid.rows);
+            app.take_menus(&snapshot, grid, area);
+            app.show_popup(ctx);
+        },
+    );
+}
+
+#[test]
+fn a_context_menu_stays_open_once_the_right_button_is_released() {
+    let mut app = app();
+    expression(
+        &app.core,
+        r#"(progn (setq mouse-mode t) (context-menu-add nil "Here" 'undo))"#,
+    );
+    let ctx = egui::Context::default();
+    let at = Pos2::new(20., 30.);
+    let button = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    menu_frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(at), button(true)],
+    );
+    menu_frame(&mut app, &ctx, vec![button(false)]);
+    menu_frame(&mut app, &ctx, Vec::new());
+    assert!(
+        app.popup.as_ref().is_some_and(|popup| popup.open),
+        "the release of the click that opened it must not close it"
+    );
+    // A click elsewhere closes it, and reaches nothing under it.
+    let elsewhere = Pos2::new(600., 500.);
+    let primary = |pressed| egui::Event::PointerButton {
+        pos: elsewhere,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    menu_frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(elsewhere), primary(true)],
+    );
+    menu_frame(&mut app, &ctx, vec![primary(false)]);
+    assert!(app.popup.is_none(), "closed by the click elsewhere");
+    assert_eq!(expression(&app.core, "(point)"), ELispExp::number(0.));
+}
+
+#[test]
+fn ctrl_and_the_wheel_size_the_text_rather_than_scroll() {
+    let mut app = app();
+    expression(&app.core, "(setq mouse-mode t)");
+    let before = app.font_size;
+    let wheel = |y, ctrl| egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: Vec2::new(0., y),
+        modifiers: egui::Modifiers {
+            ctrl,
+            ..egui::Modifiers::NONE
+        },
+    };
+    let ctx = egui::Context::default();
+    let area = Rect::from_min_size(Pos2::ZERO, Vec2::new(800., 640.));
+    let grid = Grid::new(area, Vec2::new(8., 20.));
+    let _ = ctx.run(
+        egui::RawInput {
+            events: vec![
+                egui::Event::PointerMoved(Pos2::new(50., 50.)),
+                wheel(2., true),
+            ],
+            screen_rect: Some(area),
+            ..Default::default()
+        },
+        |ctx| app.input(ctx, area, grid),
+    );
+    assert_eq!(app.font_size, before + 2.);
+    app.zoom(-100.);
+    assert_eq!(app.font_size, 8., "never too small to read");
 }

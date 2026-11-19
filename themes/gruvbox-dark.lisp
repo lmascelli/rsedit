@@ -25,6 +25,12 @@
        (mode-line-inactive  "#928374" "#3c3836" nil)
        (window-separator    "#665c54" nil       nil)
 
+       ;; The menus a terminal draws: the bar and its boxes as the status
+       ;; line, the entry the keys are on in the accent, one greyed out dim
+       (menu                "#ebdbb2" "#3c3836" nil)
+       (menu-selected       "#282828" "#83a598" ("bold"))
+       (menu-disabled       "#928374" "#3c3836" nil)
+
        ;; The grammar
        (keyword             "#fb4934" nil       ("bold"))
        (type                "#fabd2f" nil       nil)
