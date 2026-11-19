@@ -119,7 +119,10 @@ pub type ELispExp<B> = risp::LispExp<editor::EditorState<B>>;
 
 pub use crate::{
     buffer::{BufferTrait, gap_buffer::GapBuffer},
-    editor::{EditorState, MOUSE_MODE, create_global_env, isolate_config_for_tests, mouse_mode},
+    editor::{
+        EditorState, MENU_BAR_MODE, MOUSE_MODE, create_global_env, isolate_config_for_tests,
+        menu_bar_mode, mouse_mode,
+    },
     input::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseKind},
     managers::{Buffers, Windows},
     paths::{
@@ -127,8 +130,8 @@ pub use crate::{
         XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_STATE_HOME, app_dir,
     },
     ui::{
-        Color, Face, FrameSnapshot, GutterCell, Highlight, NAMED_COLORS, Rect,
-        RenderableWindowView, Separator, Style, Theme, width,
+        Color, Face, FrameSnapshot, GutterCell, Highlight, Menu, MenuItem, MenuItemId, MenuKind,
+        MenuRequest, NAMED_COLORS, Rect, RenderableWindowView, Separator, Style, Theme, width,
     },
 };
 pub use risp::{Env, LispContext, Parser, eval};

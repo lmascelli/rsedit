@@ -5,18 +5,23 @@
 //! Design: `doc/architettura-editor.typ, <ciclo-tui>`.
 pub(crate) mod colour;
 pub(crate) mod input;
+pub(crate) mod menu;
 pub(crate) mod render;
 
 use colour::ColorDepth;
 use input::{translate_key, translate_mouse};
+use menu::{OpenMenus, Outcome, bar_label_at};
 use render::render_frame;
 
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
-    KeyEventKind, read,
+    KeyEventKind, MouseButton as CrossMouseButton, MouseEventKind as CrossMouseKind, read,
 };
 use crossterm::{cursor, execute, terminal};
-use rsedit_core::{BufferTrait, ELispExp, EditorState, Env, LispContext, mouse_mode};
+use rsedit_core::{
+    BufferTrait, ELispExp, EditorState, Env, FrameSnapshot, LispContext, MenuKind, MenuRequest,
+    menu_bar_mode, mouse_mode,
+};
 use std::{
     io::stdout,
     sync::{
@@ -127,6 +132,41 @@ fn give_back_terminal_on_panic() {
     }));
 }
 
+/// Returns the rows the menu bar takes above the windows: one while
+/// `menu-bar-mode` is on.
+fn bar_rows<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> u16 {
+    u16::from(menu_bar_mode(env))
+}
+
+/// Returns the menus REQUEST asks for, opened on a screen SCREEN cells large
+/// whose frame, FRAME, starts at row TOP: a context menu where the request
+/// says, or else at the cursor, and the bar's menus under the bar.
+pub(crate) fn open_requested(
+    request: MenuRequest,
+    frame: &FrameSnapshot,
+    top: u16,
+    screen: (usize, usize),
+) -> OpenMenus {
+    match request.kind {
+        MenuKind::Bar { open } => OpenMenus::bar(request.menu, open, screen, true),
+        MenuKind::Context => {
+            let keyboard = request.at.is_none();
+            let (x, y) = request.at.unwrap_or_else(|| {
+                frame
+                    .focused_view()
+                    .and_then(|view| {
+                        let (cx, cy) = view.cursor_rel_pos?;
+                        let x = view.rect.x + cx as isize;
+                        let y = view.rect.y + cy as isize + 1;
+                        Some((x.max(0) as usize, y.max(0) as usize))
+                    })
+                    .unwrap_or((0, 0))
+            });
+            OpenMenus::context(request.menu, (x, y + top as usize), screen, keyboard)
+        }
+    }
+}
+
 /// Runs the editor in the terminal until it quits: raw mode, the alternate
 /// screen, bracketed paste, the mouse while `mouse-mode` asks for it, and the
 /// loop.
@@ -139,12 +179,21 @@ pub fn tui_main<B: BufferTrait>(
 
     // Asked once: the terminal does not change while it runs.
     let depth = ColorDepth::detect();
+    // The rows above the frame that are the menu bar's, which `menu-bar-mode`
+    // decides at every turn of the loop.
+    let mut top = bar_rows(&env);
     // The frame's first size.
     {
         let (cols, rows) = terminal::size()?;
         env.set_variable("frame-width".into(), ELispExp::number(cols as f64));
-        env.set_variable("frame-height".into(), ELispExp::number(rows as f64));
+        env.set_variable(
+            "frame-height".into(),
+            ELispExp::number(rows.saturating_sub(top) as f64),
+        );
     }
+    // The menus open over the frame, which take the keys and the mouse while
+    // they are.
+    let mut menus: Option<OpenMenus> = None;
 
     // Whether the terminal reports the mouse: it follows `mouse-mode` at every
     // turn of the loop.
@@ -167,9 +216,22 @@ pub fn tui_main<B: BufferTrait>(
     // wrote on. One composed because time passed is drawn only if it differs.
     let mut forced = true;
     let (cols, rows) = terminal::size()?;
-    let mut frame = state.snapshot(&env, cols as usize, rows as usize);
+    let mut frame = state.snapshot(&env, cols as usize, rows.saturating_sub(top) as usize);
 
     while state.is_running() {
+        // The bar given its row, or the row given back, as the frame's size.
+        let wanted_top = bar_rows(&env);
+        if wanted_top != top {
+            top = wanted_top;
+            let (cols, rows) = terminal::size()?;
+            state.resize(
+                env.clone(),
+                cols as usize,
+                rows.saturating_sub(top) as usize,
+            );
+            dirty = true;
+            forced = true;
+        }
         // Before the frame, so that the capture is on for the next click.
         let wanted = mouse_mode(&env);
         if wanted != capturing {
@@ -184,11 +246,20 @@ pub fn tui_main<B: BufferTrait>(
             let (cols, rows) = terminal::size()?;
             // The capture holds locks and does no I/O; the drawing, the other
             // way round.
-            let next = state.snapshot(&env, cols as usize, rows as usize);
+            let next = state.snapshot(&env, cols as usize, rows.saturating_sub(top) as usize);
+            if let Some(request) = next.menu.clone() {
+                menus = Some(open_requested(
+                    request,
+                    &next,
+                    top,
+                    (cols as usize, rows as usize),
+                ));
+                forced = true;
+            }
             // A frame with text for the clipboard is drawn: the only way out
             // for the text the capture took.
             if forced || next != frame || next.clipboard.is_some() {
-                render_frame(&next, depth)?;
+                render_frame(&next, depth, top, menus.as_ref())?;
             }
             frame = next;
             dirty = false;
@@ -225,11 +296,25 @@ pub fn tui_main<B: BufferTrait>(
             Wakeup::Background => continue,
             Wakeup::Terminal(event) => event?,
         };
+        let screen = {
+            let (cols, rows) = terminal::size()?;
+            (cols as usize, rows as usize)
+        };
         match event {
             Event::Key(key_event) => match translate_key(key_event) {
                 Some(event) => {
                     if key_event.kind == KeyEventKind::Press {
-                        state.handle_key_event(event, &env);
+                        match menus.as_mut().map(|open| open.key(&event, screen)) {
+                            Some(outcome) => {
+                                if outcome != Outcome::Stay {
+                                    menus = None;
+                                }
+                                if let Outcome::Run(id) = outcome {
+                                    state.run_menu_item(id, &env);
+                                }
+                            }
+                            None => state.handle_key_event(event, &env),
+                        }
                         dirty = true;
                         forced = true;
                     }
@@ -241,7 +326,13 @@ pub fn tui_main<B: BufferTrait>(
             },
 
             Event::Resize(width, height) => {
-                state.resize(env.clone(), width as usize, height as usize);
+                // The boxes were placed for the old size.
+                menus = None;
+                state.resize(
+                    env.clone(),
+                    width as usize,
+                    height.saturating_sub(top) as usize,
+                );
                 dirty = true;
                 forced = true;
             }
@@ -253,12 +344,56 @@ pub fn tui_main<B: BufferTrait>(
             }
 
             Event::Mouse(mouse_event) => {
-                // A frame only for a mouse event the editor acted on.
-                if let Some(event) = translate_mouse(mouse_event)
-                    && state.handle_mouse_event(event, &env)
-                {
+                let (x, y) = (mouse_event.column as usize, mouse_event.row as usize);
+                if let Some(open) = menus.as_mut() {
+                    // The menus have the mouse while they are open: a press
+                    // chooses or closes, a move selects what it is over.
+                    let outcome = match mouse_event.kind {
+                        CrossMouseKind::Down(CrossMouseButton::Left) => {
+                            open.click(x, y, screen)
+                        }
+                        CrossMouseKind::Down(_) => Outcome::Close,
+                        CrossMouseKind::Moved | CrossMouseKind::Drag(_) => {
+                            open.hover(x, y);
+                            Outcome::Stay
+                        }
+                        _ => continue,
+                    };
+                    if outcome != Outcome::Stay {
+                        menus = None;
+                    }
+                    if let Outcome::Run(id) = outcome {
+                        state.run_menu_item(id, &env);
+                    }
                     dirty = true;
                     forced = true;
+                } else if top > 0 && y < top as usize {
+                    // The bar's row: a press on a label opens its menu.
+                    if mouse_event.kind == CrossMouseKind::Down(CrossMouseButton::Left)
+                        && let Some(index) = bar_label_at(&frame.menu_bar, x)
+                    {
+                        let open = OpenMenus::bar(state.menu_bar(&env), index, screen, false);
+                        match open.bar_action() {
+                            // A label that is an action of its own runs it.
+                            Some(id) => {
+                                state.run_menu_item(id, &env);
+                            }
+                            None => menus = Some(open),
+                        }
+                        dirty = true;
+                        forced = true;
+                    }
+                } else {
+                    // The frame's cells start below the bar.
+                    let mut moved = mouse_event;
+                    moved.row = moved.row.saturating_sub(top);
+                    // A frame only for a mouse event the editor acted on.
+                    if let Some(event) = translate_mouse(moved)
+                        && state.handle_mouse_event(event, &env)
+                    {
+                        dirty = true;
+                        forced = true;
+                    }
                 }
             }
 

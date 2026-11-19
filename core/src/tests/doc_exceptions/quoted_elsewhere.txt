@@ -28,6 +28,7 @@ shell-output-mode
 # Symbols a function takes, returns or keeps as a property
 bold
 close
+double-click-command
 escape
 filename
 hint

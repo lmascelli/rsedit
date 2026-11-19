@@ -508,6 +508,8 @@ files go, and without one they go after it. What it prints is shown as by
 ;; buffer is read-only, so nothing needs unbinding.
 
 (define-key 'dired-mode "<ret>" 'dired-find-file)
+;; A double click on a line chooses it, as Return does: the `mouse' page.
+(put 'dired-mode 'double-click-command 'dired-find-file)
 (define-key 'dired-mode "o" 'dired-find-file-other-window)
 (define-key 'dired-mode "^" 'dired-up-directory)
 (define-key 'dired-mode "g" 'dired-refresh)

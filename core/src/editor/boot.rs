@@ -142,6 +142,7 @@ impl<B: BufferTrait> EditorState<B> {
             history: Arc::new(RwLock::new(History::default())),
             visits: Arc::new(RwLock::new(Visits::default())),
             kept_values: Arc::new(RwLock::new(KeptValues::default())),
+            menus: Arc::new(RwLock::new(Menus::default())),
             findings: Arc::new(RwLock::new(Findings::default())),
             session_base: Arc::default(),
             loader: Arc::new(RwLock::new(Loader::default())),
@@ -320,6 +321,8 @@ pub fn create_global_env<B: BufferTrait>()
 
     // Off here, and on in `default-configuration`: see `mouse_mode`.
     env.set_variable(MOUSE_MODE.into(), ELispExp::nil());
+    // The same for the menu bar, which takes a row of the terminal.
+    env.set_variable(MENU_BAR_MODE.into(), ELispExp::nil());
 
     // The blank lines at the end of a buffer cleaned with the blanks at the
     // ends of its lines.

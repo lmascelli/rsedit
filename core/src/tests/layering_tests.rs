@@ -85,6 +85,7 @@ mod tests {
         ("managers/loader.rs", include_str!("../managers/loader.rs")),
         ("managers/log.rs", include_str!("../managers/log.rs")),
         ("managers/macros.rs", include_str!("../managers/macros.rs")),
+        ("managers/menus.rs", include_str!("../managers/menus.rs")),
         (
             "managers/minor_policies.rs",
             include_str!("../managers/minor_policies.rs"),
@@ -172,6 +173,7 @@ mod tests {
         ("ui/frame.rs", include_str!("../ui/frame.rs")),
         ("ui/gutter.rs", include_str!("../ui/gutter.rs")),
         ("ui/layout.rs", include_str!("../ui/layout.rs")),
+        ("ui/menu.rs", include_str!("../ui/menu.rs")),
         ("ui/mode_line.rs", include_str!("../ui/mode_line.rs")),
         ("ui/width.rs", include_str!("../ui/width.rs")),
         ("ui/windows.rs", include_str!("../ui/windows.rs")),

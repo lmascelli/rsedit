@@ -339,6 +339,8 @@ once first when some of those have unsaved changes."
 (define-key nil "C-x C-b" 'buffer-list)
 
 (define-key 'buffer-list-mode "<ret>" 'buffer-list-select)
+;; A double click on a line chooses it, as Return does: the `mouse' page.
+(put 'buffer-list-mode 'double-click-command 'buffer-list-select)
 (define-key 'buffer-list-mode "m" 'buffer-list-mark)
 (define-key 'buffer-list-mode "d" 'buffer-list-flag-kill)
 (define-key 'buffer-list-mode "k" 'buffer-list-flag-kill)

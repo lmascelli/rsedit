@@ -21,26 +21,44 @@ DESCRIPTION
 
 WHAT THE MOUSE DOES
         click           put the cursor there, in that window
-        double click    set the mark there, to select from it
+        double click    set the mark there, to select from it; in a
+                        list, choose the line, as Return does
         drag            select from where the button went down
         drag a border   move the border between two windows
         wheel           scroll the window under the pointer
+        right click     open the context menu there
+        click the bar   open a menu of the menu bar
 
     A click gives its window the focus and ends any selection. A drag
     selects as the keys do, so C-w and M-w work on what it selected; a drag
     past the edge of the window selects up to the edge. A border is the
     line between windows side by side, or the status line between windows
     one above the other. The wheel moves the view three lines a notch, and
-    moves neither the focus nor the cursor.
+    moves neither the focus nor the cursor. A right click moves the cursor
+    as a click does, unless it lands in the selection, and opens the menu
+    the `menus' page describes.
 
     Each of these runs one of the commands in the SYNOPSIS, as a key runs
     its command: a click is one step to undo, like a key.
 
+THE DOUBLE CLICK IN A LIST
+    The first click of a double click puts the cursor on a line; in a
+    buffer whose mode names a command for the second, that command runs
+    instead of setting the mark. The lists the editor comes with name the
+    command Return runs in them: occur and grep, the compilation buffer,
+    dired, the buffer list, the findings, the themes, the locations a
+    language server found, and help, where it follows the name under the
+    pointer.
+
+    A mode names its command with the property `double-click-command', as
+    the example below does for a mode of your own. A minor mode on in the
+    buffer is asked before its major mode, the last turned on first.
+
 LIMITS
-    A click in a floating window does nothing, nor do the middle and right
-    buttons. What each of the above does cannot be changed from Lisp: the
-    editor calls these commands by name, and a definition of your own
-    under the same name does not replace them.
+    A click in a floating window does nothing, nor does the middle button.
+    What each of the above does cannot be changed from Lisp, but for the
+    double click in a list: the editor calls these commands by name, and a
+    definition of your own under the same name does not replace them.
 
 EXAMPLES
     Leave the mouse to the terminal, from the start:
@@ -51,5 +69,12 @@ EXAMPLES
 
         (define-key nil "C-c M" 'mouse-mode-toggle)
 
+    A double click on a line of a list of your own chooses it, as Return
+    does:
+
+        (make-mode 'todo-list-mode)
+        (define-key 'todo-list-mode "<ret>" 'todo-list-open)
+        (put 'todo-list-mode 'double-click-command 'todo-list-open)
+
 SEE ALSO
-    windows, killing, first-steps, configuration
+    menus, windows, killing, first-steps, configuration

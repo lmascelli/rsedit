@@ -21,8 +21,8 @@ use crate::{
     jobs::watcher::FileWatcher,
     managers::{
         Binding, BindingSource, BufferRemoved, BufferRenamed, Buffers, ClickCount, Commands,
-        Findings, History, Hit, KeptValues, KillYank, Loader, Log, Macros, Modes, MouseDrag, Runtime,
-        Scrolled, Visits, WindowRemoved, Windows,
+        Findings, History, Hit, KeptValues, KillYank, Loader, Log, Macros, Menus, Modes, MouseDrag,
+        Runtime, Scrolled, Visits, WindowRemoved, Windows,
     },
     modes::{Grammar, MajorMode, SyntaxTable},
     primitives::{install_primitives, movement::goto_offset},
@@ -67,6 +67,7 @@ mod loader;
 pub(crate) mod locate;
 mod log;
 mod macros;
+pub(crate) mod menus;
 mod modes;
 mod mouse;
 pub(crate) mod processes;
@@ -269,6 +270,10 @@ pub struct EditorState<B: BufferTrait> {
     /// The values Lisp code keeps by name from one run to the next. See
     /// [`KeptValues`].
     kept_values: Arc<RwLock<KeptValues>>,
+
+    /// What the menu bar and the context menus hold, the actions of the menus
+    /// last resolved, and the menu a front end is to open. See [`Menus`].
+    menus: Arc<RwLock<Menus<B>>>,
 
     /// What producers have said about files, by producer and by file. See
     /// [`Findings`].
@@ -529,6 +534,22 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn kept_values_mut<R>(&self, f: impl FnOnce(&mut KeptValues) -> R) -> R {
         f(&mut self
             .kept_values
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// Runs F on the menus, under their read lock.
+    pub(crate) fn menus<R>(&self, f: impl FnOnce(&Menus<B>) -> R) -> R {
+        f(&self
+            .menus
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// Runs F on the menus, under their write lock.
+    pub(crate) fn menus_mut<R>(&self, f: impl FnOnce(&mut Menus<B>) -> R) -> R {
+        f(&mut self
+            .menus
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner))
     }

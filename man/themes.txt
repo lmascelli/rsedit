@@ -76,6 +76,9 @@ THE FACES
         results-target       the line that entry is about, in its file
         manpage-bold         bold, in a page of the system's manual
         manpage-underline    underlining, in one
+        menu  menu-selected  menu-disabled
+                             the menu bar and the menus in the terminal,
+                             the entry the keys are on, one greyed out
 
     `list-faces' names every face there is. A face is made by being named,
     so a misspelt name is a new face that nothing draws -- and shows up

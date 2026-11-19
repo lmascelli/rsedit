@@ -14,6 +14,7 @@ mod kill_yank;
 mod loader;
 mod log;
 mod macros;
+mod menus;
 mod minor_policies;
 mod modes;
 mod runtime;
@@ -30,6 +31,7 @@ pub use kill_yank::KillYank;
 pub use loader::{FeatureState, Loader, Plugin};
 pub use log::Log;
 pub use macros::Macros;
+pub use menus::{MenuEntry, MenuOwner, MenuPathError, Menus, SEPARATOR_PREFIX};
 pub use minor_policies::{Admission, PolicyOrigin, Refusal};
 #[cfg(test)]
 pub(crate) use minor_policies::{DecidedBy, MinorPolicies};

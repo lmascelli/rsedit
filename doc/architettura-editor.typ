@@ -751,9 +751,14 @@ Il cuore del ciclo, senza la gestione della cattura del mouse:
 while state.is_running() {
     if dirty {
         let (cols, rows) = terminal::size()?;
-        let next = state.snapshot(&env, cols as usize, rows as usize); // lock, niente I/O
+        // la riga della barra dei menu non è del frame
+        let next = state.snapshot(&env, cols as usize, (rows - top) as usize); // lock
+        if let Some(request) = next.menu.clone() {
+            menus = Some(open_requested(request, &next, top, (cols as usize, rows as usize)));
+            forced = true;
+        }
         if forced || next != frame || next.clipboard.is_some() {
-            render_frame(&next, depth)?;                              // I/O, niente lock
+            render_frame(&next, depth, top, menus.as_ref())?;         // I/O, niente lock
         }
         frame = next; dirty = false; forced = false;
     }
@@ -778,7 +783,11 @@ while state.is_running() {
     match event {
         Event::Key(k) => match translate_key(k) {
             Some(ev) => if k.kind == KeyEventKind::Press {
-                state.handle_key_event(ev, &env); dirty = true; forced = true;
+                match menus.as_mut().map(|open| open.key(&ev, screen)) {
+                    Some(outcome) => { /* chiude i menu; Run(id) → run_menu_item */ }
+                    None => state.handle_key_event(ev, &env),
+                }
+                dirty = true; forced = true;
             },
             None => state.log_diagnostic(/* "no translation for the key" */),
         },
@@ -788,10 +797,9 @@ while state.is_running() {
         Event::Paste(text) => {
             state.handle_paste(text, &env); dirty = true; forced = true;
         }
-        Event::Mouse(m) => if let Some(ev) = translate_mouse(m)
-                               && state.handle_mouse_event(ev, &env) {
-            dirty = true; forced = true;
-        },
+        Event::Mouse(m) => { /* ai menu aperti, alla barra sulla riga 0,
+                                altrimenti translate_mouse con la riga meno top
+                                e handle_mouse_event, solo se agisce */ }
         _ => (),
     }
 }
@@ -809,7 +817,12 @@ l'attesa scade, e `tick` e il frame seguono come per il tempo. E `tick` viene
 chiamato solo quando l'attesa scade, non a ogni giro.
 
 La cattura del mouse segue `mouse-mode` a ogni giro, prima del frame:
-`mouse-mode-toggle` vale dal clic dopo. `translate_key` traduce anche Canc,
+`mouse-mode-toggle` vale dal clic dopo. Allo stesso modo `menu-bar-mode`
+decide a ogni giro quante righe in cima sono della barra dei menu (`top`, zero
+o una): il frame si compone e si ridimensiona per le righe che restano, si
+disegna da `top` in giù, e un evento del mouse arriva al core con la riga
+meno `top`. Mentre un menu è aperto (`OpenMenus`, @menu), i tasti e il mouse
+vanno a lui e non all'editor. `translate_key` traduce anche Canc,
 Ins, Inizio, Fine, PagSu, PagGiù e i tasti funzione; un tasto che non sa
 tradurre, come Stamp, viene soltanto registrato nel log. Shift con un carattere diventa la maiuscola; `BackTab`
 diventa `Tab` con Shift. Gli altri eventi del terminale, come il focus, si
@@ -950,6 +963,7 @@ e tiene un'invariante che i suoi campi presi uno per uno non terrebbero.
   [`Findings`], [Una coppia di produttore e file ha al più un insieme di segnalazioni, che una sostituzione cambia in un passo; un insieme sostituito non riceve i marcatori fatti per lui (@segnalazioni).],
   [`Log`], [Ogni riga arriva al file una volta e nell'ordine in cui è stata registrata, salvo le scritture che falliscono e le righe uscite dalla lista prima di essere scritte.],
   [`Runtime`], [Nessuna: raggruppa ciò che appartiene alla sessione e non a un documento (@decisioni-stato).],
+  [`Menus`], [Due voci di uno stesso menu non hanno la stessa etichetta, e un'etichetta che è di un sottomenu non diventa una voce, né il contrario; l'id di una voce vale solo per l'ultimo menu risolto del suo genere (@menu).],
   [`Loader`], [Una feature fallita non è mai in vigore, e ciò che è stato fornito durante un `require` fallito se ne va con lui; le funzioni in attesa di una feature si consegnano una volta sola, quando arriva (@moduli-lisp).],
 )
 
@@ -1010,7 +1024,9 @@ bloccarlo, e riconoscono con una generazione ciò che è cambiato nel frattempo
 copiarne fuori ciò che il fotogramma disegna (@segnalazioni-schermo). Sono
 foglie anche la tabella dei processi dialoganti e i lock di ogni loro
 `Exchange` --- la coda, l'ingresso, lo stato ---: nessuno si tiene mentre se ne
-prende un altro o mentre gira il Lisp (@processi-dialoganti).
+prende un altro o mentre gira il Lisp (@processi-dialoganti). E lo è `menus`:
+la risoluzione di un menu ne copia fuori le voci e lo rilascia prima di
+valutarne le condizioni (@menu).
 
 #canvas(height: 3.4cm)[
   #node(1.4cm, 1.0cm, 2.4cm, 0.8cm, [ambiente Lisp\ (`Env`)], fill: paper)
@@ -5406,6 +5422,8 @@ lock in un ordine fisso e non fa I/O; il disegno avviene dopo, senza lock.
   in corso, se `highlight-all-matches` lo chiede (@evidenziazioni).
 + Copia fuori dal deposito le segnalazioni dei file che le finestre mostrano
   (`finding_marks`), un lock alla volta (@segnalazioni-schermo).
++ Copia da `menus` le etichette della barra, se `menu-bar-mode` è acceso, e
+  ne prende il menu che il front-end deve aprire (@menu).
 + Legge l'area messaggi, vuota se il messaggio è scaduto.
 + Con `windows` in scrittura (lo scorrimento può dover seguire il punto) e
   `buffers` in lettura, attraverso `windows_mut_with_buffers`, cerca la
@@ -5430,6 +5448,8 @@ compongono dopo, ognuna nel suo rettangolo, senza margine né riga di stato.
   [`focused_window_id`, `width`, `height`], [Come dice il nome.],
   [`colouring_pending`], [La colorazione non ha finito: ridisegnare tra 40 ms.],
   [`clipboard`], [Testo che il front-end deve mettere negli appunti di sistema, se presente.],
+  [`menu_bar`], [Le etichette dei menu della barra, mentre `menu-bar-mode` è acceso; vuoto altrimenti.],
+  [`menu`], [Un `MenuRequest`: il menu che il front-end deve aprire, su un frame solo (@menu).],
 )
 
 == La composizione di una finestra <composizione>
@@ -5879,8 +5899,13 @@ predefinito.
 == Il renderer della TUI <tui>
 
 `render_frame` (`src/tui/render.rs`) disegna una fotografia sullo standard
-output attraverso `render_to`, che scrive in qualunque `Write` e disegna in
-quest'ordine: nasconde il cursore, mette in vigore i colori della pagina e
+output attraverso `render_screen`, che scrive in qualunque `Write`: pulisce lo
+schermo (`clear`), disegna il frame da una riga `top` in giù (`draw_frame`,
+con le coordinate del frame tagliate da un `Clip`), poi la barra dei menu sulla
+riga 0, se ha la riga o se un suo menu è aperto, e i menu aperti sopra tutto,
+e infine (`finish`) il cursore, nascosto mentre un menu è aperto, e gli
+appunti. `render_to`, per i test, è lo stesso senza barra né menu. Il frame si
+disegna in quest'ordine: nasconde il cursore, mette in vigore i colori della pagina e
 pulisce lo schermo; disegna i separatori (prima delle finestre, perché una flottante
 deve poterli coprire); per ogni vista disegna bordo e titolo, ogni riga del
 rettangolo riempita fino alla larghezza, contata in celle (così una flottante è opaca), il
@@ -5931,6 +5956,15 @@ aggiorna: prima lo faceva ogni 250 ms anche quando nulla cambiava.
 Chiudere la finestra chiede all'editor di uscire come `C-x C-c`, con le domande
 sui buffer modificati.
 
+Sopra la barra dei comandi, mentre `menu-bar-mode` è acceso, c'è la barra dei
+menu di egui (`egui::MenuBar`), con le etichette dell'ultima fotografia: la
+barra si risolve con `menu_bar` quando uno dei suoi menu si apre, e si tiene
+finché uno resta aperto. Un clic destro nella griglia passa al core come
+`Down(Right)`; il menu che la fotografia chiede si apre come `egui::Popup` di
+genere menu, accanto alla cella del clic o sotto l'etichetta della barra, e
+finché è aperto i tasti e i clic non arrivano al buffer (`src/gui/menus.rs`,
+@menu).
+
 I comandi della barra (Open, Save, Save as, Copy, Cut, Undo, Vim) passano per
 `M-x`, con i loro hook, il loro passo di undo e la macro in registrazione, e si
 rifiutano mentre un prompt è aperto. I tasti si traducono in `src/gui/keys.rs`.
@@ -5957,7 +5991,11 @@ di stato, separatore, flottante, niente), e da lì in un comando: clic per
 spostare il punto e il focus, doppio clic, trascinamento per selezionare (con
 scorrimento automatico ogni 60 ms oltre il bordo), trascinamento di un
 separatore o di una riga di stato per ridimensionare, rotella per scorrere la
-finestra sotto il puntatore. Risponde `true` solo se ha cambiato qualcosa. Le
+finestra sotto il puntatore, clic destro per il menu contestuale (@menu).
+Risponde `true` solo se ha cambiato qualcosa. Il secondo clic di un doppio
+clic chiede ai modi del buffer, i minori prima, la proprietà
+`double-click-command`: se uno la ha, esegue quel comando, come `<ret>` in un
+elenco, invece di `mouse-start-selection`. Le
 domande sulle finestre --- che cosa c'è sotto il puntatore, il trascinamento in
 corso, l'ultimo clic --- le fa a `windows.rs`; il punto di un clic diventa una
 colonna del buffer in `buffer_column`, che compone la sola riga cliccata,
@@ -5965,6 +6003,104 @@ perché il testo virtuale fa di una colonna sullo schermo un'altra colonna nel
 buffer. I comandi sono in `primitives/mouse.rs`, e si registrano senza
 specifiche degli argomenti: i loro argomenti li passa `handle_mouse_event`, non
 un prompt.
+
+== I menu <menu>
+
+I menu sono due: la barra dei menu e il menu contestuale. L'editor tiene ciò
+che contengono, li risolve quando si aprono ed esegue la voce scelta; come si
+disegnano e come si percorrono è del front-end, che non riceve altro che una
+descrizione.
+
+#ref-table(
+  columns: (4.2cm, 1fr),
+  header: ([Tipo], [Che cosa è]),
+  [`MenuEntry` (`managers/menus.rs`)], [Una voce come il Lisp l'ha registrata: `Item` (etichetta, comando, condizione), `Submenu`, `Separator` (con un'etichetta che comincia con `--`), `Generated` (una funzione che dà le voci all'apertura).],
+  [`Menus` (`managers/menus.rs`)], [Il compartimento: le voci della barra, quelle del menu contestuale di ogni buffer e quelle di ogni modo; le azioni dell'ultima barra e dell'ultimo menu contestuale risolti, con il loro numero; il `MenuRequest` in attesa.],
+  [`Menu`, `MenuItem` (`ui/menu.rs`)], [Un menu risolto: le etichette, se una voce si può scegliere, i tasti dello stesso comando, un `MenuItemId` per ogni azione.],
+  [`MenuItemId`], [Il numero del menu risolto e l'indice dell'azione: l'id di un menu risolto di nuovo dopo non vale più.],
+  [`MenuRequest`], [Il menu che l'editor chiede di aprire, di quale genere (`Context`, `Bar { open }`) e dove; viaggia nella fotografia.],
+)
+
+#canvas(height: 6.4cm)[
+  #node(3.0cm, 0.5cm, 5.2cm, 0.8cm, [`menu-bar-add`, `context-menu-add`,\ `…-dynamic`: voci in `Menus`])
+  #carrow((3.0cm, 0.9cm), (3.0cm, 1.6cm))
+  #node(3.0cm, 2.0cm, 5.2cm, 0.8cm, [clic destro, `menu-bar-open`,\ un clic sulla barra della TUI])
+  #carrow((3.0cm, 2.4cm), (3.0cm, 3.1cm))
+  #node(3.0cm, 3.55cm, 5.2cm, 0.9cm, [`menu_bar` / `context_menu`: voci copiate,\ condizioni valutate, tasti cercati], fill: paper)
+  #carrow((5.6cm, 3.55cm), (8.4cm, 3.55cm), label: [`request_menu`], dy: -8pt)
+  #node(11.2cm, 3.55cm, 5.6cm, 0.9cm, [`FrameSnapshot.menu`:\ un `MenuRequest`, su un frame], fill: accent.lighten(85%))
+  #carrow((11.2cm, 4.0cm), (11.2cm, 4.7cm))
+  #node(11.2cm, 5.15cm, 5.6cm, 0.9cm, [il front-end disegna e percorre:\ `OpenMenus` (TUI), `egui::Popup` (GUI)])
+  #carrow((8.4cm, 5.15cm), (5.6cm, 5.15cm), label: [`run_menu_item(id)`], dy: -8pt)
+  #node(3.0cm, 5.15cm, 5.2cm, 0.8cm, [`run_command_form`: un passo\ di undo, gli hook, `last-command`], fill: paper)
+]
+
+Registrare una voce è un'operazione del compartimento: `Menus::add` cammina
+lungo il percorso di etichette, crea i sottomenu mancanti e mette la voce dopo
+le altre, o al posto di quella con la stessa etichetta. Risolvere è della
+facciata (`editor/menus.rs`): copia fuori le voci, rilascia il lock, apre un
+budget di comando e valuta le condizioni, chiama le funzioni delle voci
+generate, cerca per ogni comando i tasti più corti nelle keymap del buffer
+corrente e numera le azioni; poi rimette nel compartimento le azioni, con il
+loro numero. Un menu contestuale mette in fila i gruppi del modo maggiore, dei
+modi minori accesi, nell'ordine in cui si sono accesi, e di ogni buffer, con un
+separatore tra due gruppi; `tidy` toglie i separatori in testa, in coda e
+doppi, e un sottomenu vuoto si toglie, tranne i menu della barra.
+
+Un clic destro, in `handle_mouse_event`, esegue `mouse-set-point` se non cade
+nella selezione, poi chiede il menu contestuale nella cella del clic;
+`menu-bar-open` e `context-menu-open` chiedono la barra o il menu al punto, e
+il front-end sceglie dove. `request_menu` non chiede nulla mentre un prompt è
+aperto, né per un menu vuoto. Il front-end prende la richiesta dalla
+fotografia, apre il menu e, quando si sceglie una voce, chiama
+`run_menu_item`, che rifiuta un id scaduto, una voce disattivata e qualunque
+voce mentre un prompt è aperto.
+
+La TUI (`src/tui/menu.rs`) mette la barra sulla riga sopra le finestre, mentre
+`menu-bar-mode` è acceso, e i menu in riquadri sopra il frame. `OpenMenus` è la
+pila dei riquadri aperti, il primo quello aperto, gli altri un sottomenu del
+precedente, con la barra risolta quando sono stati aperti da lei; `key` e
+`click` ne dicono il risultato (`Outcome`: restare, chiudere, eseguire un id) e
+il ciclo esegue. Un clic sulla riga della barra, a menu chiusi, risolve la
+barra in quel momento e apre il menu dell'etichetta. La GUI usa i menu di
+egui, come dice @gui.
+
+=== Le decisioni <decisioni-menu>
+
++ *L'editor tiene i menu, il front-end li disegna.* Un menu è la stessa cosa
+  in un terminale e in una finestra, ma un terminale lo disegna a caratteri e
+  una finestra con i suoi strumenti. L'editor dà una descrizione e un id per
+  ogni azione. Scartato un menu fatto di finestre e buffer dell'editor, che
+  avrebbe imposto la forma del terminale alla finestra.
++ *La barra della TUI è fuori dal frame.* La riga della barra è della TUI come
+  il pannello della barra dei comandi è della GUI: il core compone un frame di
+  una riga più basso e non sa che c'è. Scartata una riga riservata dal core,
+  che la GUI, con la sua barra, avrebbe lasciato vuota.
++ *Un menu si risolve quando si apre, non a ogni frame.* Le condizioni e le
+  voci generate sono Lisp, e la fotografia non valuta Lisp: porta solo le
+  etichette della barra, che non costano nulla.
++ *Una voce si esegue per id, e l'id scade.* Il front-end non tiene Lisp: un
+  `MenuItemId` torna all'editor, che sa che cosa esegue. Un id vale finché il
+  suo genere di menu non si risolve di nuovo; la barra e il menu contestuale
+  tengono ciascuno le proprie azioni, così un clic destro non invalida un
+  menu della barra aperto nella GUI.
++ *Una voce si esegue come un tasto.* Da `run_command_form`: un passo di undo,
+  gli hook, `last-command`; un nome di comando passa da `call-interactively` e
+  chiede i suoi argomenti come `M-x`.
++ *La stessa etichetta sostituisce.* Ricaricare un modulo non deve raddoppiare
+  le sue voci; per questo anche i separatori hanno un'etichetta, e due
+  separatori di un menu ne hanno due diverse.
++ *Una voce di un comando che non c'è si disattiva.* Un modulo tolto con
+  `default-configuration-skip` lascia le sue voci senza comando: grigie, non
+  un errore alla scelta.
++ *Il menu contestuale comincia dal buffer.* Le voci del modo vengono prima di
+  quelle di ogni buffer: ciò che riguarda il punto cliccato è più vicino al
+  puntatore. Emacs mette prima Annulla e gli appunti; qui si è preferito
+  l'ordine degli editor grafici.
++ *Il doppio clic in un elenco è una proprietà del modo.* Un modo dice quale
+  comando esegue il doppio clic con `double-click-command`, come dice
+  `tab-width`. Scartati i tasti del mouse nelle keymap, che avrebbero chiesto
+  un nuovo genere di tasto a tutto il percorso dei tasti per un uso solo.
 
 == Le decisioni <decisioni-frame>
 
@@ -8616,6 +8752,20 @@ che non può uscire dalla directory delle pagine.
   `manpage-path` cambia.
 + *Avviato al caricamento, ma nessuno lo aspetta.* È un'ottimizzazione, non una
   gara. Il lavoro ha un nome: ricaricare il file lo riavvia, non lo raddoppia.
+
+=== `menus` <mod-menus>
+
+Riempie la barra con File, Buffers e Help e il menu contestuale di ogni buffer
+con Undo, Redo, Cut, Copy, Paste e Select All, lega `<f10>` a `menu-bar-open`
+e `S-<f10>` a `context-menu-open`, e definisce le facce `menu`,
+`menu-selected` e `menu-disabled` con cui la TUI disegna (@menu).
+
++ *Buffers è una voce generata.* `menus--buffer-entries` elenca i buffer ogni
+  volta che il menu si apre, il corrente segnato, il prompt escluso; ogni voce
+  è la forma `(switch-to-buffer NOME)`.
++ *Le voci dei modi stanno nei loro moduli.* `lsp` aggiunge le sue al menu di
+  `lsp-mode`, e ogni elenco dice il suo `double-click-command` accanto al suo
+  `<ret>`: chi toglie un modulo toglie anche le sue voci.
 
 === `occur` <mod-occur>
 

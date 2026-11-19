@@ -5,6 +5,7 @@
 //! Design: `doc/architettura-editor.typ, <gui>`.
 mod app;
 mod keys;
+mod menus;
 mod paint;
 #[cfg(test)]
 mod tests;

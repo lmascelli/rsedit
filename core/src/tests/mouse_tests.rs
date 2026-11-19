@@ -801,8 +801,8 @@ mod tests {
             "and a drag with no button behind it does nothing"
         );
         assert!(
-            !acted(MouseKind::Down(MouseButton::Right), 4, 4),
-            "nor does the right button"
+            !acted(MouseKind::Down(MouseButton::Middle), 4, 4),
+            "nor does the middle button"
         );
         assert!(
             !acted(MouseKind::Down(MouseButton::Left), 0, H as u16 - 1),

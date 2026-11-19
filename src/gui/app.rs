@@ -5,9 +5,12 @@
 //! Design: `doc/architettura-editor.typ, <gui>`.
 use super::Core;
 use super::keys::{character, character_shortcut, mods, special_key};
+use super::menus::{PopupMenu, entries};
 use super::paint::{Grid, colors, paint_view, row};
 use eframe::egui::{self, FontId, Rect, Stroke, Vec2};
-use rsedit_core::{BufferTrait, Face, MouseButton, MouseKind};
+use rsedit_core::{
+    BufferTrait, Face, Menu, MenuItem, MenuItemId, MenuKind, MenuRequest, MouseButton, MouseKind,
+};
 use std::path::PathBuf;
 
 /// The editor in a window: what the window remembers between two updates.
@@ -32,6 +35,19 @@ pub(super) struct EditorApp<'editor, B: BufferTrait> {
     pub(super) clipboard_v_seen: bool,
     /// The frame whose input was read, so that an update is not read twice.
     pub(super) last_input_frame: Option<u64>,
+    /// The labels of the menu bar, as the last frame named them: empty while
+    /// `menu-bar-mode` is off.
+    pub(super) bar_labels: Vec<String>,
+    /// The menu bar resolved when one of its menus opened, kept while one is
+    /// open: what the editor answers holds for as long as the menu is seen.
+    pub(super) bar_menu: Option<Menu>,
+    /// Where each label of the bar was drawn, for a menu of the bar the keys
+    /// open.
+    pub(super) bar_rects: Vec<Rect>,
+    /// A menu the editor asked for, open as a popup.
+    pub(super) popup: Option<PopupMenu>,
+    /// How many popups have been opened, which names the next.
+    pub(super) popups: u64,
 }
 
 impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
@@ -72,7 +88,95 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
             pending: false,
             clipboard_v_seen: false,
             last_input_frame: None,
+            bar_labels: Vec::new(),
+            bar_menu: None,
+            bar_rects: Vec::new(),
+            popup: None,
+            popups: 0,
         })
+    }
+
+    /// Opens the menu REQUEST asks for as a popup: a context menu at its
+    /// cell of GRID, or at point when it names none; a menu of the bar under
+    /// its label, or at the top of AREA while the bar is hidden.
+    pub(super) fn open_requested(
+        &mut self,
+        request: MenuRequest,
+        grid: Grid,
+        area: Rect,
+        cursor: Option<Rect>,
+    ) {
+        let (menu, beside) = match request.kind {
+            MenuKind::Context => {
+                let beside = match request.at {
+                    Some((x, y)) => grid.rect(x as isize, y as isize, 1, 1),
+                    None => cursor.unwrap_or(Rect::from_min_size(area.min, grid.cell)),
+                };
+                (request.menu, beside)
+            }
+            MenuKind::Bar { open } => {
+                let beside = self
+                    .bar_rects
+                    .get(open)
+                    .copied()
+                    .unwrap_or(Rect::from_min_size(area.min, Vec2::ZERO));
+                match request.menu.items.into_iter().nth(open) {
+                    Some(MenuItem::Submenu { menu, .. }) => (menu, beside),
+                    Some(action @ MenuItem::Action { .. }) => (
+                        Menu {
+                            items: vec![action],
+                        },
+                        beside,
+                    ),
+                    _ => return,
+                }
+            }
+        };
+        self.popups += 1;
+        self.popup = Some(PopupMenu {
+            menu,
+            beside,
+            serial: self.popups,
+            open: true,
+        });
+    }
+
+    /// Draws the menu bar in UI, its menus resolved when one opens, and
+    /// returns the action chosen in it, if any.
+    pub(super) fn menu_bar(&mut self, ui: &mut egui::Ui) -> Option<MenuItemId> {
+        let mut chosen = None;
+        let mut any_open = false;
+        let mut rects = Vec::with_capacity(self.bar_labels.len());
+        let core = &self.core;
+        let cache = &mut self.bar_menu;
+        let labels = &self.bar_labels;
+        egui::MenuBar::new().ui(ui, |ui| {
+            for (index, label) in labels.iter().enumerate() {
+                let response = ui.menu_button(label.as_str(), |ui| {
+                    any_open = true;
+                    let bar = cache.get_or_insert_with(|| core.state.menu_bar(&core.env));
+                    match bar.items.get(index) {
+                        Some(MenuItem::Submenu { menu, .. }) => entries(ui, menu, &mut chosen),
+                        Some(action @ MenuItem::Action { .. }) => entries(
+                            ui,
+                            &Menu {
+                                items: vec![action.clone()],
+                            },
+                            &mut chosen,
+                        ),
+                        _ => {}
+                    }
+                });
+                rects.push(response.response.rect);
+            }
+        });
+        if !any_open {
+            // Resolved again when a menu opens next: what it holds may have
+            // changed since.
+            self.bar_menu = None;
+        }
+        self.bar_rects = rects;
+        chosen
     }
 
     /// Hands the editor this update's events from CTX: keys and text, the
@@ -95,6 +199,22 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
         for (at, event) in events.iter().enumerate() {
             if !self.core.state.is_running() {
                 break;
+            }
+            // An open menu has the keyboard and the buttons: egui closes it on
+            // Escape or a click elsewhere, and neither reaches the buffer
+            // under it.
+            if self.popup.is_some()
+                && matches!(
+                    event,
+                    egui::Event::Key { .. }
+                        | egui::Event::Text(_)
+                        | egui::Event::Paste(_)
+                        | egui::Event::Copy
+                        | egui::Event::Cut
+                        | egui::Event::PointerButton { .. }
+                )
+            {
+                continue;
             }
             match event {
                 egui::Event::Key {
@@ -223,6 +343,17 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
                         );
                     }
                 }
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Secondary,
+                    pressed: true,
+                    modifiers,
+                } if area.contains(*pos) => {
+                    self.core.state.handle_mouse_event(
+                        grid.mouse(*pos, MouseKind::Down(MouseButton::Right), *modifiers),
+                        &self.core.env,
+                    );
+                }
                 egui::Event::PointerMoved(pos) if self.dragging => {
                     self.core.state.handle_mouse_event(
                         grid.mouse(*pos, MouseKind::Drag(MouseButton::Left), modifiers),
@@ -301,7 +432,15 @@ impl<'editor, B: BufferTrait> eframe::App for EditorApp<'editor, B> {
             return;
         }
         let mut action = None;
+        let mut chosen = None;
         egui::TopBottomPanel::top("commands").show(ctx, |ui| {
+            if !self.bar_labels.is_empty() {
+                let enabled = !self.core.prompt_open() && !self.pending;
+                ui.add_enabled_ui(enabled, |ui| chosen = self.menu_bar(ui));
+                ui.separator();
+            } else {
+                self.bar_rects.clear();
+            }
             ui.horizontal_wrapped(|ui| {
                 let enabled = !self.core.prompt_open() && !self.pending;
                 ui.add_enabled_ui(enabled, |ui| {
@@ -358,6 +497,11 @@ impl<'editor, B: BufferTrait> eframe::App for EditorApp<'editor, B> {
                 if let Some(command) = action {
                     self.core.command(command);
                 }
+                if let Some(id) = chosen
+                    && accept_input
+                {
+                    self.core.state.run_menu_item(id, &self.core.env);
+                }
                 if accept_input {
                     self.input(ctx, area, grid);
                     self.last_input_frame = Some(frame_number);
@@ -368,6 +512,14 @@ impl<'editor, B: BufferTrait> eframe::App for EditorApp<'editor, B> {
                     .snapshot(&self.core.env, grid.columns, grid.rows);
                 if let Some(text) = &snapshot.clipboard {
                     ctx.copy_text(text.clone());
+                }
+                self.bar_labels.clone_from(&snapshot.menu_bar);
+                if let Some(request) = snapshot.menu.clone() {
+                    let cursor = snapshot.focused_view().and_then(|view| {
+                        let (x, y) = view.cursor_rel_pos?;
+                        Some(grid.rect(view.rect.x + x as isize, view.rect.y + y as isize, 1, 1))
+                    });
+                    self.open_requested(request, grid, area, cursor);
                 }
                 self.pending = !snapshot.pending_input.is_empty();
                 let default = snapshot.theme.style(Face::DEFAULT);
@@ -440,5 +592,14 @@ impl<'editor, B: BufferTrait> eframe::App for EditorApp<'editor, B> {
                     ctx.request_repaint_after(wake);
                 }
             });
+        if let Some(popup) = self.popup.as_mut() {
+            let chosen = popup.show(ctx);
+            if !popup.open {
+                self.popup = None;
+            }
+            if let Some(id) = chosen {
+                self.core.state.run_menu_item(id, &self.core.env);
+            }
+        }
     }
 }

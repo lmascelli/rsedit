@@ -153,6 +153,8 @@ here."
 (define-key nil "M-g f" 'findings-list)
 
 (define-key 'findings-list-mode "<ret>" 'findings-list-goto)
+;; A double click on a line chooses it, as Return does: the `mouse' page.
+(put 'findings-list-mode 'double-click-command 'findings-list-goto)
 (define-key 'findings-list-mode "o" 'findings-list-show)
 (define-key 'findings-list-mode "g" 'findings-list-refresh)
 (define-key 'findings-list-mode "n" 'next-line)

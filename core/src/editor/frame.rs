@@ -138,6 +138,13 @@ impl<B: BufferTrait> EditorState<B> {
             .flatten();
         // The findings and the windows, then the buffers: one at a time.
         let findings = self.finding_marks();
+        // The menus, a leaf: their labels copied out, and the request taken.
+        let menu_bar = if menu_bar_mode(env) {
+            self.menus(|menus| menus.bar_labels())
+        } else {
+            Vec::new()
+        };
+        let menu = self.take_menu_request();
 
         // A message that has expired is not reported. The state keeps it, and
         // the view forgets it: nothing runs on a timer to tidy up.
@@ -308,6 +315,8 @@ impl<B: BufferTrait> EditorState<B> {
             colouring_pending,
             separators,
             clipboard: self.take_pending_clipboard(),
+            menu_bar,
+            menu,
         }
     }
 

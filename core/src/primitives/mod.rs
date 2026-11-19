@@ -55,6 +55,7 @@ pub(crate) mod lisp_job;
 mod loading;
 mod macros;
 mod match_data;
+mod menus;
 mod minibuffer;
 mod modes;
 pub(crate) mod mouse;
@@ -163,6 +164,7 @@ pub fn install_primitives<B: BufferTrait>(
     match_data::install(&into);
     minibuffer::install(&into);
     modes::install(&into);
+    menus::install(&into);
     mouse::install(&into);
     movement::install(&into);
     occur::install(&into);

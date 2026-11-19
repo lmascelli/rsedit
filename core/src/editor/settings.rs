@@ -191,6 +191,12 @@ pub const SETTINGS: &[Setting] = &[
               turns it on and off.",
     },
     Setting {
+        name: MENU_BAR_MODE,
+        doc: "Whether the front end shows the menu bar: in the terminal, a row above the \
+              windows; in a window, a bar of its own. F10, `menu-bar-open', opens it either \
+              way.",
+    },
+    Setting {
         name: WINDOW_SEPARATOR,
         doc: "The character drawn between windows side by side, as a string; nil draws a \
               space.\n\n\
@@ -470,6 +476,13 @@ pub const DEFAULT_MODE_LINE_FORMAT: &str = " %*%i %b   %m%n %s%!  L%l C%c   %p "
 /// The name of the Lisp variable that turns the mouse on.
 pub const MOUSE_MODE: &str = "mouse-mode";
 
+/// The name of the Lisp variable that shows the menu bar.
+pub const MENU_BAR_MODE: &str = "menu-bar-mode";
+
+/// The name of the property of a mode naming the command a double click on
+/// a line of its buffers runs.
+pub const DOUBLE_CLICK_COMMAND: &str = "double-click-command";
+
 /// The name of the Lisp variable holding the function `find-file` hands a
 /// directory to.
 pub const OPEN_DIRECTORY_CALLBACK: &str = "*open-directory-callback*";
@@ -605,6 +618,16 @@ pub(super) fn mode_line_format<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -
 /// asked.
 pub fn mouse_mode<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
     env.get_variable(MOUSE_MODE)
+        .is_some_and(|value| !value.is_nil())
+}
+
+/// Returns whether the front end shows the menu bar, as Lisp defines it now.
+///
+/// Off unless something says otherwise, as [`mouse_mode`] is: the `init.lisp`
+/// written for somebody who has none turns it on. Whether it is shown, and
+/// how, is the front end's: a terminal gives it a row, a window a bar.
+pub fn menu_bar_mode<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
+    env.get_variable(MENU_BAR_MODE)
         .is_some_and(|value| !value.is_nil())
 }
 

@@ -37,6 +37,7 @@ THE REFERENCE
         windows           what shows a buffer
         dired             a directory in a buffer
         mouse             clicking, dragging and the wheel
+        menus             the menu bar, the context menu, and adding to them
         keymaps           how a key becomes a command
         modes             what colouring and keys a buffer gets
         writing-modes     colouring a language, and its brackets

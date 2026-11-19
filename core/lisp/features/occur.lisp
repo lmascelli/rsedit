@@ -112,6 +112,8 @@ directory. The list fills in as the files are read."
 (define-key nil "M-s g" 'grep)
 
 (define-key 'occur-mode "<ret>" 'occur-goto)
+;; A double click on a line chooses it, as Return does: the `mouse' page.
+(put 'occur-mode 'double-click-command 'occur-goto)
 (define-key 'occur-mode "o" 'occur-show)
 (define-key 'occur-mode "n" 'next-line)
 (define-key 'occur-mode "p" 'previous-line)

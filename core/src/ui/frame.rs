@@ -56,6 +56,18 @@ pub struct FrameSnapshot {
     /// the editor by the capture, so it is on one frame only; a renderer
     /// with no clipboard to offer ignores it.
     pub clipboard: Option<String>,
+
+    /// The labels of the menu bar's menus, in order, while `menu-bar-mode` is
+    /// on; empty when it is off. Where and how the bar is drawn is the front
+    /// end's: what each menu holds it asks
+    /// [`EditorState::menu_bar`](crate::EditorState::menu_bar) when one
+    /// opens.
+    pub menu_bar: Vec<String>,
+
+    /// A menu the editor asks the front end to open -- after a right click,
+    /// or `menu-bar-open` -- or `None`. Taken from the editor by the capture,
+    /// as [`Self::clipboard`] is, so it is on one frame only.
+    pub menu: Option<super::MenuRequest>,
 }
 
 impl FrameSnapshot {

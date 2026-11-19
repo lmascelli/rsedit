@@ -1,0 +1,142 @@
+NAME
+    menus - the menu bar, the context menu, and adding to them
+
+SYNOPSIS
+    (menu-bar-add PATH COMMAND &optional ENABLE)
+    (menu-bar-add-dynamic PATH FUNCTION)
+    (menu-bar-remove PATH)
+    (menu-bar-items)
+    (menu-bar-open)
+    (context-menu-add MODE PATH COMMAND &optional ENABLE)
+    (context-menu-add-dynamic MODE PATH FUNCTION)
+    (context-menu-remove MODE PATH)
+    (context-menu-items)
+    (context-menu-open)
+    menu-bar-mode
+
+DESCRIPTION
+    Two kinds of menu offer commands to choose with the mouse or the arrows:
+    the menu bar, along the top, and the context menu, which a right click
+    opens under the pointer. Each entry runs a command as a key would: one
+    step to undo, the command hooks, the keys shown beside it where a key
+    runs the same command.
+
+    The editor holds what the menus contain, and modules add to them; how a
+    menu looks is the front end's. In the terminal the menu bar takes the
+    row above the windows and a menu is a box drawn over them; in a window
+    they are the window's own menus. The init.lisp the editor writes for you
+    turns `menu-bar-mode' on.
+
+THE MENU BAR
+    It comes with three menus. File opens, saves, closes and quits; Buffers
+    lists the buffers, the current one marked with <, and ends with the
+    whole buffer list; Help opens the manual and describes functions,
+    variables, keys and modes.
+
+    Click a label, or press F10 to open the first menu from the keyboard,
+    whether the bar is shown or not. In the terminal the arrows walk the
+    menus: up and down within one, right into a menu inside it or on to the
+    next menu of the bar, left back out or to the menu before. Return or
+    the space chooses, a letter goes to the next entry it begins, and Esc,
+    C-g or F10 close the menus. A click outside them closes them too.
+
+    An entry greyed out cannot be chosen now: its condition says no, or its
+    command does not exist, as when the module that defines it was left out.
+
+THE CONTEXT MENU
+    A right click puts the cursor where it landed and opens the menu of the
+    buffer there. A right click inside the selection keeps it, so that Cut
+    and Copy work on it. S-F10 opens the same menu at the cursor.
+
+    The menu has the entries of the buffer's major mode first, then those of
+    each minor mode on in it, in the order they were turned on, then those
+    of every buffer: Undo, Redo, Cut, Copy, Paste and Select All. A line
+    separates two groups. In a buffer with a language server, lsp-mode adds
+    Find Definition, Find References, Go Back and Code Action.
+
+ADDING ENTRIES
+    An entry is named by a path: the labels of the menus it is in, then its
+    own. menu-bar-add makes the menus on the way when they are missing, and
+    puts the entry after those already there; an entry with the same label
+    is replaced where it is, so loading the same code twice changes
+    nothing. A label that begins with -- is a separator, the rest of it
+    only telling two separators of a menu apart.
+
+    COMMAND is a command's name, run as M-x runs it, so that it asks for
+    its arguments, or a form, such as '(manpage "guide"), run as written.
+    ENABLE is a function's name or a form, evaluated each time the menu
+    opens, with the buffer the menu is for current: while it says nil, the
+    entry is greyed out. nil for ENABLE, like leaving it out, means always.
+
+    context-menu-add takes a mode first: the entry is in the context menu
+    of the buffers where that mode, major or minor, is on, or of every
+    buffer when the mode is nil. The mode need not exist yet.
+
+    menu-bar-add-dynamic gives a menu entries made each time it opens, as
+    the Buffers menu lists the buffers there are: FUNCTION is called with
+    no arguments, and returns a list of (LABEL COMMAND), (LABEL COMMAND
+    ENABLED), with ENABLED a value rather than a condition, or strings
+    beginning with -- for separators. They go where the function was
+    added, among the menu's other entries. A menu that comes out empty is
+    left out, and so is a separator with nothing on one side.
+
+    menu-bar-remove and context-menu-remove take an entry away, a menu with
+    everything in it. menu-bar-items and context-menu-items return a menu
+    as it would open now, for looking at what a configuration did.
+
+THE DOUBLE CLICK IN A LIST
+    A list -- occur, grep and the compilation buffer, dired, the buffer
+    list, the findings, the themes, the locations of a language server,
+    help -- chooses the line double-clicked as Return chooses it: see
+    `mouse' for how a mode of yours says what a double click runs.
+
+FACES
+    In the terminal, the bar and the menus are drawn in the face menu, the
+    entry the keys are on in menu-selected, and an entry greyed out in
+    menu-disabled; see `themes' to change them. A window draws its menus in
+    its own colours.
+
+LIMITS
+    The terminal reads a right click and F10 only where it passes them on:
+    some terminals keep F10 for their own menu, and give the right button
+    to the editor only while `mouse-mode' is on. While a prompt is open,
+    F10 and a right click open nothing, and an entry chosen runs nothing:
+    finish the prompt, or cancel it with C-g, first.
+
+EXAMPLES
+    A Tools menu on the bar, with a menu inside it:
+
+        (menu-bar-add '("Tools" "Grep...") 'grep)
+        (menu-bar-add '("Tools" "--build") nil)
+        (menu-bar-add '("Tools" "Build" "Compile...") 'compile)
+
+    An entry that can be chosen only in a buffer visiting a file:
+
+        (menu-bar-add '("File" "Revert") 'revert-buffer 'buffer-file-name)
+
+    Entries in the context menu of every Python buffer:
+
+        (context-menu-add 'python-mode "Comment Region" 'comment-region
+                          'use-region-p)
+
+    A menu that lists the recent files each time it opens:
+
+        (defun my-recent-entries ()
+          (mapcar (lambda (file) (list file (list 'find-file file)))
+                  (recent-files)))
+        (menu-bar-add-dynamic '("File" "Recent") 'my-recent-entries)
+
+    The menus as they would open now, to look at from M-:
+
+        (menu-bar-items)
+
+    No menu bar, the menus still a key away:
+
+        (setq menu-bar-mode nil)
+
+KEYS
+    <f10>                   menu-bar-open
+    S-<f10>                 context-menu-open
+
+SEE ALSO
+    mouse, keymaps, themes, buffers, lsp

@@ -175,6 +175,8 @@ apply one."
 
 (define-key nil "C-c t" 'theme-list)
 (define-key 'theme-list-mode "<ret>" 'theme-list-select)
+;; A double click on a line chooses it, as Return does: the `mouse' page.
+(put 'theme-list-mode 'double-click-command 'theme-list-select)
 (define-key 'theme-list-mode "g" 'theme-list-refresh)
 (define-key 'theme-list-mode "n" 'next-line)
 (define-key 'theme-list-mode "p" 'previous-line)

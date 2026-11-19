@@ -57,6 +57,7 @@ MODULES
     findings             what tools said about a file, drawn, and M-g f
     lsp                  language servers, off until lsp-mode is on
     theme                C-c t, and how faces are drawn
+    menus                F10, the menu bar, and a right click's menu
     vim                  modal editing, off until M-x vim-mode
     completion-at-point  where completions come from
     default-configuration  every module above, and the settings the editor

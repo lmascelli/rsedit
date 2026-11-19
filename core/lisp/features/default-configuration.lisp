@@ -53,6 +53,7 @@ loaded anyway.")
     findings            ; what tools said about a file, drawn, and M-g f
     lsp                 ; language servers, off until lsp-mode is asked for
     theme               ; C-c t to choose how faces are drawn
+    menus               ; F10 for the menu bar, a right click for a menu
     vim                 ; M-x vim-mode, modal editing in a buffer
     completion-at-point); the sources C-M-i asks for completions
   "The modules `default-configuration' loads, in this order.")
@@ -71,6 +72,9 @@ loaded anyway.")
 ;; with the mouse to paste it into another program stops working -- hold Shift
 ;; in most terminals to get it back for one drag.
 (setq mouse-mode t)
+
+;; The menu bar: a row above the windows in a terminal, a bar in a window.
+(setq menu-bar-mode t)
 
 (log "default-configuration loaded")
 (provide 'default-configuration)

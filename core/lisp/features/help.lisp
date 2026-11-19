@@ -589,6 +589,8 @@ those still bound under the key they were under before."
 (define-key 'help-mode "p" 'previous-line)
 (define-key 'help-mode "K" 'help-follow)
 (define-key 'help-mode "<ret>" 'help-follow)
+;; A double click on a line chooses it, as Return does: the `mouse' page.
+(put 'help-mode 'double-click-command 'help-follow)
 
 ;; The shape of a page, recovered from the structure: a heading is a word
 ;; alone at the left margin, and everything a page quotes is `like this'.

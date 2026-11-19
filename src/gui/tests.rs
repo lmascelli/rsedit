@@ -322,6 +322,11 @@ fn app() -> EditorApp<'static, GapBuffer> {
         pending: false,
         clipboard_v_seen: false,
         last_input_frame: None,
+        bar_labels: Vec::new(),
+        bar_menu: None,
+        bar_rects: Vec::new(),
+        popup: None,
+        popups: 0,
     }
 }
 
@@ -546,4 +551,157 @@ fn the_editing_and_function_keys_reach_the_core_by_name() {
     ] {
         assert_eq!(special_key(from), Some(to), "{from:?}");
     }
+}
+
+#[test]
+fn a_right_click_in_the_grid_asks_the_editor_for_its_context_menu() {
+    let mut app = app();
+    expression(
+        &app.core,
+        r#"(progn (setq mouse-mode t) (context-menu-add nil "Here" 'undo))"#,
+    );
+    let _ = frame(&app.core);
+    input(
+        &mut app,
+        vec![egui::Event::PointerButton {
+            pos: Pos2::new(20., 30.),
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }],
+        egui::Modifiers::NONE,
+    );
+    let request = frame(&app.core).menu.expect("a menu to open");
+    assert_eq!(request.kind, rsedit_core::MenuKind::Context);
+    assert_eq!(request.at, Some((2, 1)), "the cell under the pointer");
+}
+
+#[test]
+fn a_menu_of_the_bar_the_keys_open_shows_under_its_label() {
+    let mut app = app();
+    expression(
+        &app.core,
+        r#"(progn (menu-bar-add '("File" "Open") 'find-file)
+                  (menu-bar-add '("Help" "Entry") 'describe-key))"#,
+    );
+    let label = Rect::from_min_size(Pos2::new(40., 0.), Vec2::new(30., 18.));
+    app.bar_rects = vec![Rect::NOTHING, label];
+    let request = rsedit_core::MenuRequest {
+        kind: rsedit_core::MenuKind::Bar { open: 1 },
+        menu: app.core.state.menu_bar(&app.core.env),
+        at: None,
+    };
+    let area = Rect::from_min_size(Pos2::new(0., 20.), Vec2::new(800., 640.));
+    app.open_requested(request, Grid::new(area, Vec2::new(8., 20.)), area, None);
+    let popup = app.popup.as_ref().expect("a popup");
+    assert_eq!(popup.beside, label);
+    assert_eq!(popup.menu.labels(), ["Entry"], "Help's own entries");
+}
+
+#[test]
+fn while_a_menu_is_open_nothing_typed_or_clicked_reaches_the_buffer() {
+    let mut app = app();
+    expression(&app.core, r#"(context-menu-add nil "Here" 'undo)"#);
+    let area = Rect::from_min_size(Pos2::ZERO, Vec2::new(800., 640.));
+    let request = rsedit_core::MenuRequest {
+        kind: rsedit_core::MenuKind::Context,
+        menu: app.core.state.context_menu(&app.core.env),
+        at: Some((3, 3)),
+    };
+    app.open_requested(request, Grid::new(area, Vec2::new(8., 20.)), area, None);
+    let before = expression(&app.core, "(buffer-string)");
+    input(
+        &mut app,
+        vec![
+            egui::Event::Text("x".into()),
+            egui::Event::PointerButton {
+                pos: Pos2::new(200., 200.),
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+        egui::Modifiers::NONE,
+    );
+    assert_eq!(expression(&app.core, "(buffer-string)"), before);
+    assert_eq!(expression(&app.core, "(point)"), ELispExp::number(0.));
+}
+
+#[test]
+fn a_popup_shows_its_entries_and_chooses_nothing_unclicked() {
+    let mut app = app();
+    expression(
+        &app.core,
+        r#"(context-menu-add nil '("More" "Inside") 'undo)"#,
+    );
+    let area = Rect::from_min_size(Pos2::ZERO, Vec2::new(800., 640.));
+    let request = rsedit_core::MenuRequest {
+        kind: rsedit_core::MenuKind::Context,
+        menu: app.core.state.context_menu(&app.core.env),
+        at: Some((3, 3)),
+    };
+    app.open_requested(request, Grid::new(area, Vec2::new(8., 20.)), area, None);
+    let ctx = egui::Context::default();
+    let mut chosen = None;
+    let _ = ctx.run(
+        egui::RawInput {
+            screen_rect: Some(area),
+            ..Default::default()
+        },
+        |ctx| chosen = app.popup.as_mut().expect("open").show(ctx),
+    );
+    assert_eq!(chosen, None);
+    assert!(app.popup.as_ref().is_some_and(|popup| popup.open));
+}
+
+/// Runs one frame of egui with EVENTS, the menu bar of APP drawn at the top.
+fn bar_frame(
+    app: &mut EditorApp<'static, GapBuffer>,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) -> Option<rsedit_core::MenuItemId> {
+    let mut chosen = None;
+    let _ = ctx.run(
+        egui::RawInput {
+            events,
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800., 640.))),
+            ..Default::default()
+        },
+        |ctx| {
+            egui::TopBottomPanel::top("bar").show(ctx, |ui| chosen = app.menu_bar(ui));
+        },
+    );
+    chosen
+}
+
+#[test]
+fn a_click_on_a_label_of_the_bar_opens_its_menu_resolved_then() {
+    let mut app = app();
+    expression(
+        &app.core,
+        r#"(progn (menu-bar-add '("File" "Open") 'find-file)
+                  (menu-bar-add '("Help" "Keys") 'describe-key))"#,
+    );
+    app.bar_labels = vec!["File".into(), "Help".into()];
+    let ctx = egui::Context::default();
+    bar_frame(&mut app, &ctx, Vec::new());
+    assert_eq!(app.bar_rects.len(), 2, "each label drawn");
+    assert!(app.bar_menu.is_none(), "nothing resolved while closed");
+
+    let at = app.bar_rects[0].center();
+    let press = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    bar_frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(at), press(true)],
+    );
+    bar_frame(&mut app, &ctx, vec![press(false)]);
+    bar_frame(&mut app, &ctx, Vec::new());
+    let bar = app.bar_menu.as_ref().expect("resolved as the menu opened");
+    assert_eq!(bar.labels(), ["File", "Help"]);
 }

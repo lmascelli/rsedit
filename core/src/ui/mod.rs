@@ -1,6 +1,6 @@
 //! What the screen shows, apart from any front end: the windows and how they
 //! share the frame, how one is composed into rows, highlights, a gutter and a
-//! status line, the findings drawn over a buffer, the faces and the theme, and the frame a front end draws.
+//! status line, the findings drawn over a buffer, the faces and the theme, the menus, and the frame a front end draws.
 //!
 //! Design: `doc/architettura-editor.typ, <frame>`.
 mod compose;
@@ -10,6 +10,7 @@ mod findings;
 mod frame;
 mod gutter;
 pub mod layout;
+mod menu;
 mod mode_line;
 pub(crate) mod visual_lines;
 pub mod width;
@@ -30,6 +31,7 @@ pub use findings::{BufferFindings, FindingMark, FindingMarks, finding_message_at
 pub(crate) use faces::Registry as FaceRegistry;
 pub use frame::FrameSnapshot;
 pub use gutter::{GutterCell, GutterSpec, LineNumbers};
+pub use menu::{Menu, MenuItem, MenuItemId, MenuKind, MenuRequest};
 pub use windows::{
     Division, FloatingWindow, Focus, LayoutNode, Orientation, Prompt, Rect, Side, SplitPath,
     Window, WindowId, WrappedWindow,

@@ -1564,7 +1564,15 @@ and the changes elsewhere that go with the one chosen, an import, are made."
 (define-key 'lsp-mode "C-M-i" 'lsp-complete)
 (define-key 'lsp-mode "M-tab" 'lsp-complete)
 
+;; What a right click offers where a server is attached: the `menus' page.
+(context-menu-add 'lsp-mode "Find Definition" 'lsp-find-definition)
+(context-menu-add 'lsp-mode "Find References" 'lsp-find-references)
+(context-menu-add 'lsp-mode "Go Back" 'lsp-go-back)
+(context-menu-add 'lsp-mode "Code Action..." 'lsp-code-action)
+
 (define-key 'lsp-locations-mode "<ret>" 'lsp-locations-goto)
+;; A double click on a line chooses it, as Return does: the `mouse' page.
+(put 'lsp-locations-mode 'double-click-command 'lsp-locations-goto)
 (define-key 'lsp-locations-mode "n" 'next-line)
 (define-key 'lsp-locations-mode "p" 'previous-line)
 (define-key 'lsp-locations-mode "q" 'results-quit)

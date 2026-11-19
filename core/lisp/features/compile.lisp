@@ -355,6 +355,8 @@ it names, and they replace the findings of `compile'."
 ;; list was made last, by any producer.
 
 (define-key 'compilation-mode "<ret>" 'compilation-goto)
+;; A double click on a line chooses it, as Return does: the `mouse' page.
+(put 'compilation-mode 'double-click-command 'compilation-goto)
 (define-key 'compilation-mode "n" 'compilation-next)
 (define-key 'compilation-mode "p" 'compilation-previous)
 (define-key 'compilation-mode "g" 'compilation-recompile)

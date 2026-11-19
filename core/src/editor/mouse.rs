@@ -5,6 +5,7 @@
 //! Design: `doc/architettura-editor.typ, <mouse>`.
 
 use super::*;
+use crate::ui::MenuKind;
 use crate::ui::layout::Layout;
 
 /// Returns the command form NAME with the numbers ARGS, built rather than
@@ -63,6 +64,53 @@ impl<B: BufferTrait> EditorState<B> {
                 .unwrap_or(screen_column)
         })
         .unwrap_or(screen_column)
+    }
+
+    /// Returns whether (LINE, COLUMN) of WINDOW is inside the selection: the
+    /// window has the focus, and its buffer an active region around them.
+    fn in_active_region(&self, window: WindowId, line: usize, column: usize) -> bool {
+        if window != self.get_focused_window_id() {
+            return false;
+        }
+        self.with_current_buffer(|buf| {
+            let len = buf.text.len();
+            let Some((start, end)) =
+                crate::buffer::mark::region_bounds(buf.mark, buf.text.cursor_pos_1d(), len)
+            else {
+                return false;
+            };
+            let line = line.min(buf.text.line_count().saturating_sub(1));
+            let column = column.min(crate::primitives::movement::line_length(&buf.text, line));
+            let at = buf.text.cursor_2d_to_1d(line, column);
+            (start..end).contains(&at)
+        })
+    }
+
+    /// Returns the command a double click runs in WINDOW's buffer, from the
+    /// `double-click-command` property of its modes -- a minor mode's first,
+    /// the last turned on before the others, then the major mode's -- or
+    /// `None` when none has one.
+    fn double_click_command(
+        &self,
+        window: WindowId,
+        env: &Arc<Env<EditorState<B>>>,
+    ) -> Option<ELispExp<B>> {
+        let name = self.windows(|windows| windows.buffer_of(window))?;
+        // The names out of the buffer, and its lock given back, before the
+        // environment is read.
+        let modes = self.with_buffer(&name, |buf| {
+            buf.minor_modes
+                .iter()
+                .rev()
+                .map(|on| on.name.clone())
+                .chain(std::iter::once(buf.current_mode.clone()))
+                .collect::<Vec<_>>()
+        })?;
+        modes.iter().find_map(|mode| {
+            env.get_property(mode, DOUBLE_CLICK_COMMAND)
+                .filter(|command| !command.is_nil())
+                .and_then(|command| menus::menu_command(&command))
+        })
     }
 
     /// Scrolls a drag that has left its window by one line, and moves the
@@ -185,7 +233,15 @@ impl<B: BufferTrait> EditorState<B> {
                 // `Windows::register_click`.
                 let command = match self.register_click(x, y) {
                     ClickCount::Single => "mouse-set-point",
-                    ClickCount::Double => "mouse-start-selection",
+                    ClickCount::Double => {
+                        // In a list, the entry the first click put point on is
+                        // chosen, as Return chooses it.
+                        if let Some(command) = self.double_click_command(window, env) {
+                            self.run_command_form(command, env);
+                            return true;
+                        }
+                        "mouse-start-selection"
+                    }
                 };
                 Some(mouse_form(
                     command,
@@ -195,6 +251,34 @@ impl<B: BufferTrait> EditorState<B> {
                         self.buffer_column(window, line, column, env) as f64,
                     ],
                 ))
+            }
+            (
+                MouseKind::Down(MouseButton::Right),
+                Hit::Text {
+                    window,
+                    line,
+                    column,
+                },
+            ) => {
+                let column = self.buffer_column(window, line, column, env);
+                // A right click in the selection keeps it, for the menu's Copy
+                // and Cut; anywhere else it is a click, and the menu is about
+                // where it landed.
+                if !self.in_active_region(window, line, column) {
+                    self.run_command_form(
+                        mouse_form(
+                            "mouse-set-point",
+                            &[window.0 as f64, line as f64, column as f64],
+                        ),
+                        env,
+                    );
+                }
+                self.request_menu(
+                    MenuKind::Context,
+                    Some((x.max(0) as usize, y.max(0) as usize)),
+                    env,
+                );
+                return true;
             }
             (MouseKind::Down(MouseButton::Left), Hit::Separator { path, orientation }) => {
                 self.set_mouse_drag(Some(MouseDrag::Divider {
@@ -224,7 +308,7 @@ impl<B: BufferTrait> EditorState<B> {
                 Some(mouse_form("mouse-scroll", &[window.0 as f64, 1.0]))
             }
             // Everything else is swallowed on purpose: every click on a float,
-            // and every button nothing is bound to.
+            // a right click off the text, and the middle button.
             _ => None,
         };
         let Some(form) = form else {

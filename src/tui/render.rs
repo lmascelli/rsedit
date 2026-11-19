@@ -4,6 +4,7 @@
 //!
 //! Design: `doc/architettura-editor.typ, <tui>`.
 use super::colour::{ColorDepth, resolve};
+use super::menu::{OpenMenus, draw_bar};
 use crossterm::{
     QueueableCommand, cursor, execute,
     style::{Attribute, Print, SetAttribute, SetBackgroundColor, SetForegroundColor},
@@ -13,29 +14,70 @@ use rsedit_core::width::{cells, cut, fit};
 use rsedit_core::{Face, FrameSnapshot, Highlight, Rect, RenderableWindowView, Style, Theme};
 use std::io::{Write, stdout};
 
-/// Draws FRAME on the terminal, for DEPTH colours. Takes a frame already
-/// captured, never the editor: the I/O holds no lock.
-pub fn render_frame(frame: &FrameSnapshot, depth: ColorDepth) -> std::io::Result<()> {
+/// Draws FRAME on the terminal, for DEPTH colours, below the menu bar when
+/// TOP gives it a row, and MENUS over it. Takes a frame already captured,
+/// never the editor: the I/O holds no lock.
+pub fn render_frame(
+    frame: &FrameSnapshot,
+    depth: ColorDepth,
+    top: u16,
+    menus: Option<&OpenMenus>,
+) -> std::io::Result<()> {
     let mut stdout = stdout();
-    render_to(&mut stdout, frame, depth)
+    render_screen(&mut stdout, frame, depth, top, menus)
 }
 
-/// Draws FRAME into OUT, for DEPTH colours: any writer, so that a test reads
-/// the escapes. The cursor is placed last, since every row drawn moves it.
+/// Draws into OUT what [`render_frame`] draws on the terminal: the frame from
+/// row TOP, the menu bar on row 0 while it has the row or a menu of it is
+/// open, and MENUS over everything, with the cursor hidden while they are.
+pub fn render_screen<W: Write>(
+    out: &mut W,
+    frame: &FrameSnapshot,
+    depth: ColorDepth,
+    top: u16,
+    menus: Option<&OpenMenus>,
+) -> std::io::Result<()> {
+    let screen = (frame.width, frame.height + top as usize);
+    clear(out, frame, depth)?;
+    let mut cursor_at = draw_frame(out, frame, depth, top)?;
+    let open = menus.and_then(OpenMenus::bar_open);
+    let labels = match menus.and_then(OpenMenus::bar_labels) {
+        Some(labels) => labels,
+        None => frame.menu_bar.clone(),
+    };
+    if top > 0 || open.is_some() {
+        draw_bar(out, &labels, open, &frame.theme, depth, frame.width)?;
+    }
+    if let Some(menus) = menus {
+        menus.draw(out, &frame.theme, depth, screen)?;
+        cursor_at = None;
+    }
+    finish(out, frame, cursor_at)
+}
+
+/// Draws FRAME into OUT, for DEPTH colours, with no menu bar and no menus:
+/// any writer, so that a test reads the escapes. The cursor is placed last,
+/// since every row drawn moves it.
+#[cfg(test)]
 pub fn render_to<W: Write>(
     out: &mut W,
     frame: &FrameSnapshot,
     depth: ColorDepth,
 ) -> std::io::Result<()> {
-    let frame_w = frame.width as isize;
-    let frame_h = frame.height as isize;
+    clear(out, frame, depth)?;
+    let cursor_at = draw_frame(out, frame, depth, 0)?;
+    finish(out, frame, cursor_at)
+}
 
-    // The page: the colours of the face `default`, which every cell has
-    // unless a face of its own says otherwise.
+/// Hides the cursor and clears the screen in the colours of FRAME's page: a
+/// terminal erases in the background colour in force.
+pub(crate) fn clear<W: Write>(
+    out: &mut W,
+    frame: &FrameSnapshot,
+    depth: ColorDepth,
+) -> std::io::Result<()> {
     let base = page(&frame.theme);
-
-    // Hidden while drawing, so that it is not seen moving. The colours before
-    // the clear: a terminal erases in the background colour in force.
+    // Hidden while drawing, so that it is not seen moving.
     out.queue(cursor::Hide)?;
     if !base.is_plain() {
         reset(out, &base, depth)?;
@@ -44,7 +86,57 @@ pub fn render_to<W: Write>(
         out,
         terminal::Clear(terminal::ClearType::All),
         cursor::MoveTo(0, 0)
-    )?;
+    )
+}
+
+/// Places the cursor at CURSOR_AT, or leaves it hidden, writes the text owed
+/// to the clipboard, and flushes: what ends every frame.
+pub(crate) fn finish<W: Write>(
+    out: &mut W,
+    frame: &FrameSnapshot,
+    cursor_at: Option<(u16, u16)>,
+) -> std::io::Result<()> {
+    if let Some((x, y)) = cursor_at {
+        out.queue(cursor::MoveTo(x, y))?;
+        out.queue(cursor::Show)?;
+    }
+    // The text owed to the clipboard, on the frames that carry it.
+    if let Some(text) = &frame.clipboard {
+        out.queue(Print(osc52_copy(text)))?;
+    }
+    out.flush()
+}
+
+/// The part of the terminal a frame is drawn in: as wide and as high as the
+/// frame, from row `top` down, the rows above being the front end's own.
+#[derive(Clone, Copy)]
+pub(crate) struct Clip {
+    pub width: isize,
+    pub height: isize,
+    pub top: isize,
+}
+
+/// Draws FRAME into OUT, for DEPTH colours, from row TOP of the terminal
+/// down, on a screen already cleared, and returns where the cursor goes, or
+/// `None` when point is off screen: the caller places it once it has drawn
+/// what goes over the frame.
+pub(crate) fn draw_frame<W: Write>(
+    out: &mut W,
+    frame: &FrameSnapshot,
+    depth: ColorDepth,
+    top: u16,
+) -> std::io::Result<Option<(u16, u16)>> {
+    let clip = Clip {
+        width: frame.width as isize,
+        height: frame.height as isize,
+        top: top as isize,
+    };
+    let frame_w = clip.width;
+    let frame_h = clip.height;
+
+    // The page: the colours of the face `default`, which every cell has
+    // unless a face of its own says otherwise.
+    let base = page(&frame.theme);
 
     // Where the cursor should end up, remembered rather than applied.
     let mut cursor_at: Option<(u16, u16)> = None;
@@ -60,8 +152,7 @@ pub fn render_to<W: Write>(
                 separator.rect.x,
                 separator.rect.y + offset as isize,
                 &run,
-                frame_w,
-                frame_h,
+                clip,
             )?;
         }
         reset(out, &base, depth)?;
@@ -74,13 +165,7 @@ pub fn render_to<W: Write>(
                 .title
                 .clone()
                 .or_else(|| Some(view.buffer_name.clone()));
-            draw_window_border(
-                out,
-                &view.rect,
-                &label,
-                frame.width as u16,
-                frame.height as u16,
-            )?;
+            draw_window_border(out, &view.rect, &label, clip)?;
         }
 
         // Every row of the rectangle, padded to its width: what makes a
@@ -90,7 +175,7 @@ pub fn render_to<W: Write>(
             let text = view.lines.get(offset_y).map(String::as_str).unwrap_or("");
             // Cut to the window by cells, so that a long line stays in it.
             let row = fit(text, view.rect.width);
-            draw_clipped_row(out, view.rect.x, target_y, &row, frame_w, frame_h)?;
+            draw_clipped_row(out, view.rect.x, target_y, &row, clip)?;
         }
 
         // The gutter, left of the rectangle, cell by cell: point's line has a
@@ -101,11 +186,11 @@ pub fn render_to<W: Write>(
             let text = fit(&cell.text, view.gutter_width);
             let x = view.rect.x - view.gutter_width as isize;
             let y = view.rect.y + offset_y as isize;
-            draw_clipped_row(out, x, y, &text, frame_w, frame_h)?;
+            draw_clipped_row(out, x, y, &text, clip)?;
             reset(out, &base, depth)?;
             if let (Some(face), Some(sign)) = (cell.sign, text.chars().next()) {
                 apply_style(out, &frame.theme.style(face), depth)?;
-                draw_clipped_row(out, x, y, &sign.to_string(), frame_w, frame_h)?;
+                draw_clipped_row(out, x, y, &sign.to_string(), clip)?;
                 reset(out, &base, depth)?;
             }
         }
@@ -113,16 +198,7 @@ pub fn render_to<W: Write>(
         // The highlights, drawn again over the rows: a plain row is one
         // `Print`.
         for highlight in &view.highlights {
-            draw_highlight(
-                out,
-                view,
-                highlight,
-                &frame.theme,
-                &base,
-                depth,
-                frame_w,
-                frame_h,
-            )?;
+            draw_highlight(out, view, highlight, &frame.theme, &base, depth, clip)?;
         }
 
         // The status line, on the row below the rectangle.
@@ -143,8 +219,7 @@ pub fn render_to<W: Write>(
                 view.rect.x - view.gutter_width as isize,
                 view.rect.y + view.rect.height as isize,
                 &text,
-                frame_w,
-                frame_h,
+                clip,
             )?;
             reset(out, &base, depth)?;
         }
@@ -171,37 +246,19 @@ pub fn render_to<W: Write>(
         // Painted whole, where the page has a colour: a terminal that does
         // not erase in the background colour would leave the row its own.
         let row = fit(echo_line, frame.width);
-        draw_clipped_row(out, 0, frame_h - 1, &row, frame_w, frame_h)?;
+        draw_clipped_row(out, 0, frame_h - 1, &row, clip)?;
     } else if !echo_line.is_empty() {
-        draw_clipped_row(out, 0, frame_h - 1, echo_line, frame_w, frame_h)?;
+        draw_clipped_row(out, 0, frame_h - 1, echo_line, clip)?;
     }
 
     // What the editor is waiting for, at the right end of the same row, over
     // the message where they meet.
     if !frame.pending_input.is_empty() {
         let start = frame_w - cells(&frame.pending_input) as isize;
-        draw_clipped_row(
-            out,
-            start.max(0),
-            frame_h - 1,
-            &frame.pending_input,
-            frame_w,
-            frame_h,
-        )?;
+        draw_clipped_row(out, start.max(0), frame_h - 1, &frame.pending_input, clip)?;
     }
 
-    // The cursor, at point, or hidden when point is off screen.
-    if let Some((x, y)) = cursor_at {
-        out.queue(cursor::MoveTo(x, y))?;
-        out.queue(cursor::Show)?;
-    }
-
-    // The text owed to the clipboard, on the frames that carry it.
-    if let Some(text) = &frame.clipboard {
-        out.queue(Print(osc52_copy(text)))?;
-    }
-
-    out.flush()
+    Ok(cursor_at.map(|(x, y)| (x, y + top)))
 }
 
 /// Returns the OSC 52 escape that asks the terminal to put TEXT in the system
@@ -242,8 +299,7 @@ fn draw_highlight<W: Write>(
     theme: &Theme,
     base: &Style,
     depth: ColorDepth,
-    frame_w: isize,
-    frame_h: isize,
+    clip: Clip,
 ) -> std::io::Result<()> {
     let Some(line) = view.lines.get(highlight.row) else {
         return Ok(());
@@ -281,8 +337,7 @@ fn draw_highlight<W: Write>(
         view.rect.x + highlight.start_col as isize,
         view.rect.y + highlight.row as isize,
         &text,
-        frame_w,
-        frame_h,
+        clip,
     )?;
     reset(out, base, depth)?;
     Ok(())
@@ -290,7 +345,7 @@ fn draw_highlight<W: Write>(
 
 /// Returns the colours of the page in THEME: those of the face `default`,
 /// without its attributes, which belong to no cell that does not ask.
-fn page(theme: &Theme) -> Style {
+pub(crate) fn page(theme: &Theme) -> Style {
     let default = theme.style(Face::DEFAULT);
     Style {
         fg: default.fg,
@@ -301,7 +356,7 @@ fn page(theme: &Theme) -> Style {
 
 /// Ends a run drawn in a face: clears the attributes and the colours, SGR 0
 /// doing both, and puts back those of the page, BASE, for what is drawn next.
-fn reset<W: Write>(out: &mut W, base: &Style, depth: ColorDepth) -> std::io::Result<()> {
+pub(crate) fn reset<W: Write>(out: &mut W, base: &Style, depth: ColorDepth) -> std::io::Result<()> {
     out.queue(SetAttribute(Attribute::Reset))?;
     if let Some(color) = base.fg {
         out.queue(SetForegroundColor(resolve(color, depth)))?;
@@ -315,7 +370,11 @@ fn reset<W: Write>(out: &mut W, base: &Style, depth: ColorDepth) -> std::io::Res
 /// Writes the escapes that draw in STYLE, its colours resolved for DEPTH: the
 /// one place the terminal learns what a face looks like. A colour STYLE does
 /// not name stays the page's, which [`reset`] left in force.
-fn apply_style<W: Write>(out: &mut W, style: &Style, depth: ColorDepth) -> std::io::Result<()> {
+pub(crate) fn apply_style<W: Write>(
+    out: &mut W,
+    style: &Style,
+    depth: ColorDepth,
+) -> std::io::Result<()> {
     for (on, attribute) in [
         (style.reverse, Attribute::Reverse),
         (style.bold, Attribute::Bold),
@@ -335,26 +394,26 @@ fn apply_style<W: Write>(out: &mut W, style: &Style, depth: ColorDepth) -> std::
     Ok(())
 }
 
-/// Prints CONTENT from cell START_X of row Y, cut to the frame, FRAME_W by
-/// FRAME_H: START_X and Y may be off it, and nothing is drawn of what is.
-/// Cut by cells, as the editor counted them, so that a wide character takes
-/// its two. Every control character in it is printed as [`printable`] has it:
-/// this is the one way text reaches the terminal, so nothing a file, a
-/// command's output or a message holds can be obeyed by it.
-fn draw_clipped_row<W: Write>(
+/// Prints CONTENT from cell START_X of row Y of the frame, cut to CLIP:
+/// START_X and Y may be off it, and nothing is drawn of what is. Row Y is
+/// row Y + `clip.top` of the terminal. Cut by cells, as the editor counted
+/// them, so that a wide character takes its two. Every control character in
+/// it is printed as [`printable`] has it: this is the one way text reaches
+/// the terminal, so nothing a file, a command's output or a message holds can
+/// be obeyed by it.
+pub(crate) fn draw_clipped_row<W: Write>(
     stdout: &mut W,
     start_x: isize,
     y: isize,
     content: &str,
-    frame_w: isize,
-    frame_h: isize,
+    clip: Clip,
 ) -> std::io::Result<()> {
-    if y < 0 || y >= frame_h {
+    if y < 0 || y >= clip.height {
         return Ok(());
     }
     let clip_left = (-start_x).max(0) as usize;
     let visible_start_x = start_x.max(0);
-    let room = (frame_w - visible_start_x).max(0) as usize;
+    let room = (clip.width - visible_start_x).max(0) as usize;
     if room == 0 {
         return Ok(());
     }
@@ -363,7 +422,10 @@ fn draw_clipped_row<W: Write>(
     if visible.is_empty() {
         return Ok(());
     }
-    stdout.queue(cursor::MoveTo(visible_start_x as u16, y as u16))?;
+    stdout.queue(cursor::MoveTo(
+        visible_start_x as u16,
+        (y + clip.top) as u16,
+    ))?;
     stdout.queue(Print(visible))?;
     Ok(())
 }
@@ -387,18 +449,13 @@ pub(crate) fn printable(c: char) -> char {
 }
 
 /// Draws the border of a floating window around RECT, outside it, TITLE in
-/// its top edge; an edge that falls off the frame, COLS by ROWS, is not
-/// drawn.
+/// its top edge; an edge that falls off the frame, CLIP, is not drawn.
 fn draw_window_border<W: Write>(
     stdout: &mut W,
     rect: &Rect,
     title: &Option<String>,
-    cols: u16,
-    rows: u16,
+    clip: Clip,
 ) -> std::io::Result<()> {
-    let frame_w = cols as isize;
-    let frame_h = rows as isize;
-
     let top_content = if let Some(title) = title {
         let title = cut(title, 0, rect.width.saturating_sub(1));
         let fill = rect.width.saturating_sub(cells(&title) + 1);
@@ -409,32 +466,18 @@ fn draw_window_border<W: Write>(
     let top_row = format!("┌{}┐", top_content);
     let bottom_row = format!("└{}┘", "─".repeat(rect.width));
 
-    draw_clipped_row(stdout, rect.x - 1, rect.y - 1, &top_row, frame_w, frame_h)?;
+    draw_clipped_row(stdout, rect.x - 1, rect.y - 1, &top_row, clip)?;
     draw_clipped_row(
         stdout,
         rect.x - 1,
         rect.y + rect.height as isize,
         &bottom_row,
-        frame_w,
-        frame_h,
+        clip,
     )?;
 
-    let left_x = rect.x - 1;
-    let right_x = rect.x + rect.width as isize;
-    let left_visible = (0..frame_w).contains(&left_x);
-    let right_visible = (0..frame_w).contains(&right_x);
     for r in rect.y..(rect.y + rect.height as isize) {
-        if r < 0 || r >= frame_h {
-            continue;
-        }
-        if left_visible {
-            stdout.queue(cursor::MoveTo(left_x as u16, r as u16))?;
-            stdout.queue(Print('│'))?;
-        }
-        if right_visible {
-            stdout.queue(cursor::MoveTo(right_x as u16, r as u16))?;
-            stdout.queue(Print('│'))?;
-        }
+        draw_clipped_row(stdout, rect.x - 1, r, "│", clip)?;
+        draw_clipped_row(stdout, rect.x + rect.width as isize, r, "│", clip)?;
     }
     Ok(())
 }
