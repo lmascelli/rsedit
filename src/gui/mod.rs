@@ -117,13 +117,6 @@ impl<'editor, B: BufferTrait> Core<'editor, B> {
         }
     }
 
-    /// Returns whether the current buffer's cursor is a block on a
-    /// character, as in Vim's Normal state, rather than a bar between two.
-    fn block_cursor(&self) -> bool {
-        self.value("buffer-get", vec![Self::quote("block-cursor")])
-            .is_ok_and(|value| !value.is_nil())
-    }
-
     /// Runs command NAME as `M-x` does, with its hooks, its undo step and
     /// the macro being recorded; refused while a prompt is open.
     fn command(&self, name: &str) {

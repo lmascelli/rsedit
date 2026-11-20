@@ -583,7 +583,8 @@ impl<'editor, B: BufferTrait> eframe::App for EditorApp<'editor, B> {
                     };
                     painter.line_segment(ends, Stroke::new(1_f32, fg));
                 }
-                let block = self.core.block_cursor();
+                let state = self.core.vim_state();
+                let block = !state.is_empty() && !matches!(state.as_str(), "insert" | "replace");
                 for view in &snapshot.views {
                     if let Some(caret) =
                         paint_view(&painter, grid, view, &snapshot, &font, block, &self.preedit)

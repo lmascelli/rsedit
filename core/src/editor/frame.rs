@@ -18,10 +18,10 @@ pub(crate) const SHOW_PAREN_MODE: &str = "show-paren-mode";
 /// or a replace off.
 pub(crate) const HIGHLIGHT_ALL_MATCHES: &str = "highlight-all-matches";
 
-/// The buffer property, as `buffer-put` keeps it, that says the cursor is a
-/// block standing on the character at point, as in Vim's Normal state, and not
-/// a bar between two: the delimiter paired is then the one under it.
-pub(crate) const BLOCK_CURSOR: &str = "lisp:block-cursor";
+/// The buffer property, as `buffer-put` keeps it, that says the cursor stands
+/// on the character at point, as Vim's Normal state has it, and not between
+/// two: the delimiter paired is then the one under it, and only that one.
+pub(crate) const SHOW_PAREN_UNDER_CURSOR: &str = "lisp:show-paren-under-cursor";
 
 /// How many characters the delimiter at point is looked for over, on either
 /// side of point: the reach of Emacs' `blink-matching-paren-distance`, so
@@ -45,7 +45,7 @@ struct ParenTable {
 
 /// Returns the delimiters to draw in the focused window, FOCUSED, from
 /// PARENS: the one next to point, or under it where the buffer has
-/// [`BLOCK_CURSOR`], and the one it pairs with, in
+/// [`SHOW_PAREN_UNDER_CURSOR`], and the one it pairs with, in
 /// [`Face::SHOW_PAREN_MATCH`], or in [`Face::SHOW_PAREN_MISMATCH`] when the
 /// two are of different kinds or there is no partner; none when the buffer
 /// has changed its major mode since PARENS was read, or has
@@ -66,10 +66,10 @@ fn paren_spots<B: BufferTrait>(
     }
     let point = buf.text.cursor_pos_1d();
     let resume = buf.scan_resume(point, &parens.table);
-    let block = buf
-        .data::<ELispExp<B>>(BLOCK_CURSOR)
+    let under = buf
+        .data::<ELispExp<B>>(SHOW_PAREN_UNDER_CURSOR)
         .is_some_and(|value| !value.is_nil());
-    let pair = if block {
+    let pair = if under {
         sexp::pairing_under(&buf.text, &parens.table, resume, point, SHOW_PAREN_REACH)
     } else {
         sexp::pairing(&buf.text, &parens.table, resume, point, SHOW_PAREN_REACH)

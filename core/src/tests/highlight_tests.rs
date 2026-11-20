@@ -194,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn under_a_block_cursor_a_closer_pairs_with_its_opener() {
+    fn under_the_cursor_a_closer_pairs_with_its_opener() {
         assert_eq!(
             pair_under("(a (b) c)", 5),
             Some(Pair {
@@ -211,15 +211,15 @@ mod tests {
     }
 
     #[test]
-    fn under_a_block_cursor_an_opener_pairs_as_it_does_after_point() {
+    fn under_the_cursor_an_opener_pairs_as_it_does_after_point() {
         assert_eq!(pair_under("(a (b) c)", 3), pair_in("(a (b) c)", 3));
         assert_eq!(pair_under("(a]", 0).map(|pair| pair.matched), Some(false));
     }
 
     #[test]
-    fn under_a_block_cursor_only_the_character_under_it_counts() {
+    fn under_the_cursor_only_the_character_under_it_counts() {
         // After a closer, on a character that is none: the closer is beside
-        // the block, not under it.
+        // the cursor, not under it.
         assert_eq!(pair_under("(a) b", 3), None);
         assert_eq!(pair_in("(a) b", 3).map(|pair| pair.at), Some(2));
         // On the second of two closers, the second, not the first.
@@ -235,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn under_a_block_cursor_a_closer_in_a_string_is_text_and_a_stray_one_has_no_partner() {
+    fn under_the_cursor_a_closer_in_a_string_is_text_and_a_stray_one_has_no_partner() {
         assert_eq!(pair_under(r#"x ")" y"#, 3), None);
         assert_eq!(
             pair_under("a b)", 3),
@@ -252,20 +252,20 @@ mod tests {
     // ----------------------------------------------------------------
 
     #[test]
-    fn a_block_cursor_draws_the_closer_under_it_with_its_partner() {
+    fn a_buffer_that_pairs_under_the_cursor_draws_the_closer_there_with_its_partner() {
         let (ctx, env) = editor_with("(foo (bar))", 10);
         assert_eq!(
             cells(&drawn(&ctx, &env, Face::SHOW_PAREN_MATCH)[0]),
             vec![(0, 5, 6), (0, 9, 10)],
-            "a bar cursor pairs the closer before point"
+            "by default, the closer before point"
         );
-        run("(buffer-put 'block-cursor t)", &env, &ctx);
+        run("(buffer-put 'show-paren-under-cursor t)", &env, &ctx);
         assert_eq!(
             cells(&drawn(&ctx, &env, Face::SHOW_PAREN_MATCH)[0]),
             vec![(0, 0, 1), (0, 10, 11)],
-            "a block pairs the one under it"
+            "the one under the cursor"
         );
-        run("(buffer-put 'block-cursor nil)", &env, &ctx);
+        run("(buffer-put 'show-paren-under-cursor nil)", &env, &ctx);
         assert_eq!(
             cells(&drawn(&ctx, &env, Face::SHOW_PAREN_MATCH)[0]),
             vec![(0, 5, 6), (0, 9, 10)]

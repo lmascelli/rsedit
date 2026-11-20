@@ -127,13 +127,13 @@ rest of a command."
 Visual states share."
   (cond ((eq state 'insert) 'vim-insert-map) ((eq state 'replace) 'vim-replace-map) (t 'vim-normal-map)))
 (defun vim--set-state (state)
-  "Put this buffer in Vim state STATE, with its keymap, its cursor and its
-name on the status line."
+  "Put this buffer in Vim state STATE, with its keymap, its way of pairing
+brackets and its name on the status line."
   (buffer-put 'vim-state state)
   (set-local-keymap (vim--state-keymap state))
-  ;; A block on a character but where text is typed, between two:
-  ;; show-paren-mode pairs the bracket under the block.
-  (buffer-put 'block-cursor (not (member state '(insert replace))))
+  ;; In Normal state point is on a character, and show-paren-mode pairs the
+  ;; bracket under the cursor; in the others it pairs as without Vim.
+  (buffer-put 'show-paren-under-cursor (eq state 'normal))
   (buffer-put 'mode-line-state
               (cond ((eq state 'insert) "INSERT")
                     ((eq state 'replace) "REPLACE")
@@ -183,7 +183,8 @@ status line it had; an Insert session ends as Escape ends it."
     (when (member (buffer-get 'local-keymap) '(vim-normal-map vim-insert-map vim-replace-map))
       (set-local-keymap (buffer-get 'vim-saved-keymap)))
     (buffer-put 'mode-line-state (buffer-get 'vim-saved-mode-line-state))
-    (dolist (key '(vim-state vim-anchor vim-insert-watching vim-insert-action vim-insert-start block-cursor))
+    (dolist (key '(vim-state vim-anchor vim-insert-watching vim-insert-action vim-insert-start
+                   show-paren-under-cursor))
       (buffer-put key nil))
     (remove-overlays 'vim-selection)
     (vim--reset) (deactivate-mark)))

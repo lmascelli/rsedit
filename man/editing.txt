@@ -230,14 +230,14 @@ SEEING WHICH BRACKETS PAIR
     cursor; a bracket whose partner is further than that is not drawn at
     all.
 
-    Where the cursor is a block standing on a character, as in vim's
-    Normal state, the bracket under it is the one drawn, a closing one as
-    well as an opening one, and a closing bracket just before it is not:
-    the block covers the character after point. A buffer says so with its
-    property block-cursor, which vim sets and clears as its state changes,
-    as the `vim' page says; any buffer can ask the same:
+    Where the cursor stands on a character, as in vim's Normal state, the
+    bracket under it is the one drawn, a closing one as well as an opening
+    one, and a closing bracket just before it is not: the cursor covers the
+    character after point. A buffer asks for that with its property
+    show-paren-under-cursor, which vim sets in Normal state and clears in
+    the others, as the `vim' page says; any buffer can ask the same:
 
-        (buffer-put 'block-cursor t)
+        (buffer-put 'show-paren-under-cursor t)
 
 COUNTS
     A number before a command means "do it that many times": C-u 20 C-f

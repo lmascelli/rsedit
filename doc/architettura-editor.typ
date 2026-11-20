@@ -3979,7 +3979,7 @@ tiene al massimo `keep`. È il limite che rende la scansione economica:
   [`balance_point(pos)`], [La prima posizione dopo `pos` in cui tutte le liste aperte in `pos` sono chiuse. Non chiede se il buffer è bilanciato alla fine: una funzione chiusa resta chiusa anche se quella sotto è ancora da finire.],
   [`enclosing(pos)`], [La lista più interna che contiene `pos`, per intero (fino alla fine del testo se non è chiusa); `None` al livello zero.],
   [`pairing(point, reach)`], [Il delimitatore accanto al punto, se è codice, con quello che gli corrisponde e se sono dello stesso tipo: per un'apertura, passi finché la pila non torna alla sua profondità; per una chiusura, il frame in cima. Non legge più di `reach` caratteri per parte (@evidenziazioni).],
-  [`pairing_under(at, reach)`], [Lo stesso per il solo carattere in `at`, apertura o chiusura: il carattere sotto un cursore a blocco (@evidenziazioni).],
+  [`pairing_under(at, reach)`], [Lo stesso per il solo carattere in `at`, apertura o chiusura: il carattere sotto il cursore nello stato Normal di Vim (@evidenziazioni).],
 )
 
 === Riprendere da metà: `Resume` e il `Prescanner` <riprendere>
@@ -5553,7 +5553,7 @@ disegnano dove il rispettivo modo è acceso. Le corrispondenze le spegne
   header: ([], [Le parentesi], [Le corrispondenze]),
   [Dove], [La sola finestra con il focus, affiancata o flottante.], [Ogni finestra che mostra il buffer cercato.],
   [Che cosa si legge prima dei lock], [Il buffer della finestra con il focus, il suo modo e la tabella sintattica del modo (`paren_table`), se il buffer ha `show-paren-mode` acceso.], [Il `Pattern` della ricerca in corso, o quello della sostituzione con il suo intervallo, da `Runtime` (`search_marks`).],
-  [Dove si calcola], [In `paren_spots`, dentro `windows_mut_with_buffers`, con il buffer letto lì, se è ancora in quel modo e ha ancora `show-paren-mode` acceso: `sexp::pairing`, o `sexp::pairing_under` dove il buffer ha la proprietà `block-cursor`, dà un `Pair`, e due `SpotMarks` in posizioni del buffer.], [In `match_highlights`, durante la composizione di ogni foglia, dopo lo scorrimento: `Pattern::scan` sulle sole righe visibili.],
+  [Dove si calcola], [In `paren_spots`, dentro `windows_mut_with_buffers`, con il buffer letto lì, se è ancora in quel modo e ha ancora `show-paren-mode` acceso: `sexp::pairing`, o `sexp::pairing_under` dove il buffer ha la proprietà `show-paren-under-cursor`, dà un `Pair`, e due `SpotMarks` in posizioni del buffer.], [In `match_highlights`, durante la composizione di ogni foglia, dopo lo scorrimento: `Pattern::scan` sulle sole righe visibili.],
   [Faccia], [`show-paren-match`; `show-paren-mismatch` per due delimitatori di tipo diverso o per uno senza compagno.], [`lazy-highlight`, sotto gli overlay e la regione.],
   [Costo massimo], [`SHOW_PAREN_REACH` caratteri (102 400) per parte del punto.], [Le righe visibili, e al più `MATCHES_PER_WINDOW` (2000) corrispondenze per finestra.],
 )
@@ -5608,13 +5608,13 @@ frame in cima alla pila, che è quello che la chiusura toglierà, come fa lo
 scanner con ogni chiusura. Il tipo si confronta con i caratteri che
 `SyntaxClass::Open` e `Close` portano.
 
-Dove il buffer ha la proprietà `block-cursor` non nulla (`BLOCK_CURSOR`, in
-`editor/frame.rs`, letta da `paren_spots` sotto il lock del buffer che ha già),
-il cursore è un blocco che sta sul carattere dopo il punto, come in Vim negli
-stati Normal e Visual: `paren_spots` chiede allora `pairing_under`, che guarda
-quel carattere soltanto, apertura o chiusura, con le stesse due funzioni.
-La proprietà la mette e la toglie `vim` (@mod-vim) a ogni cambio di stato;
-la GUI la legge per disegnare il blocco.
+Dove il buffer ha la proprietà `show-paren-under-cursor` non nulla
+(`SHOW_PAREN_UNDER_CURSOR`, in `editor/frame.rs`, letta da `paren_spots` sotto
+il lock del buffer che ha già), il cursore sta sul carattere dopo il punto,
+come nello stato Normal di Vim: `paren_spots` chiede allora `pairing_under`, che
+guarda quel carattere soltanto, apertura o chiusura, con le stesse due
+funzioni. La proprietà la mette `vim` (@mod-vim) entrando in Normal e la toglie
+negli altri stati.
 
 La sessione di ricerca tiene il modello compilato (`Isearch::pattern`), che
 `isearch-update` scrive a ogni tasto: `None` quando non c'è nulla di scritto,
@@ -5671,14 +5671,15 @@ Le decisioni:
   avere.
 + *Una regexp vuota non si disegna.* Una corrispondenza vuota, come quella di
   `x*` tra due caratteri, non ha un carattere su cui stare.
-+ *Sotto un blocco, il carattere sotto.* Un blocco copre il carattere dopo il
-  punto: la chiusura prima del punto gli sta accanto, e accenderla direbbe
-  che appartiene a ciò su cui il cursore non è. Si accoppia solo il carattere
-  sotto, come fa il `matchparen` di Vim in Normal. Chi lo chiede è il buffer,
-  con una proprietà, e non `vim-mode`: il nucleo non sa nulla di Vim, e un
-  altro modulo modale può chiedere lo stesso. Scartato: spostare il punto
-  avanti di uno per la durata della ricerca quando sotto c'è una chiusura,
-  che altrove accenderebbe ancora la chiusura accanto al blocco.
++ *Il carattere sotto il cursore, dove il cursore ci sta sopra.* In Normal il
+  cursore copre il carattere dopo il punto: la chiusura prima del punto gli
+  sta accanto, e accenderla direbbe che appartiene a ciò su cui il cursore non
+  è. Si accoppia solo il carattere sotto, come fa il `matchparen` di Vim in
+  Normal. Chi lo chiede è il buffer, con una proprietà, e non `vim-mode`: il
+  nucleo non sa nulla di Vim, e un altro modulo modale può chiedere lo stesso.
+  Scartato: spostare il punto avanti di uno per la durata della ricerca quando
+  sotto c'è una chiusura, che altrove accenderebbe ancora la chiusura accanto
+  al cursore.
 
 == Le segnalazioni sullo schermo <segnalazioni-schermo>
 
@@ -9419,11 +9420,12 @@ Replace fa lo stesso. I comandi `:` leggono la riga con `minibuffer-read` e
 passano dai comandi dell'editor; la ricerca usa lo scanner di espressioni
 regolari dell'editor, in offset di caratteri.
 
-Negli stati Normal e Visual il cursore è un blocco sul carattere dopo il punto:
-`vim--set-state` mette la proprietà `block-cursor` del buffer, che
-`show-paren-mode` legge per accoppiare la parentesi sotto il blocco
-(@evidenziazioni) e la GUI per disegnarlo; Insert e Replace la tolgono, e
-`vim--teardown` con loro.
+In Normal il cursore sta sul carattere dopo il punto: `vim--set-state` mette
+la proprietà `show-paren-under-cursor` del buffer, che `show-paren-mode` legge
+per accoppiare la parentesi sotto il cursore (@evidenziazioni); gli altri stati
+la tolgono, e `vim--teardown` con loro. Solo Normal, non Visual: nella
+selezione si accoppia come senza Vim, anche se la GUI disegna anche lì il
+cursore a blocco.
 
 + *Un modo minore.* Elenco dei modi accesi, `minor-mode-p`, `C-h M`, hook che
   girano solo dove Vim è acceso (`pre-command-hook` e `post-command-hook` sono

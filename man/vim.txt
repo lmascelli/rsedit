@@ -142,20 +142,19 @@ MOVING IN NORMAL STATE
     most, unless the line is empty.
 
 THE CURSOR AND THE BRACKETS
-    In Normal and Visual state the cursor is a block on a character, the one
-    x deletes, and show-paren-mode pairs the bracket under it: a closing one
-    as well as an opening one, and no other. On the last ) of (a (b)) the
-    first ( lights with it, not the ( of (b); on the character after a ),
-    unless it is a bracket itself, nothing does. In Insert and Replace state
-    the cursor is between two characters, and pairs as it does without vim:
-    an opening bracket just after it, or else a closing one just before it,
-    so that typing ) shows which ( it closes.
+    In Normal state the cursor is on a character, the one x deletes, and
+    show-paren-mode pairs the bracket under it: a closing one as well as an
+    opening one, and no other. On the last ) of (a (b)) the first ( lights
+    with it, not the ( of (b); on the character after a ), unless it is a
+    bracket itself, nothing does. In every other state brackets pair as they
+    do without vim: an opening bracket just after point, or else a closing
+    one just before it, so that typing ) in Insert state shows which ( it
+    closes. In Visual state that is so too, though the cursor is drawn on a
+    character as in Normal state.
 
-    vim says which with the buffer's property block-cursor, non-nil in
-    Normal and Visual state and nil in the others, and gone with vim.
-    show-paren-mode reads it, and so does the graphical front end, which
-    draws the cursor as a block where it is set; a terminal draws a cursor
-    of its own.
+    vim says which with the buffer's property show-paren-under-cursor,
+    non-nil in Normal state and nil in the others, and gone with vim;
+    show-paren-mode reads it.
 
 EDITING
     i a I A             Insert before or after point, at the first

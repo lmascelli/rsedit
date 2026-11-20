@@ -673,7 +673,8 @@ pub fn enclosing<B: BufferTrait>(
 /// A delimiter, and the one it pairs with: what `show-paren-mode` draws.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pair {
-    /// The delimiter next to point, or under a block cursor.
+    /// The delimiter next to point, or under the cursor where it stands on
+    /// one.
     pub at: usize,
     /// The delimiter that closes or opens it, or `None` when the text has
     /// none: an opener never closed, a closer with nothing open.

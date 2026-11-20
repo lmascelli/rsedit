@@ -1298,12 +1298,12 @@ mod tests {
             name("(buffer-get 'local-keymap)", &ctx, &env),
             "vim-normal-map"
         );
-        assert!(truthy("(buffer-get 'block-cursor)", &ctx, &env));
+        assert!(truthy("(buffer-get 'show-paren-under-cursor)", &ctx, &env));
         run("(vim-mode -1)", &env, &ctx);
         assert!(!truthy("(minor-mode-p 'vim-mode)", &ctx, &env));
         assert_eq!(name("(buffer-get 'vim-state)", &ctx, &env), "nil");
         assert_eq!(name("(buffer-get 'local-keymap)", &ctx, &env), "nil");
-        assert!(!truthy("(buffer-get 'block-cursor)", &ctx, &env));
+        assert!(!truthy("(buffer-get 'show-paren-under-cursor)", &ctx, &env));
         assert!(
             ctx.snapshot(&env, 80, 24)
                 .echo_message
@@ -1343,7 +1343,7 @@ mod tests {
             name("(buffer-get 'local-keymap)", &ctx, &env),
             "vim-insert-map"
         );
-        assert!(!truthy("(buffer-get 'block-cursor)", &ctx, &env));
+        assert!(!truthy("(buffer-get 'show-paren-under-cursor)", &ctx, &env));
         keys(&ctx, &env, "x");
         esc(&ctx, &env);
         assert_eq!(text(&ctx), "xabc");
@@ -1499,11 +1499,21 @@ mod tests {
     }
 
     #[test]
-    fn in_visual_state_the_block_pairs_too_and_in_insert_state_the_bar_as_ever() {
+    fn only_normal_state_pairs_the_bracket_under_the_cursor() {
         let (ctx, env) = editor_with_parens("(a (b))");
-        keys(&ctx, &env, "$v");
+        keys(&ctx, &env, "$");
         assert_eq!(point(&ctx), 6);
         assert_eq!(paired(&ctx, &env), vec![(0, 0, 1), (0, 6, 7)]);
+        // The Visual states pair as without vim: the closer before point.
+        for visual in ["v", "V"] {
+            keys(&ctx, &env, visual);
+            assert_eq!(point(&ctx), 6, "{visual}");
+            assert_eq!(paired(&ctx, &env), vec![(0, 3, 4), (0, 5, 6)], "{visual}");
+            esc(&ctx, &env);
+            assert_eq!(paired(&ctx, &env), vec![(0, 0, 1), (0, 6, 7)], "{visual}");
+        }
+        ctrl(&ctx, &env, 'v');
+        assert_eq!(paired(&ctx, &env), vec![(0, 3, 4), (0, 5, 6)], "C-v");
         esc(&ctx, &env);
         // Insert before the last closer: the bar is after the first one.
         keys(&ctx, &env, "i");
@@ -1512,11 +1522,9 @@ mod tests {
         esc(&ctx, &env);
         assert_eq!(point(&ctx), 5);
         assert_eq!(paired(&ctx, &env), vec![(0, 3, 4), (0, 5, 6)]);
-        // Off, the cursor is a bar again.
+        // Off, as without vim: after b, with no closer before point.
         run("(vim-mode -1)", &env, &ctx);
-        assert!(
-            paired(&ctx, &env).is_empty(),
-            "a bar after b, with no closer before it"
-        );
+        assert!(paired(&ctx, &env).is_empty());
+        assert!(!truthy("(buffer-get 'show-paren-under-cursor)", &ctx, &env));
     }
 }
