@@ -67,9 +67,10 @@ impl Entry {
     }
 
     /// Returns the line a plain view shows: `file:line: text`, as every
-    /// grep-like tool prints it.
-    pub fn rendered(&self) -> String {
-        format!("{}:{}: {}", self.source, self.line, self.text)
+    /// grep-like tool prints it, the file named NAME -- its source, or how a
+    /// listing names the file, which need not be the path it keeps.
+    pub fn rendered(&self, name: &str) -> String {
+        format!("{}:{}: {}", name, self.line, self.text)
     }
 }
 

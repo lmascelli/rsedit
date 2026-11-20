@@ -40,11 +40,13 @@ unless turned off." t)
   (nth 1 (memq key finding)))
 
 (defun findings--name (file base)
-  "FILE named from the directory BASE, when it is in it."
-  (if (string-prefix-p base file) (substring file (length base)) file))
+  "FILE as the list names it: from BASE, the directory the list was made in,
+or in full, as `results-path-style' says."
+  (results-file-name file base))
 
 (defun findings--line (finding base)
-  "FINDING as a line of the list, its file named from BASE."
+  "FINDING as a line of the list, its file named from BASE as `findings--name'
+names it."
   (let ((start (findings--get finding :start))
         (code (findings--get finding :code)))
     (concat (findings--name (findings--get finding :file) base)
@@ -71,7 +73,9 @@ attach them to it as the list `next-error' walks."
             (file-p (eq (car what) 'file))
             (path (cdr what))
             (found (if file-p (findings-for-file path) (findings-under path)))
-            (base (if file-p (file-name-directory path) (file-name-as-directory path)))
+            ;; Where the list was asked for, not where it is drawn again: a
+            ;; refresh before a step of M-g n may come from anywhere.
+            (base (buffer-get 'findings-directory))
             (here (line-number-at-point))
             (at 1)
             (entries nil))
@@ -99,6 +103,8 @@ attach them to it as the list `next-error' walks."
 show the list."
   (buffer-create findings-list-buffer-name :mode 'findings-list-mode :role 'view)
   (buffer-put 'findings-what what findings-list-buffer-name)
+  ;; The directory its files are named from, as grep's are.
+  (buffer-put 'findings-directory (working-directory) findings-list-buffer-name)
   ;; Asked of the store again before each step of M-g n: the list follows
   ;; what the producers say now.
   (buffer-put 'results-refresh 'findings--draw findings-list-buffer-name)

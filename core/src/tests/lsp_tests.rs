@@ -1131,7 +1131,15 @@ BEGIN {
         let (ctx, env) = editor(&sandbox, "utf-32");
         open(&file, &env, &ctx);
         ready(&sandbox, &env, &ctx);
-        run("(lsp-find-references)", &env, &ctx);
+        // Asked from the sandbox: the list names the files from there.
+        run(
+            &format!(
+                "(with-directory {:?} (lambda () (lsp-find-references)))",
+                sandbox.root()
+            ),
+            &env,
+            &ctx,
+        );
         logged(
             &sandbox,
             &[
@@ -1158,6 +1166,34 @@ BEGIN {
         at_point_in(&target, "e", &env, &ctx);
         run("(next-error)", &env, &ctx);
         at_point_in(&target, "t", &env, &ctx);
+    }
+
+    #[test]
+    fn references_are_listed_in_full_when_asked_to() {
+        let sandbox = Sandbox::new("references-absolute");
+        let file = sandbox.file("a.fake", "abc\n");
+        let target = sandbox.file("target.txt", TARGET);
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        open(&file, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        run(
+            &format!(
+                "(setq results-path-style 'absolute)
+                 (with-directory {:?} (lambda () (lsp-find-references)))",
+                sandbox.root()
+            ),
+            &env,
+            &ctx,
+        );
+        tick_until(r#"(equal (results-count "*lsp locations*") 2)"#, &env, &ctx);
+        assert_eq!(
+            text(&run(
+                r#"(with-current-buffer "*lsp locations*" (lambda () (buffer-string)))"#,
+                &env,
+                &ctx
+            )),
+            format!("--- 2 references ---\n{target}:1:2\n{target}:3:4\n")
+        );
     }
 
     #[test]

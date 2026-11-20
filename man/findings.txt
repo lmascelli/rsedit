@@ -148,12 +148,13 @@ THE LIST
 
         main.c:12:5: error: undefined name [E1] (my-lint)
 
-    the file named from its directory, the line from 1 and the column
-    from 1, as a compiler writes them, then what the echo area says, and
-    (stale) for a finding whose file has changed since its producer spoke.
-    M-x findings-list-under lists those about the files in a directory and
-    below it, named from that directory. The findings come in the order
-    `findings-for-file' and `findings-under' give them.
+    the file named from the working directory the list was asked in, or
+    in full when `results-path-style' says absolute (see searching), the
+    line from 1 and the column from 1, as a compiler writes them, then
+    what the echo area says, and (stale) for a finding whose file has
+    changed since its producer spoke. M-x findings-list-under lists those
+    about the files in a directory and below it. The findings come in the
+    order `findings-for-file' and `findings-under' give them.
 
     The list is the one M-g n and M-g p walk (see searching), and Return
     goes to the finding on the cursor's line. Before each step of M-g n

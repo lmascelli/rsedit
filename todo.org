@@ -8,7 +8,7 @@
 --------------------------------------------------
 - [ ] I percorsi esposti nei risultati (come in grep) devono partire dalla
       working directory dove sono stati lanciati o essere percorsi assoluti
-      a scelta dell'utente.
+      a scelta dell'utente. 
 
 * Macro todo
 - [ ] An eshell like mode, where it is possible to both read from stdin/stderr associated

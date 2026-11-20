@@ -101,15 +101,25 @@ impl Listing<'_> {
     }
 }
 
-/// Scans TEXT, adds what it finds to the set of LISTING's buffer, writes each
-/// line into the buffer, and returns how many were added: none when the
-/// buffer has gone, closed while the search ran, or is no longer the writer's.
+/// What a text searched is: its kind, the buffer or the path the entries keep,
+/// and the name the lines of the listing give it, which for a file is the one
+/// `results-path-style` says.
+#[derive(Clone, Copy)]
+struct Searched<'a> {
+    kind: &'a str,
+    source: &'a str,
+    name: &'a str,
+}
+
+/// Scans TEXT, the text of SEARCHED, adds what it finds to the set of
+/// LISTING's buffer, writes each line into the buffer, and returns how many
+/// were added: none when the buffer has gone, closed while the search ran, or
+/// is no longer the writer's.
 fn collect<B: BufferTrait>(
     ctx: &EditorState<B>,
     listing: Listing,
     pattern: &Pattern,
-    kind: &str,
-    source: &str,
+    searched: Searched,
     text: &str,
     room: usize,
 ) -> usize {
@@ -123,11 +133,11 @@ fn collect<B: BufferTrait>(
     let entries: Vec<Entry> = scan
         .found
         .iter()
-        .map(|found| Entry::new(kind, source, found))
+        .map(|found| Entry::new(searched.kind, searched.source, found))
         .collect();
     let mut rendered = String::new();
     for entry in &entries {
-        rendered.push_str(&entry.rendered());
+        rendered.push_str(&entry.rendered(searched.name));
         rendered.push('\n');
     }
     let added = entries.len();
@@ -161,6 +171,10 @@ pub(crate) struct TreeSearch {
     pub(crate) root: PathBuf,
     pub(crate) buffer: String,
     pub(crate) limit: usize,
+    /// The directory the listing names its files from, where the search was
+    /// launched; `None` names them in full. The entries keep the full path
+    /// either way. See [`EditorState::listing_base`].
+    pub(crate) names_from: Option<String>,
 }
 
 impl TreeSearch {
@@ -193,7 +207,8 @@ impl TreeSearch {
                 break;
             }
             let path = self.root.join(&relative);
-            let display = path.to_string_lossy().to_string();
+            let source = path.to_string_lossy().to_string();
+            let name = crate::paths::listed_name(&source, self.names_from.as_deref());
             // The buffer first, when one is open and ahead of the file.
             let text = match unsaved_text(state, &path) {
                 Some(text) => Some(text),
@@ -206,8 +221,11 @@ impl TreeSearch {
                 state,
                 listing,
                 &self.pattern,
-                KIND_FILE,
-                &display,
+                Searched {
+                    kind: KIND_FILE,
+                    source: &source,
+                    name: &name,
+                },
                 &text,
                 self.limit - found,
             );
@@ -299,8 +317,11 @@ primitive!(occur_scan, args, env, ctx, {
         ctx,
         listing,
         &pattern,
-        KIND_BUFFER,
-        &source,
+        Searched {
+            kind: KIND_BUFFER,
+            source: &source,
+            name: &source,
+        },
         &text,
         DEFAULT_LIMIT,
     );
@@ -312,7 +333,8 @@ primitive!(occur_scan, args, env, ctx, {
 pub const GREP_SCAN_DOC: &str = "(grep--scan PATTERN &optional DIRECTORY REGEXP MODE): Start \
          searching the files under DIRECTORY, or the working directory, for \
          PATTERN, and return the name of the output buffer, in MODE or `occur-mode', that the \
-         matches go into as they are found.";
+         matches go into as they are found. The files are named as `results-path-style' says, \
+         from the working directory of the call.";
 
 primitive!(grep_scan, args, env, ctx, {
     let source_pattern = args::text(args.first())?;
@@ -333,6 +355,9 @@ primitive!(grep_scan, args, env, ctx, {
         ctx.set_echo_message(&format!("{directory} is not a directory"));
         return Ok(ELispExp::nil());
     }
+    // Where the search is launched, taken now: the thread reads no directory
+    // of the editor's, and a `cd` while it runs leaves the names as they began.
+    let names_from = ctx.listing_base(&env);
 
     let Some(buffer) = open_results(
         ctx,
@@ -350,6 +375,7 @@ primitive!(grep_scan, args, env, ctx, {
         root,
         buffer: buffer.clone(),
         limit: DEFAULT_LIMIT,
+        names_from,
     };
     if ctx
         .spawn_writer(&buffer, move |state, stop, me| search.run(state, stop, me))

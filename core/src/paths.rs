@@ -399,6 +399,56 @@ fn normalise(path: &std::path::Path) -> String {
     out.to_string_lossy().to_string()
 }
 
+/// Returns PATH named from the directory BASE, both absolute: what follows the
+/// part they share, after a `..` for each name of BASE beyond it --
+/// `src/main.rs`, `../other/notes.txt`, or `.` for BASE itself. `None` when
+/// they share no more than a root, as `/etc/hosts` and `/home/me` do, or
+/// nothing at all, as two drives on Windows: a name that climbs to the top of
+/// the disk says less than the absolute path it stands for.
+///
+/// Read by name, as `expand_path_in` reads: `.` and `..` are collapsed first,
+/// and no link is followed.
+pub(crate) fn relative_path(path: &std::path::Path, base: &std::path::Path) -> Option<String> {
+    use std::path::{Component, PathBuf};
+    let path = PathBuf::from(normalise(path));
+    let base = PathBuf::from(normalise(base));
+    let path: Vec<Component> = path.components().collect();
+    let base: Vec<Component> = base.components().collect();
+    let shared = path
+        .iter()
+        .zip(base.iter())
+        .take_while(|(one, other)| one == other)
+        .count();
+    // A root, or a drive, in common is not a place in common.
+    let named = path[..shared]
+        .iter()
+        .any(|component| matches!(component, Component::Normal(_)));
+    if !named {
+        return None;
+    }
+    let mut out = PathBuf::new();
+    for _ in shared..base.len() {
+        out.push(Component::ParentDir);
+    }
+    for component in &path[shared..] {
+        out.push(component);
+    }
+    if out.as_os_str().is_empty() {
+        return Some(".".into());
+    }
+    Some(out.to_string_lossy().to_string())
+}
+
+/// Returns the file at PATH, absolute, as a list of places names it: from
+/// BASE, the directory the list was made in, when there is one and
+/// [`relative_path`] can name it from there, and in full otherwise. BASE is
+/// `None` when `results-path-style` asks for names in full; see
+/// [`crate::editor::EditorState::listing_base`].
+pub(crate) fn listed_name(path: &str, base: Option<&str>) -> String {
+    base.and_then(|base| relative_path(std::path::Path::new(path), std::path::Path::new(base)))
+        .unwrap_or_else(|| path.to_string())
+}
+
 /// Returns PATH with a trailing separator, so that a name can be joined onto
 /// it.
 pub(crate) fn as_directory(path: &str) -> String {

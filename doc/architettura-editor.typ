@@ -3416,6 +3416,20 @@ dunque i nomi relativi dove la build è girata, anche dopo un `cd` e anche con
 `M-g n` chiesto da un altro buffer; una lista senza, come quella di `grep`, i
 cui percorsi sono già assoluti, li legge nella directory di lavoro.
 
+Come una lista #emph[nomina] i file che mostra è un'altra cosa, e la decide
+`results-path-style`: `relative`, il default, dalla directory di lavoro in cui
+la lista è stata chiesta, o `absolute`. `EditorState::listing_base` dà quella
+directory, la `default_directory` del momento, o nessuna per `absolute`, e la
+si prende quando l'esecuzione parte: il thread di `grep` la porta con sé in
+`TreeSearch::names_from`, la lista dei findings la tiene fra i dati del suo
+buffer per i ridisegni, `lsp--find` la passa alla risposta che arriverà dopo.
+`paths::listed_name` scrive il nome con `paths::relative_path`, che sale con
+`..` fin dove i due percorsi si incontrano e rinuncia quando hanno in comune
+solo la radice, o niente, come due dischi di Windows: lì il nome resta
+assoluto. La voce conserva comunque il percorso intero, sicché il nome scritto
+è solo testo, e una visita non dipende né dallo stile né da un `cd` venuto
+dopo. Dal Lisp lo stesso nome lo dà `results-file-name`.
+
 == Il riempimento <riempimento>
 
 Riempire vuol dire disporre di nuovo le parole di un paragrafo, quante ne

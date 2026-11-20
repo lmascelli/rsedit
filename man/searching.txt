@@ -52,10 +52,12 @@ SYNOPSIS
     (results-visit N &optional BUFFER PREVIEW)
     (results-put PATTERN OVER ENTRIES &optional BUFFER)
     (results-display BUFFER HEIGHT &optional SELECT)
+    (results-file-name FILE &optional DIRECTORY)
     (results-quit)
     results-visit-same-window
     results-reuse-buffer
     results-display-location
+    results-path-style
 
 DESCRIPTION
     C-s finds text as you type it, and M-% replaces it, asking at each
@@ -172,6 +174,17 @@ EVERY MATCH AT ONCE
         q               close the list's window
         C-c C-k         stop a search of files that is still going
 
+    A search of files names each file from the working directory it was
+    started in: src/main.rs, or ../other/notes.txt for a file beside it.
+    Set `results-path-style' to absolute to have every file named in full
+    instead. A file that shares nothing with that directory but the root,
+    such as /etc/hosts searched from your home, is named in full either
+    way. The directory is the one of the moment the search starts: a cd
+    while the list fills does not change it, and M-g n opens the right
+    file wherever you are, since each entry keeps the full path. The list
+    of findings and a language server's list of places name their files
+    the same way.
+
     M-x occur-regexp and M-x grep-regexp take a regular expression, and
     M-x grep-in asks which directory to search. Each search makes a new
     list -- *Occur*, *Occur*<2>, *Grep* -- shown in the same strip, and the
@@ -235,7 +248,9 @@ LISTS FROM LISP
     it, the entries are taken to follow one header line, one to a line, as a
     search's do. `results-count', `results-entry' and `results-state' read a
     list, `results-visit' goes to one of its places, and `results-buffer'
-    names the list M-g n walks. Where BUFFER may be left out, nil means
+    names the list M-g n walks. `results-file-name' names a file as the
+    lists do, by `results-path-style', for a list made in Lisp to read like
+    the others. Where BUFFER may be left out, nil means
     the same: the current buffer, or for the questions the list M-g n
     walks. `occur-header-lines' is how many lines of a list come before its
     first match.
@@ -272,6 +287,11 @@ EXAMPLES
     A taller window for the lists:
 
         (setq occur-window-height 20)
+
+    Every file of a list named in full, rather than from the working
+    directory:
+
+        (setq results-path-style 'absolute)
 
     Put the places a linter reported in a list M-g n walks:
 

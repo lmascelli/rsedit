@@ -678,6 +678,42 @@ primitive!(results_quit, _args, _env, ctx, {
     })
 });
 
+pub const RESULTS_FILE_NAME_DOC: &str = "(results-file-name FILE &optional DIRECTORY): Return \
+     FILE as a list of places names it, as `results-path-style' says: with relative, from \
+     DIRECTORY, or else the working directory, when the two share a directory other than the \
+     root, and in full otherwise. Both are read in the working directory.\n\n\
+     Example:\n\
+     (results-file-name \"/home/me/src/main.rs\" \"/home/me\") => \"src/main.rs\"";
+
+primitive!(results_file_name, args, env, ctx, {
+    if args.is_empty() || args.len() > 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let file = ctx.expand_path(&args::text(args.first())?);
+    let directory = match args.get(1) {
+        None => None,
+        Some(exp) if exp.is_nil() => None,
+        Some(ELispExp::String(directory)) => Some(ctx.expand_path(directory)),
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String naming a directory, or nil".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    // The style says whether to name it from anywhere; DIRECTORY, from where.
+    let base = ctx
+        .listing_base(&env)
+        .map(|working| directory.unwrap_or(working));
+    Ok(ELispExp::string(crate::paths::listed_name(
+        &file,
+        base.as_deref(),
+    )))
+});
+
 /// Registers the primitives of lists of places.
 ///
 /// Called by [`super::install_primitives`].
@@ -692,6 +728,11 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.command("results-select", results_select, &[], RESULTS_SELECT_DOC);
     into.function("results-put", results_put, RESULTS_PUT_DOC);
     into.function("results-display", results_display, RESULTS_DISPLAY_DOC);
+    into.function(
+        "results-file-name",
+        results_file_name,
+        RESULTS_FILE_NAME_DOC,
+    );
 
     into.command("results-quit", results_quit, &[], RESULTS_QUIT_DOC);
 }

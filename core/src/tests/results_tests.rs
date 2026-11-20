@@ -333,6 +333,109 @@ mod tests {
         assert!(listing.contains("one.txt:1: a needle here"), "{listing}");
     }
 
+    /// Returns the name of the listing a search answered with.
+    fn listing_name(answer: LispExp<Ctx>) -> String {
+        match answer {
+            LispExp::String(name) => name.to_string(),
+            other => panic!("grep answered {other:?}"),
+        }
+    }
+
+    #[test]
+    fn grep_names_the_files_from_where_it_was_launched() {
+        // Launched in the sandbox, searching a directory below it: the names
+        // start from the sandbox, and the entries keep the path in full.
+        let sandbox = Sandbox::new("grep-relative");
+        sandbox.file("deep/two.txt", "another needle\n");
+        let full = PathBuf::from(sandbox.path()).join("deep").join("two.txt");
+        let (ctx, env) = editor("");
+        let buffer = listing_name(run(
+            &format!(
+                r#"(with-directory "{}" (lambda () (grep--scan "needle" "deep")))"#,
+                sandbox.path()
+            ),
+            &env,
+            &ctx,
+        ));
+        settle(&ctx, &env, &buffer);
+        let listing = text_of(&ctx, &buffer);
+        let named = std::path::Path::new("deep").join("two.txt");
+        assert!(
+            listing.contains(&format!("\n{}:1: another needle\n", named.display())),
+            "{listing}"
+        );
+        assert_eq!(
+            fields(&run("(results-entry 0)", &env, &ctx))[1],
+            full.display().to_string()
+        );
+    }
+
+    #[test]
+    fn grep_names_a_file_beside_where_it_was_launched_from_there() {
+        let sandbox = Sandbox::new("grep-beside");
+        sandbox.file("work/kept.txt", "");
+        sandbox.file("other/x.txt", "a needle\n");
+        let work = PathBuf::from(sandbox.path()).join("work");
+        let (ctx, env) = editor("");
+        let buffer = listing_name(run(
+            &format!(
+                r#"(with-directory "{}" (lambda () (grep--scan "needle" "../other")))"#,
+                work.display()
+            ),
+            &env,
+            &ctx,
+        ));
+        settle(&ctx, &env, &buffer);
+        let listing = text_of(&ctx, &buffer);
+        let named = std::path::Path::new("..").join("other").join("x.txt");
+        assert!(
+            listing.contains(&format!("\n{}:1: a needle\n", named.display())),
+            "{listing}"
+        );
+    }
+
+    #[test]
+    fn grep_names_the_files_in_full_when_asked_to() {
+        let sandbox = Sandbox::new("grep-absolute");
+        sandbox.file("one.txt", "a needle here\n");
+        let full = PathBuf::from(sandbox.path()).join("one.txt");
+        let (ctx, env) = editor("");
+        let buffer = listing_name(run(
+            &format!(
+                r#"(setq results-path-style 'absolute)
+                   (with-directory "{}" (lambda () (grep--scan "needle")))"#,
+                sandbox.path()
+            ),
+            &env,
+            &ctx,
+        ));
+        settle(&ctx, &env, &buffer);
+        let listing = text_of(&ctx, &buffer);
+        assert!(
+            listing.contains(&format!("\n{}:1: a needle here\n", full.display())),
+            "{listing}"
+        );
+    }
+
+    #[test]
+    fn grep_keeps_the_names_it_began_with_when_the_directory_moves() {
+        // The directory is taken when the search is launched: a `cd' while
+        // its thread fills the list does not change how the rest reads.
+        let sandbox = Sandbox::new("grep-cd");
+        sandbox.file("one.txt", "a needle\n");
+        let (ctx, env) = editor("");
+        run(&format!(r#"(cd "{}")"#, sandbox.path()), &env, &ctx);
+        let search = crate::primitives::occur::TreeSearch {
+            names_from: ctx.listing_base(&env),
+            ..search("needle", &sandbox.path(), "*Grep*")
+        };
+        let me = listing_for(&ctx, &env, "*Grep*", "needle", &sandbox.path());
+        run(r#"(cd "..")"#, &env, &ctx);
+        search.run(&ctx, &crate::work::Stop::default(), me);
+        let listing = text_of(&ctx, "*Grep*");
+        assert!(listing.starts_with("one.txt:1: a needle\n"), "{listing}");
+    }
+
     /// A file that is not UTF-8 is searched in Windows-1252, as `find-file`
     /// reads it, and a binary file is still left out.
     #[test]
@@ -384,6 +487,7 @@ mod tests {
             root: PathBuf::from(root),
             buffer: buffer.to_string(),
             limit: 10_000,
+            names_from: None,
         }
     }
 
@@ -619,6 +723,92 @@ mod tests {
     // ----------------------------------------------------------------
     // Lists that are not searches
     // ----------------------------------------------------------------
+
+    #[test]
+    fn a_file_is_named_for_a_list_as_the_style_says() {
+        let sandbox = Sandbox::new("file-name");
+        let base = PathBuf::from(sandbox.path());
+        let main = base.join("src").join("main.rs");
+        let beside = base
+            .parent()
+            .expect("the sandbox is in a directory")
+            .join("other")
+            .join("x.txt");
+        let (ctx, env) = editor("");
+        let named = |src: String| match run(&src, &env, &ctx) {
+            LispExp::String(text) => text.to_string(),
+            other => panic!("{src} answered {other:?}"),
+        };
+        let from = |path: &std::path::Path| {
+            format!(
+                r#"(results-file-name "{}" "{}")"#,
+                path.display(),
+                base.display()
+            )
+        };
+        let relative = std::path::Path::new("src").join("main.rs");
+        assert_eq!(named(from(&main)), relative.display().to_string());
+        assert_eq!(
+            named(from(&beside)),
+            std::path::Path::new("..")
+                .join("other")
+                .join("x.txt")
+                .display()
+                .to_string()
+        );
+        assert_eq!(named(from(&base)), ".");
+        // From the working directory, and a relative FILE read in it.
+        let within = |body: &str| {
+            format!(
+                r#"(with-directory "{}" (lambda () {body}))"#,
+                base.display()
+            )
+        };
+        assert_eq!(
+            named(within(&format!(
+                r#"(results-file-name "{}")"#,
+                main.display()
+            ))),
+            relative.display().to_string()
+        );
+        assert_eq!(
+            named(within(r#"(results-file-name "src/main.rs" nil)"#)),
+            relative.display().to_string()
+        );
+        // Anything but absolute is relative.
+        run("(setq results-path-style 'sideways)", &env, &ctx);
+        assert_eq!(named(from(&main)), relative.display().to_string());
+        run("(setq results-path-style 'absolute)", &env, &ctx);
+        assert_eq!(named(from(&main)), main.display().to_string());
+        assert_eq!(
+            named(within(r#"(results-file-name "src/main.rs")"#)),
+            main.display().to_string()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_sharing_only_the_root_is_named_in_full() {
+        let (ctx, env) = editor("");
+        assert_eq!(
+            run(r#"(results-file-name "/etc/hosts" "/home/me")"#, &env, &ctx),
+            LispExp::string("/etc/hosts".into())
+        );
+    }
+
+    #[test]
+    fn results_file_name_refuses_what_is_not_a_name() {
+        let (ctx, env) = editor("");
+        for src in [
+            "(results-file-name)",
+            "(results-file-name 'x)",
+            r#"(results-file-name "a" 3)"#,
+            r#"(results-file-name "a" "b" "c")"#,
+        ] {
+            let ast = Parser::new(src).next().expect("the test must parse");
+            assert!(eval(&ast, env.clone(), &ctx).is_err(), "{src} was accepted");
+        }
+    }
 
     #[test]
     fn anything_can_attach_a_list_and_get_the_same_keys() {

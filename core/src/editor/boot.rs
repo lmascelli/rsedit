@@ -508,6 +508,12 @@ pub fn create_global_env<B: BufferTrait>()
         ELispExp::symbol("bottom".into()),
     );
 
+    // How a listing names its files: from where it was made.
+    env.set_variable(
+        RESULTS_PATH_STYLE.into(),
+        ELispExp::symbol("relative".into()),
+    );
+
     document_settings(&env);
 
     // The mode of a buffer that no other mode claims.

@@ -34,6 +34,18 @@ struct Presentation {
 }
 
 impl<B: BufferTrait> EditorState<B> {
+    /// Returns the directory a listing made now names its files from: the
+    /// one a relative name typed now is read in, where the run is launched;
+    /// `None` when `results-path-style` asks for the names in full. Taken
+    /// when the run starts, so that a `cd` while it fills does not change
+    /// how the rest of it reads. See [`crate::paths::listed_name`].
+    pub(crate) fn listing_base(&self, env: &Arc<Env<Self>>) -> Option<String> {
+        match results_path_style(env) {
+            PathStyle::Relative => Some(self.default_directory()),
+            PathStyle::Absolute => None,
+        }
+    }
+
     /// Returns how the listing in BUFFER was asked for and shown, if it is one.
     fn results_presentation(&self, buffer: &str) -> Option<Presentation> {
         self.with_buffer(buffer, |buf| buf.data::<Presentation>(CONTEXT).cloned())

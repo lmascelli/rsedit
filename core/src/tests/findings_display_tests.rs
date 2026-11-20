@@ -535,7 +535,15 @@ mod tests {
             &env,
             &ctx,
         );
-        run("(findings-list)", &env, &ctx);
+        // Asked from the sandbox: the files are named from there.
+        run(
+            &format!(
+                "(with-directory {:?} (lambda () (findings-list)))",
+                sandbox.path()
+            ),
+            &env,
+            &ctx,
+        );
         let text = ctx
             .with_buffer("*Findings*", |buf| buf.text.to_string())
             .expect("the list");
@@ -633,7 +641,10 @@ mod tests {
             &ctx,
         );
         run(
-            &format!("(findings-list-under {:?})", sandbox.path()),
+            &format!(
+                "(with-directory {0:?} (lambda () (findings-list-under {0:?})))",
+                sandbox.path()
+            ),
             &env,
             &ctx,
         );
@@ -648,6 +659,81 @@ mod tests {
                  b.txt:2:1: hint: in b (lint)\n",
                 sandbox.path()
             )
+        );
+    }
+
+    #[test]
+    fn the_list_names_its_files_in_full_when_asked_to() {
+        let sandbox = Sandbox::new("absolute");
+        let a = sandbox.file("a.txt", TEXT);
+        let (ctx, env) = editor();
+        run(
+            &format!(
+                "(setq results-path-style 'absolute)
+                 (finding-set 'lint {a:?} '((:start (1 . 0) :severity error :message \"in a\")))"
+            ),
+            &env,
+            &ctx,
+        );
+        // Asked from the directory the file is in, and named in full all the
+        // same.
+        run(
+            &format!(
+                "(with-directory {0:?} (lambda () (findings-list-under {0:?})))",
+                sandbox.path()
+            ),
+            &env,
+            &ctx,
+        );
+        let text = ctx
+            .with_buffer("*Findings*", |buf| buf.text.to_string())
+            .unwrap();
+        assert!(
+            text.contains(&format!("\n{a}:1:1: error: in a (lint)\n")),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_list_drawn_again_names_its_files_from_where_it_was_asked() {
+        // A refresh comes from anywhere -- before a step of M-g n, from g in
+        // the list -- and the names stay those of the directory it was asked
+        // in, not of the one it is drawn in now.
+        let sandbox = Sandbox::new("redrawn");
+        let file = sandbox.file("a.txt", TEXT);
+        let (ctx, env) = editor();
+        open(&file, &env, &ctx);
+        run(
+            &format!(
+                "(finding-set 'lint {file:?} '((:start (1 . 0) :severity error :message \"e\")))"
+            ),
+            &env,
+            &ctx,
+        );
+        run(
+            &format!(
+                "(with-directory {:?} (lambda () (findings-list)))",
+                sandbox.path()
+            ),
+            &env,
+            &ctx,
+        );
+        run(
+            &format!(
+                "(finding-set 'lint {file:?}
+                   '((:start (1 . 0) :severity error :message \"e\")
+                     (:start (2 . 0) :severity warning :message \"new\")))
+                 (findings--draw \"*Findings*\")"
+            ),
+            &env,
+            &ctx,
+        );
+        let text = ctx
+            .with_buffer("*Findings*", |buf| buf.text.to_string())
+            .unwrap();
+        assert!(
+            text.contains("\na.txt:2:1: warning: new (lint)\n"),
+            "{text}"
         );
     }
 

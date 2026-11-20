@@ -135,7 +135,9 @@ GOING TO A DEFINITION
 
     When the server gives more than one place, they are listed instead,
     in the buffer *lsp locations*, one line per place, and M-g n and M-g p
-    walk them as they walk the matches of a grep. <ret> on a line goes to
+    walk them as they walk the matches of a grep. Its files are named as
+    grep's are, from the working directory M-. was pressed in, or in full,
+    as `results-path-style' says (see searching). <ret> on a line goes to
     its place, q puts the list away.
 
     M-? lists the places that use what is at point, its declaration

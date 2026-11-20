@@ -1094,9 +1094,10 @@ characters when FILE is one of SERVER's documents, the server's otherwise."
                      (map-elt position "character"))))
     (list "file" (car place) line column)))
 
-(defun lsp--show-places (server what places)
+(defun lsp--show-places (server what places &optional directory)
   "nil, after listing PLACES, the (FILE . POSITION) WHAT names, for M-g n to
-walk, and showing the list."
+walk, and showing the list; its files are named from DIRECTORY, or the working
+directory, as `results-path-style' says."
   (let ((root (get server 'root))
         (entries (mapcar (lambda (place) (lsp--entry-of server place)) places)))
     (buffer-create lsp--locations-buffer :mode 'lsp-locations-mode :role 'view)
@@ -1108,7 +1109,7 @@ walk, and showing the list."
        (insert "--- " (number-to-string (length entries)) " " what " ---\n")
        (dolist (entry entries)
          (let ((file (nth 1 entry)))
-           (insert (if (string-prefix-p root file) (substring file (length root)) file)
+           (insert (results-file-name file directory)
                    ":" (number-to-string (nth 2 entry))
                    ;; From 1, as a compiler writes it.
                    ":" (number-to-string (+ (nth 3 entry) 1)) "\n")))
@@ -1120,13 +1121,14 @@ walk, and showing the list."
     (goto-line 1))
   nil)
 
-(defun lsp--found (server result what from)
+(defun lsp--found (server result what from &optional directory)
   "nil, after going to the one place RESULT gives, or listing them when more,
-or saying none was found; WHAT names them, FROM is (BUFFER . POINT)."
+or saying none was found; WHAT names them, FROM is (BUFFER . POINT), DIRECTORY
+the one a list names its files from."
   (let ((places (lsp--locations result)))
     (cond ((null places) (message "No %s found" what))
           ((null (cdr places)) (lsp--jump server (car places) from))
-          (t (lsp--show-places server what places))))
+          (t (lsp--show-places server what places directory))))
   nil)
 
 (defun lsp--find (method provider what &optional context)
@@ -1134,7 +1136,9 @@ or saying none was found; WHAT names them, FROM is (BUFFER . POINT)."
 question its capability PROVIDER says it answers with places; WHAT names
 them, CONTEXT is the request's context, if any."
   (let ((server (lsp--server-here))
-        (from (cons (current-buffer) (point))))
+        (from (cons (current-buffer) (point)))
+        ;; Where it was asked, which the answer, coming later, may not be.
+        (directory (working-directory)))
     (cond ((null server) (message "No language server for this buffer"))
           ((not (eq (get server 'state) 'ready))
            (message "%s is not ready" (lsp--label server)))
@@ -1145,7 +1149,8 @@ them, CONTEXT is the request's context, if any."
                                    "position" (lsp--position-at (point) (get server 'unit)))))
              (lsp--request server method
                            (if context (map-insert params "context" context) params)
-                           (lambda (server result) (lsp--found server result what from))
+                           (lambda (server result)
+                             (lsp--found server result what from directory))
                            :buffer (current-buffer) :timed t :replace t)))))
   nil)
 

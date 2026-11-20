@@ -347,6 +347,16 @@ pub const SETTINGS: &[Setting] = &[
               An invalid value uses bottom.",
     },
     Setting {
+        name: RESULTS_PATH_STYLE,
+        doc: "How a list of places -- grep's, the findings', a language server's -- names \
+              the files in it: 'relative, the default, from the working directory the list \
+              was made in, or 'absolute. A file that shares no directory with it but the \
+              root is named in full either way; an invalid value uses relative. The list's \
+              entries keep the absolute path, so visiting a place does not depend on it.\n\n\
+              Example:\n\
+              \x20 (setq results-path-style 'absolute)",
+    },
+    Setting {
         name: FILL_COLUMN,
         doc: "The column `fill-paragraph' and `auto-fill-mode' keep lines to, 70 unless you \
               change it. A mode's own fill-column property wins over this in its buffers, and \
@@ -742,6 +752,30 @@ pub const RESULTS_REUSE_BUFFER: &str = "results-reuse-buffer";
 /// The name of the Lisp variable saying where a listing is shown: `bottom` or
 /// `same-window`.
 pub const RESULTS_DISPLAY_LOCATION: &str = "results-display-location";
+
+/// The name of the Lisp variable saying how a listing names its files:
+/// `relative`, from the directory it was made in, or `absolute`.
+pub const RESULTS_PATH_STYLE: &str = "results-path-style";
+
+/// How a listing names the files it shows: `results-path-style`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PathStyle {
+    /// From the working directory the listing was made in.
+    Relative,
+    /// In full.
+    Absolute,
+}
+
+/// Returns how `results-path-style` says a listing names its files: absolute
+/// for `absolute`, and relative for anything else, unset included.
+pub(crate) fn results_path_style<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> PathStyle {
+    match env.get_variable(RESULTS_PATH_STYLE) {
+        Some(ELispExp::Symbol(value) | ELispExp::String(value)) if value.as_ref() == "absolute" => {
+            PathStyle::Absolute
+        }
+        _ => PathStyle::Relative,
+    }
+}
 
 /// Returns whether `results-visit-same-window` is set.
 pub(super) fn results_visit_same_window<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {

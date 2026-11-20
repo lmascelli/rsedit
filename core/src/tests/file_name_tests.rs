@@ -10,7 +10,7 @@ mod tests {
     use crate::editor::{EditorState, create_global_env};
     use crate::paths::{
         as_directory, directory_part, expand_path_from_start, expand_path_in, last_component,
-        without_trailing_separator,
+        listed_name, relative_path, without_trailing_separator,
     };
     use crate::tests::home_guard::guard::HomeAs;
     use risp::{Env, EvalError, LispExp, Parser, eval};
@@ -425,5 +425,37 @@ mod tests {
     /// the reader turns `\\` into one backslash.
     fn escaped(path: &str) -> String {
         path.replace('\\', "\\\\")
+    }
+
+    // ----------------------------------------------------------------
+    // A file named from a directory
+    // ----------------------------------------------------------------
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_is_named_from_a_directory_it_shares_a_place_with() {
+        let from = |path: &str, base: &str| relative_path(Path::new(path), Path::new(base));
+        assert_eq!(from("/a/b/c.txt", "/a").as_deref(), Some("b/c.txt"));
+        assert_eq!(from("/a/b/c.txt", "/a/").as_deref(), Some("b/c.txt"));
+        assert_eq!(from("/a/b/c.txt", "/a/b/d").as_deref(), Some("../c.txt"));
+        assert_eq!(
+            from("/a/x/y.txt", "/a/b/c").as_deref(),
+            Some("../../x/y.txt")
+        );
+        assert_eq!(from("/a/b", "/a/b").as_deref(), Some("."));
+        assert_eq!(from("/a", "/a/b/c").as_deref(), Some("../.."));
+        // Read by name: `.` and `..` collapsed first.
+        assert_eq!(from("/a/b/../c.txt", "/a/./d").as_deref(), Some("../c.txt"));
+        // Only the root in common: no name, rather than one climbing to it.
+        assert_eq!(from("/etc/hosts", "/home/me"), None);
+        assert_eq!(from("/", "/home"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_listed_name_is_relative_only_when_it_has_a_directory_to_start_from() {
+        assert_eq!(listed_name("/a/b/c.txt", Some("/a")), "b/c.txt");
+        assert_eq!(listed_name("/a/b/c.txt", None), "/a/b/c.txt");
+        assert_eq!(listed_name("/etc/hosts", Some("/home/me")), "/etc/hosts");
     }
 }
