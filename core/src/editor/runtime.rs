@@ -112,6 +112,27 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
+    /// Returns the names of the environment variables the programs the editor
+    /// starts see, sorted: the process's own that are valid Unicode, with what
+    /// `setenv` added and without what it took away.
+    pub(crate) fn getenv_names(&self) -> Vec<String> {
+        let mut names: std::collections::BTreeSet<String> = std::env::vars_os()
+            .filter_map(|(name, _)| name.into_string().ok())
+            .collect();
+        let set = self
+            .environment
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (name, value) in set.iter() {
+            if value.is_some() {
+                names.insert(name.clone());
+            } else {
+                names.remove(name);
+            }
+        }
+        names.into_iter().collect()
+    }
+
     /// Sets the environment variable NAME to VALUE for the programs the editor
     /// starts from now on, or takes it away when VALUE is `None`.
     pub(crate) fn setenv(&self, name: &str, value: Option<String>) {

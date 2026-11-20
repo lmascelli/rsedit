@@ -62,6 +62,7 @@ SYNOPSIS
     (directory-file-name PATH)
     (data-directory &optional KIND)
     (getenv NAME)
+    (getenv-names)
     (setenv NAME &optional VALUE)
     (path-separator)
 
@@ -496,9 +497,9 @@ PATHS
 
     `path-separator' is what goes between the paths of a variable such as
     PATH: ":" on Unix, ";" on Windows. `getenv' and `setenv' read and set
-    the environment every program the editor starts sees; the editor's own
-    process keeps the one it started with, so a ~ in a path is still the
-    home it had.
+    the environment every program the editor starts sees, and
+    `getenv-names' lists the names in it; the editor's own process keeps
+    the one it started with, so a ~ in a path is still the home it had.
     `data-directory' is where the editor's own modules, pages and themes
     are installed.
 

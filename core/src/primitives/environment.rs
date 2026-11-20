@@ -23,6 +23,22 @@ primitive!(getenv, args, _env, ctx, {
     })
 });
 
+pub const GETENV_NAMES_DOC: &str = "(getenv-names): Return the names of the environment \
+         variables, as `setenv' left them, sorted: those the programs the editor starts are \
+         given.\n\n\
+         Example:\n\
+         (member \"HOME\" (getenv-names))";
+
+primitive!(getenv_names, args, _env, ctx, {
+    exact_arity(args, 0)?;
+    Ok(ELispExp::proper_list(
+        ctx.getenv_names()
+            .into_iter()
+            .map(ELispExp::string)
+            .collect(),
+    ))
+});
+
 pub const SETENV_DOC: &str = "(setenv NAME &optional VALUE): Set the environment variable NAME to \
          VALUE, or remove it when VALUE is nil or missing, and return VALUE. The change reaches \
          `getenv' and the programs the editor starts from then on, not the shell that started \
@@ -126,6 +142,7 @@ primitive!(data_directory, args, _env, ctx, {
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.function("data-directory", data_directory, DATA_DIRECTORY_DOC);
     into.function("getenv", getenv, GETENV_DOC);
+    into.function("getenv-names", getenv_names, GETENV_NAMES_DOC);
     into.function("setenv", setenv, SETENV_DOC);
     into.function("path-separator", path_separator, PATH_SEPARATOR_DOC);
 }

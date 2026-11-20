@@ -13,12 +13,13 @@ SYNOPSIS
     (completion-at-point-choose VALUE)
     (completion-offer START END CANDIDATES &optional ON-CHOSEN)
     (add-completion-function MODE FUNCTION)
-    (set-completion-functions MODE FUNCTIONS)
+    (set-completion-functions MODE FUNCTIONS &key :global)
     (completion-functions &optional MODE)
     (bounds-of-thing-at-point &optional KIND)
     (buffer-words &optional BUFFER MINIMUM)
     (fuzzy-filter PATTERN CANDIDATES)
     (capf-file-name)
+    (capf-file-candidates TEXT &optional HERE)
     (capf-mode-keywords)
     (capf-symbols)
     (capf-buffer-names)
@@ -117,6 +118,13 @@ IN A BUFFER
     The Lisp names and the words of every buffer are offered in any buffer,
     not only in Lisp; `set-completion-functions' takes a source out.
 
+    A mode can make its sources the only ones its buffers are completed
+    from, with :global nil: the five above are then never asked there, not
+    even when the mode's own have nothing to offer. The shell of the eshell
+    page is completed so, by one source that knows what a word of a command
+    line can be. :global t asks the five after the mode's again, and
+    `set-completion-functions' without :global leaves it as it was.
+
 WRITING A SOURCE
     A source is a function of no arguments, called with its buffer current
     and the cursor where it is. It returns nil when it has nothing to offer,
@@ -127,6 +135,11 @@ WRITING A SOURCE
     `bounds-of-thing-at-point', so that it agrees with the others on where
     the word is. `add-completion-function' adds one, for a mode or for every
     buffer.
+
+    `capf-file-candidates' is what capf-file-name offers, for a source of
+    another kind of text to offer too: the paths a TEXT can be completed
+    to, over the entries of its directory, and, with HERE, over the working
+    directory when TEXT has none.
 
 OFFERING CANDIDATES LATER
     A source answers at once, inside C-M-i. Candidates that come later --
@@ -195,6 +208,10 @@ EXAMPLES
                                 '(("crimson" . "red") ("cyan" . "blue"))
                                 (lambda (item)
                                   (message (completion-description item))))))
+
+    Complete the buffers of one mode from its own source alone:
+
+        (set-completion-functions 'my-mode '(capf-colours) :global nil)
 
     Match from the start, as the editor does without the module:
 

@@ -499,6 +499,38 @@ mod tests {
         );
     }
 
+    /// C-u after the first key of a sequence is a key of it, not an argument.
+    #[test]
+    fn c_u_after_a_prefix_key_completes_the_sequence() {
+        let (ctx, env) = bare();
+        eval_str(
+            r#"(progn (setq probe nil)
+                      (defun probe-sequence (arg) (setq probe (list 'ran arg)))
+                      (register-command 'probe-sequence '("P"))
+                      (define-key nil "C-c C-u" 'probe-sequence))"#,
+            &env,
+            &ctx,
+        )
+        .expect("setup");
+        ctx.handle_key_event(key_with('c', true), &env);
+        ctx.handle_key_event(key_with('u', true), &env);
+        assert_eq!(
+            env.get_variable("probe").expect("probe must be bound"),
+            LispExp::proper_list(vec![LispExp::symbol("ran".into()), LispExp::nil()])
+        );
+        // Before a sequence, it is still the argument.
+        ctx.handle_key_event(key_with('u', true), &env);
+        ctx.handle_key_event(key_with('c', true), &env);
+        ctx.handle_key_event(key_with('u', true), &env);
+        assert_eq!(
+            env.get_variable("probe").expect("probe must be bound"),
+            LispExp::proper_list(vec![
+                LispExp::symbol("ran".into()),
+                LispExp::proper_list(vec![LispExp::number(4.0)])
+            ])
+        );
+    }
+
     /// The prefix argument typed before M-x is the command's, as in Emacs,
     /// though M-x's own key has finished by the time the name is read.
     #[test]

@@ -255,8 +255,9 @@ impl<B: BufferTrait> EditorState<B> {
         &self,
         mode: Option<&str>,
         functions: Vec<ELispExp<B>>,
+        global: Option<bool>,
     ) -> bool {
-        self.modes_mut(|modes| modes.set_completions(mode, functions))
+        self.modes_mut(|modes| modes.set_completions(mode, functions, global))
     }
 
     /// Returns MODE's own sources, or the global ones, unmerged: `None` when

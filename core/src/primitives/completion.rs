@@ -130,17 +130,25 @@ primitive!(add_completion_function, args, _env, ctx, {
     }
 });
 
-pub const SET_COMPLETION_FUNCTIONS_DOC: &str = "(set-completion-functions MODE FUNCTIONS): Make \
-         the list FUNCTIONS, in the order they are to be asked, the completion sources of the \
-         major mode MODE, or of every buffer when MODE is nil. Return t, or nil when MODE is \
-         unknown.\n\n\
+pub const SET_COMPLETION_FUNCTIONS_DOC: &str = "(set-completion-functions MODE FUNCTIONS &key \
+         :global): Make the list FUNCTIONS, in the order they are to be asked, the completion \
+         sources of the major mode MODE, or of every buffer when MODE is nil. :global nil makes \
+         them the only sources of MODE, with the global ones never asked; :global t asks those \
+         after them again, as at first. Return t, or nil when MODE is unknown.\n\n\
          Example:\n\
-         (set-completion-functions nil '(capf-file-name capf-buffer-words))";
+         (set-completion-functions 'eshell-mode '(eshell-completion) :global nil)";
 
 primitive!(set_completion_functions, args, _env, ctx, {
-    exact_arity(args, 2)?;
+    let (args, keywords) =
+        args::with_keywords("set-completion-functions", args, 2, 2, &[":global"])?;
     let mode = args::optional_name(args.first(), "Symbol, String or nil")?;
-    if ctx.set_completion_functions(mode.as_deref(), args::list(&args[1])) {
+    let global = keywords.get(":global").map(ELispExp::is_truthy);
+    if global.is_some() && mode.is_none() {
+        return Err(EvalError::RuntimeMessage(
+            "set-completion-functions: :global is for the sources of a mode".into(),
+        ));
+    }
+    if ctx.set_completion_functions(mode.as_deref(), args::list(&args[1]), global) {
         Ok(ELispExp::t())
     } else {
         ctx.log_diagnostic(&format!("Mode {} does not exist", mode.unwrap_or_default()));
@@ -289,9 +297,9 @@ primitive!(bounds_of_thing_at_point, args, _env, ctx, {
 // ---------------------------------------------------------------------------
 
 pub const COMPLETION_AT_POINT_DOC: &str = "(completion-at-point): Complete the text at point. The \
-         sources of the buffer's mode are asked, then the global ones: the first to answer \
-         decides which text is completed, and later ones claiming the same text add their \
-         candidates. They are matched against what is typed by `*completion-filter-function*', or \
+         sources of the buffer's mode are asked, then the global ones unless the mode's are its \
+         only ones: the first to answer decides which text is completed, and later ones \
+         claiming the same text add their candidates. They are matched against what is typed by `*completion-filter-function*', or \
          from the start when it is nil. One candidate is put in; several go to \
          `*completion-read-function*', or, when it is nil, as much as they all begin with is put \
          in and their number shown. C-M-i.";

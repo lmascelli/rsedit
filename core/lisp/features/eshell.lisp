@@ -8,12 +8,24 @@
 
 (require 'commands)
 (require 'debug)
+(require 'completion-at-point)
 
 (make-mode 'eshell-mode)
 
 ;; ---------------------------------------------------------------------------
 ;; Settings
 ;; ---------------------------------------------------------------------------
+
+;; The commands of PowerShell that are not programs: the cmdlets used most, and
+;; the aliases it gives them.
+(defconst eshell--powershell-commands
+  '("Add-Content" "Copy-Item" "ForEach-Object" "Get-ChildItem" "Get-Command" "Get-Content"
+    "Get-Date" "Get-Help" "Get-Item" "Get-Location" "Get-Process" "Get-Service"
+    "Invoke-WebRequest" "Measure-Object" "Move-Item" "New-Item" "Out-File" "Remove-Item"
+    "Rename-Item" "Select-Object" "Select-String" "Set-Content" "Set-Location" "Sort-Object"
+    "Stop-Process" "Test-Path" "Where-Object" "Write-Host" "Write-Output"
+    "cat" "cd" "clear" "cls" "copy" "del" "dir" "echo" "ls" "mkdir" "move" "pwd" "rm" "type")
+  "The commands of PowerShell that are not on the PATH.")
 
 (defvar eshell-shells
   (list
@@ -24,7 +36,13 @@
          ;; filter reads and takes out: see `eshell--escapes'.
          :environment
          '("TERM=dumb" "PAGER=cat" "GIT_PAGER=cat"
-           "PROMPT_COMMAND=printf '\\e]7;file://%s%s\\e\\\\' \"$HOSTNAME\" \"$PWD\""))
+           "PROMPT_COMMAND=printf '\\e]7;file://%s%s\\e\\\\' \"$HOSTNAME\" \"$PWD\"")
+         :commands
+         '("alias" "bg" "bind" "builtin" "cd" "command" "declare" "dirs" "disown" "echo"
+           "enable" "eval" "exec" "exit" "export" "fc" "fg" "getopts" "hash" "help" "history"
+           "jobs" "kill" "let" "local" "logout" "popd" "printf" "pushd" "pwd" "read"
+           "readonly" "return" "set" "shift" "shopt" "source" "test" "times" "trap" "type"
+           "typeset" "ulimit" "umask" "unalias" "unset" "wait"))
    (list 'sh
          :program "sh"
          ;; No line editing: bash as sh would print back what it reads.
@@ -34,7 +52,11 @@
          ;; ESC \ that ends the sequence comes from a variable.
          :environment
          '("TERM=dumb" "PAGER=cat" "GIT_PAGER=cat" "RSEDIT_OSC_END=\e\\"
-           "PS1=\e]7;file://${PWD}${RSEDIT_OSC_END}$ "))
+           "PS1=\e]7;file://${PWD}${RSEDIT_OSC_END}$ ")
+         :commands
+         '("alias" "bg" "cd" "command" "echo" "eval" "exec" "exit" "export" "fg" "getopts"
+           "hash" "jobs" "kill" "printf" "pwd" "read" "readonly" "return" "set" "shift" "test"
+           "times" "trap" "type" "ulimit" "umask" "unalias" "unset" "wait"))
    (list 'cmd
          :program "cmd.exe"
          ;; UTF-8 in and out, before the first prompt; the banner is left out.
@@ -42,7 +64,13 @@
          :environment '("PROMPT=$E]7;file:///$P$E\\$P$G")
          :newline "\r\n"
          :echoes t
-         :prompt-regexp "^[A-Za-z]:[^>]*> *")
+         :prompt-regexp "^[A-Za-z]:[^>]*> *"
+         :syntax 'cmd
+         :commands
+         '("assoc" "call" "cd" "chdir" "cls" "color" "copy" "date" "del" "dir" "echo"
+           "endlocal" "erase" "exit" "for" "ftype" "goto" "if" "md" "mkdir" "mklink" "move"
+           "path" "pause" "popd" "prompt" "pushd" "rd" "rem" "ren" "rename" "rmdir" "set"
+           "setlocal" "shift" "start" "time" "title" "type" "ver" "verify" "vol"))
    (list 'powershell
          :program "powershell.exe"
          :args '("-NoLogo" "-NoProfile" "-Command" "-")
@@ -51,19 +79,25 @@
          ;; Read from a pipe, PowerShell shows no prompt: it is asked for one
          ;; after each line.
          :prompt "Write-Host -NoNewline \"PS $($PWD.ProviderPath)> \""
-         :prompt-regexp "^PS [^>]*> *")
+         :prompt-regexp "^PS [^>]*> *"
+         :syntax 'powershell
+         :commands eshell--powershell-commands)
    (list 'pwsh
          :program "pwsh"
          :args '("-NoLogo" "-NoProfile" "-Command" "-")
          :init '("[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)")
          :prompt "Write-Host -NoNewline \"PS $($PWD.ProviderPath)> \""
-         :prompt-regexp "^PS [^>]*> *"))
+         :prompt-regexp "^PS [^>]*> *"
+         :syntax 'powershell
+         :commands eshell--powershell-commands))
   "The shells `eshell' can run, each a list of its name and a property list:
 :program and :args, how it is started; :environment, variables given it as
 \"NAME=VALUE\"; :newline, what ends a line sent to it, \"\\n\" unless given;
 :init, lines sent once it has started; :prompt, a line sent after each one
 typed, for a shell that prints no prompt; :echoes, non-nil for a shell that
-prints back each line it reads; :prompt-regexp, what a prompt looks like.")
+prints back each line it reads; :prompt-regexp, what a prompt looks like;
+:syntax, how it quotes, posix, cmd or powershell; :commands, the commands it
+has that are not on the PATH.")
 
 (defvar eshell-shell nil
   "The name of the shell in `eshell-shells' that `eshell' runs: nil for cmd
@@ -677,10 +711,370 @@ stays, and ends with --- killed ---."
 (add-hook 'eshell-mode "after-close-hook" 'eshell--closed)
 
 ;; ---------------------------------------------------------------------------
+;; Completion
+;; ---------------------------------------------------------------------------
+;;
+;; One source, `eshell-completion', and the only one of eshell-mode: it reads
+;; the line as the shell will, and asks the part that knows -- the variables,
+;; the commands on the PATH, a completer of the command, the files -- for what
+;; can go in the word at point. Offering, matching and showing them is
+;; `completion-at-point''s, as everywhere else.
+
+;; How each kind of shell writes a line: what escapes a character, what
+;; quotes, what starts another command, and how a variable is named, as
+;; (OPEN . CLOSE) pairs, longest first.
+(defconst eshell--syntaxes
+  '((posix "\\" "'\"" ";|&()`" (("${" . "}") ("$" . "")))
+    (cmd "^" "\"" "&|()" (("%" . "%")))
+    (powershell "`" "'\"" ";|&(){}" (("$env:" . "") ("$" . ""))))
+  "Each syntax a shell can have: (NAME ESCAPE QUOTES SEPARATORS VARIABLES).")
+
+(defconst eshell--word-breaks " \t\n<>"
+  "What ends a word outside quotes and starts none: blanks and redirections.")
+
+(defvar eshell-completion-wrappers
+  '("sudo" "doas" "env" "time" "nohup" "nice" "exec" "command" "xargs")
+  "Commands that run the command after them: what follows one is completed
+as a command, and its arguments as that command's.")
+
+(defvar eshell-completers
+  '(("cd" . eshell-complete-directories)
+    ("pushd" . eshell-complete-directories)
+    ("rmdir" . eshell-complete-directories)
+    ("make" . eshell--complete-make)
+    ("ssh" . eshell--complete-ssh)
+    ("scp" . eshell--complete-scp)
+    ("sftp" . eshell--complete-ssh)
+    ("git" . eshell--complete-git))
+  "What completes the arguments of a command, as (COMMAND . FUNCTION).
+FUNCTION is called with the words of the command, unquoted, the command first
+and the word being completed last, and returns what it can be: a list of
+strings or (VALUE . DESCRIPTION) pairs, which `eshell-completion' quotes as
+the shell wants them.")
+
+(defun eshell--syntax ()
+  "The syntax of the shell of this buffer, from its :syntax, posix unless given."
+  (or (assq (or (eshell--property (eshell--profile) :syntax) 'posix) eshell--syntaxes)
+      (assq 'posix eshell--syntaxes)))
+
+(defun eshell--one-of (character characters)
+  "Non-nil when CHARACTER, a string of one, is one of CHARACTERS."
+  (let ((found nil)
+        (at 0))
+    (while (and (not found) (< at (length characters)))
+      (when (string= character (substring characters at (+ at 1)))
+        (setq found t))
+      (setq at (+ at 1)))
+    found))
+
+(defun eshell--words (line syntax)
+  "The words of the last command of LINE, read as SYNTAX reads them, each as
+(START TEXT OPEN): where it starts in LINE, its text without quotes and
+escapes, and the quote still open at the end of LINE when it started with it.
+The last is the word LINE ends in, empty when it ends between two."
+  (let ((escape (nth 1 syntax))
+        (quotes (nth 2 syntax))
+        (separators (nth 3 syntax))
+        (words nil)
+        (start nil)
+        (text "")
+        (lead nil)
+        (quote nil)
+        (escaped nil)
+        (at 0))
+    (while (< at (length line))
+      (let ((c (substring line at (+ at 1))))
+        (cond
+         (escaped
+          (setq text (concat text c))
+          (setq escaped nil))
+         (quote
+          (if (string= c quote) (setq quote nil) (setq text (concat text c))))
+         ((string= c escape)
+          (unless start (setq start at))
+          (setq escaped t))
+         ((eshell--one-of c quotes)
+          (unless start
+            (setq start at)
+            (setq lead c))
+          (setq quote c))
+         ((or (eshell--one-of c eshell--word-breaks) (eshell--one-of c separators))
+          (when start
+            (setq words (cons (list start text nil) words)))
+          (setq start nil)
+          (setq text "")
+          (setq lead nil)
+          (when (eshell--one-of c separators)
+            (setq words nil)))
+         (t
+          (unless start (setq start at))
+          (setq text (concat text c)))))
+      (setq at (+ at 1)))
+    (reverse (cons (list (or start (length line)) text (if (and lead quote) lead nil))
+                   words))))
+
+(defconst eshell--special "[\\] \t\n'\"\\\\$`&|;()<>*?\\[{}!]"
+  "A regexp for a character a posix shell reads as more than itself.")
+
+(defun eshell--escape (text syntax)
+  "TEXT as SYNTAX writes it outside quotes: a posix shell's special
+characters each after a backslash, the others' as they are."
+  ;; Most names have none: one match decides, rather than a walk of every
+  ;; name, which with all the programs of the PATH is thousands.
+  (if (or (not (eq (car syntax) 'posix)) (not (string-match-p eshell--special text)))
+      text
+      (let ((escaped "")
+            (at 0))
+        (while (< at (length text))
+          (let ((c (substring text at (+ at 1))))
+            (setq escaped (concat escaped
+                                  (if (eshell--one-of c " \t\n'\"\\$`&|;()<>*?[]{}!") "\\" "")
+                                  c)))
+          (setq at (+ at 1)))
+        escaped)))
+
+(defun eshell--quoted (candidates open syntax)
+  "CANDIDATES, strings or (VALUE . DESCRIPTION) pairs, with each value written
+as it is typed: after OPEN, the quote the word started with, or escaped."
+  (mapcar (lambda (candidate)
+            (let ((write (lambda (value)
+                           (if open (concat open value) (eshell--escape value syntax)))))
+              (if (consp candidate)
+                  (cons (funcall write (car candidate)) (cdr candidate))
+                  (funcall write candidate))))
+          candidates))
+
+(defun eshell--described (values description)
+  "VALUES, each as (VALUE . DESCRIPTION)."
+  (mapcar (lambda (value) (cons value description)) values))
+
+(defun eshell-complete-files (word &optional directories)
+  "Return the files WORD can be completed to, in its directory or the one of
+the shell, each described as a file or a directory; only the directories when
+DIRECTORIES is not nil. A completer of `eshell-completers' builds on it.
+
+Example:
+  (eshell-complete-files \"src/m\")"
+  (let ((found nil))
+    (dolist (path (capf-file-candidates word t))
+      (if (string-suffix-p "/" path)
+          (setq found (cons (cons path "directory") found))
+          (unless directories
+            (setq found (cons (cons path "file") found)))))
+    (reverse found)))
+
+(defun eshell-complete-directories (words)
+  "Return the directories the last of WORDS can be completed to: the
+completer of cd."
+  (eshell-complete-files (car (reverse words)) t))
+
+(defun eshell--path-commands ()
+  "The names of the programs in the directories of the PATH: on Windows those
+whose extension PATHEXT names."
+  (let ((names nil)
+        (extensions (and (eshell--windows-p)
+                         (split-string (downcase (or (getenv "PATHEXT") ".com;.exe;.bat;.cmd"))
+                                       ";"))))
+    (dolist (directory (split-string (or (getenv "PATH") "") (path-separator)))
+      (unless (string= directory "")
+        (dolist (entry (list-dir directory))
+          (unless (string-suffix-p "/" entry)
+            (when (or (null extensions)
+                      (let ((kept nil))
+                        (dolist (extension extensions)
+                          (when (and (not (string= extension ""))
+                                     (string-suffix-p extension (downcase entry)))
+                            (setq kept t)))
+                        kept))
+              (setq names (cons entry names)))))))
+    names))
+
+(defun eshell--commands (word)
+  "What WORD, in the place of a command, can be completed to."
+  (if (or (string-match-p "[/\\\\]" word) (string-prefix-p "." word) (string-prefix-p "~" word))
+      (eshell-complete-files word)
+      (append (eshell--described (eshell--property (eshell--profile) :commands) "builtin")
+              (eshell--described (eshell--path-commands) "command"))))
+
+(defun eshell--variables (raw syntax)
+  "The variables RAW, a word as typed, can be completed to, written as SYNTAX
+names them, or nil when RAW does not start like a variable."
+  (let ((form nil))
+    (dolist (pair (nth 4 syntax))
+      (when (and (null form) (string-prefix-p (car pair) raw))
+        (setq form pair)))
+    (when form
+      (mapcar (lambda (name) (cons (concat (car form) name (cdr form)) "variable"))
+              (getenv-names)))))
+
+(defun eshell--unwrapped (words)
+  "WORDS without the commands of `eshell-completion-wrappers' in front, and
+the options and variables given to them: the command they run, and its
+arguments."
+  (let ((rest words))
+    (while (and (cdr rest) (member (nth 1 (car rest)) eshell-completion-wrappers))
+      (setq rest (cdr rest))
+      (while (and (cdr rest)
+                  (let ((text (nth 1 (car rest))))
+                    (or (string-prefix-p "-" text) (string-match-p "=" text))))
+        (setq rest (cdr rest))))
+    rest))
+
+(defun eshell--complete-shell (start)
+  "(START END CANDIDATES) for the word at point in the shell line that starts
+at START, or nil."
+  (let ((syntax (eshell--syntax))
+        (line (buffer-substring start (point))))
+    (let ((words (eshell--unwrapped (eshell--words line syntax))))
+      (let ((current (car (reverse words)))
+            (index (- (length words) 1)))
+        (let ((from (+ start (nth 0 current)))
+              (word (nth 1 current))
+              (open (nth 2 current)))
+          (let ((variables (and (not open)
+                                (eshell--variables (buffer-substring from (point)) syntax))))
+            (let ((candidates
+                   (cond
+                    (variables variables)
+                    ((= index 0) (eshell--quoted (eshell--commands word) open syntax))
+                    (t
+                     (let ((completer (cdr (assoc (nth 1 (car words)) eshell-completers))))
+                       (eshell--quoted
+                        (if completer
+                            (funcall completer (mapcar (lambda (each) (nth 1 each)) words))
+                            (eshell-complete-files word))
+                        open syntax))))))
+              (when candidates
+                (list from (eshell--word-end) candidates)))))))))
+
+(defun eshell--word-end ()
+  "Where the word at point ends: point, or the next blank after it."
+  (let ((rest (buffer-substring (point) (point-max))))
+    (if (string-match "[ \t\n]" rest)
+        (+ (point) (match-beginning 0))
+        (point-max))))
+
+(defun eshell-completion ()
+  "Return what can go in the word at point of a shell's line, as a completion
+source returns it: the only source of eshell-mode. A Lisp line is completed
+as Lisp, with file names and the editor's names; a shell line by what its
+word is: a variable, a command, an argument of a command of
+`eshell-completers', or a file."
+  (let ((marker (buffer-get 'eshell--marker)))
+    (when (and marker (>= (point) (marker-position marker)))
+      (let ((start (marker-position marker)))
+        (if (eshell--lisp-p (buffer-substring start (point)))
+            (or (capf-file-name) (capf-symbols))
+            (eshell--complete-shell start))))))
+
+;; What a few commands take
+
+(defun eshell--complete-make (words)
+  "The targets of the makefile of the shell's directory."
+  (let ((text (or (read-file-to-string "GNUmakefile")
+                  (read-file-to-string "makefile")
+                  (read-file-to-string "Makefile")
+                  ""))
+        (targets nil))
+    (dolist (line (split-string text "\n"))
+      (when (string-match "^([A-Za-z0-9_][^:=#%$ \t]*)[ \t]*:([^=]|$)" line)
+        (let ((target (match-string 1 line)))
+          (unless (member target targets)
+            (setq targets (cons target targets))))))
+    (eshell--described (reverse targets) "target")))
+
+(defun eshell--hosts-of (config known)
+  "The hosts CONFIG, the text of an ssh configuration, names, then those KNOWN,
+the text of a known_hosts file, knows, each once; patterns and hashed names
+left out."
+  (let ((hosts nil))
+    (dolist (line (split-string config "\n"))
+      (when (string-match "^[ \t]*[Hh]ost[ \t]+(.+)$" line)
+        (dolist (name (split-string (match-string 1 line) " "))
+          (unless (or (string= name "") (string-match-p "[*?!]" name) (member name hosts))
+            (setq hosts (cons name hosts))))))
+    (dolist (line (split-string known "\n"))
+      (unless (or (string= line "") (string-match-p "^[|@#]" line))
+        (dolist (name (split-string (car (split-string line " ")) ","))
+          (let ((host (if (string-match "^\\[([^]]+)\\]" name) (match-string 1 name) name)))
+            (unless (or (string= host "") (string-match-p "^[|]" host) (member host hosts))
+              (setq hosts (cons host hosts)))))))
+    (reverse hosts)))
+
+(defun eshell--ssh-hosts ()
+  "The hosts ~/.ssh/config names and ~/.ssh/known_hosts knows."
+  (eshell--hosts-of (or (read-file-to-string "~/.ssh/config") "")
+                    (or (read-file-to-string "~/.ssh/known_hosts") "")))
+
+(defun eshell--complete-ssh (words)
+  "The hosts ssh knows of."
+  (eshell--described (eshell--ssh-hosts) "host"))
+
+(defun eshell--complete-scp (words)
+  "The hosts ssh knows of, each before its :, and the local files."
+  (let ((word (car (reverse words))))
+    (if (string-match-p ":" word)
+        nil
+        (append (eshell--described (mapcar (lambda (host) (concat host ":")) (eshell--ssh-hosts))
+                                   "host")
+                (eshell-complete-files word)))))
+
+(defconst eshell--git-commands
+  '("add" "bisect" "blame" "branch" "checkout" "cherry-pick" "clean" "clone" "commit"
+    "config" "diff" "fetch" "grep" "init" "log" "merge" "mv" "pull" "push" "rebase"
+    "reflog" "remote" "reset" "restore" "revert" "rm" "show" "stash" "status" "switch"
+    "tag" "worktree")
+  "The commands of git offered after it.")
+
+(defun eshell--git-refs (directory prefix)
+  "The names of the refs in DIRECTORY, each after PREFIX, those in its
+subdirectories with their path."
+  (let ((names nil))
+    (dolist (entry (list-dir directory))
+      (if (string-suffix-p "/" entry)
+          (setq names (append names (eshell--git-refs (concat directory entry)
+                                                      (concat prefix entry))))
+          (setq names (append names (list (concat prefix entry))))))
+    names))
+
+(defun eshell--git-branches ()
+  "The branches and tags of the repository the shell is in."
+  (let ((top (locate-dominating-file nil ".git")))
+    (when (and top (file-directory-p (concat top ".git")))
+      (let ((git (concat top ".git/"))
+            (found nil))
+        (dolist (name (eshell--git-refs (concat git "refs/heads/") ""))
+          (setq found (cons (cons name "branch") found)))
+        (dolist (name (eshell--git-refs (concat git "refs/tags/") ""))
+          (setq found (cons (cons name "tag") found)))
+        (dolist (line (split-string (or (read-file-to-string (concat git "packed-refs")) "")
+                                    "\n"))
+          (when (string-match "^[0-9a-f]+ refs/(heads|tags)/(.+)$" line)
+            (let ((name (match-string 2 line))
+                  (kind (if (string= (match-string 1 line) "heads") "branch" "tag")))
+              (unless (assoc name found)
+                (setq found (cons (cons name kind) found))))))
+        (reverse found)))))
+
+(defun eshell--complete-git (words)
+  "The commands of git, then branches and tags where they are wanted, and
+files."
+  (let ((word (car (reverse words))))
+    (cond ((= (length words) 2)
+           (eshell--described eshell--git-commands "subcommand"))
+          ((member (nth 1 words) '("checkout" "switch" "merge" "rebase" "branch" "reset"
+                                   "cherry-pick" "log" "diff" "show"))
+           (append (eshell--git-branches) (eshell-complete-files word)))
+          (t (eshell-complete-files word)))))
+
+(set-completion-functions 'eshell-mode '(eshell-completion) :global nil)
+
+;; ---------------------------------------------------------------------------
 ;; Keys, menus, colours
 ;; ---------------------------------------------------------------------------
 
 (define-key 'eshell-mode "<ret>" 'eshell-send-input)
+(define-key 'eshell-mode "<tab>" 'completion-at-point)
 (define-key 'eshell-mode "M-p" 'eshell-previous-input)
 (define-key 'eshell-mode "M-n" 'eshell-next-input)
 (define-key 'eshell-mode "M-r" 'eshell-search-history)

@@ -33,6 +33,7 @@ mod tests {
         for source in [
             include_str!("../../lisp/base/commands.lisp"),
             include_str!("../../lisp/base/debug.lisp"),
+            include_str!("../../lisp/features/completion-at-point.lisp"),
             include_str!("../../lisp/features/eshell.lisp"),
         ] {
             eval_str(source, &env, &ctx).expect("loading the shipped lisp");
@@ -369,6 +370,311 @@ mod tests {
         run(r#"(insert "ls") (eshell-send-input)"#, &env, &ctx);
         assert_eq!(contents(&ctx, "*eshell*"), "$ ls");
         assert!(run("(eshell-history)", &env, &ctx).is_nil());
+    }
+
+    // ----------------------------------------------------------------
+    // Completion
+    // ----------------------------------------------------------------
+
+    /// A directory of its own for one test, with FILES in it: a name ending
+    /// in / is a directory.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(test: &str, files: &[&str]) -> Self {
+            let root = std::env::temp_dir()
+                .join(format!("rsedit-eshell-{test}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).expect("directory");
+            for file in files {
+                let path = root.join(file);
+                if file.ends_with('/') {
+                    std::fs::create_dir_all(&path).expect("directory");
+                } else {
+                    std::fs::write(&path, "").expect("file");
+                }
+            }
+            Self(root)
+        }
+
+        fn path(&self) -> String {
+            self.0.display().to_string()
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A shell buffer for sh, in DIRECTORY, with LINE typed after its prompt.
+    fn typed_at_prompt(line: &str, directory: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
+        shell_buffer("$ ", env, ctx);
+        run(
+            &format!(
+                "(buffer-put 'eshell--shell 'sh) (set-buffer-directory {}) (insert {})",
+                quoted(directory),
+                quoted(line)
+            ),
+            env,
+            ctx,
+        );
+    }
+
+    /// What `eshell-completion' answers: the text it would replace, and the
+    /// values it offers, each with its description.
+    fn completion(env: &Arc<Env<Ctx>>, ctx: &Ctx) -> Option<(String, Vec<(String, String)>)> {
+        let answer = run("(eshell-completion)", env, ctx);
+        if answer.is_nil() {
+            return None;
+        }
+        let parts: Vec<LispExp<Ctx>> = answer.iter().collect();
+        let region = match run(
+            &format!(
+                "(buffer-substring {} {})",
+                lisp_number(&parts[0]),
+                lisp_number(&parts[1])
+            ),
+            env,
+            ctx,
+        ) {
+            LispExp::String(text) => text.to_string(),
+            other => panic!("{other:?}"),
+        };
+        let candidates = parts[2]
+            .iter()
+            .map(|candidate| match candidate {
+                LispExp::String(value) => (value.to_string(), String::new()),
+                LispExp::Cons(cell) => match (&cell.car, &cell.cdr) {
+                    (LispExp::String(value), LispExp::String(about)) => {
+                        (value.to_string(), about.to_string())
+                    }
+                    other => panic!("{other:?}"),
+                },
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        Some((region, candidates))
+    }
+
+    fn lisp_number(exp: &LispExp<Ctx>) -> String {
+        match exp {
+            LispExp::Number(n) => format!("{n}"),
+            other => panic!("not a number: {other:?}"),
+        }
+    }
+
+    fn values(candidates: &[(String, String)]) -> Vec<&str> {
+        candidates.iter().map(|(value, _)| value.as_str()).collect()
+    }
+
+    #[test]
+    fn a_line_is_read_into_words_as_a_posix_shell_reads_it() {
+        let (ctx, env) = editor();
+        assert_eq!(
+            run(
+                r#"(mapcar (lambda (word) (nth 1 word))
+                           (eshell--words "make && ls 'a b' c\\ d \"e" (assq 'posix eshell--syntaxes)))"#,
+                &env,
+                &ctx
+            ),
+            strings(&["ls", "a b", "c d", "e"])
+        );
+        assert_eq!(
+            run(
+                r#"(eshell--words "ls " (assq 'posix eshell--syntaxes))"#,
+                &env,
+                &ctx
+            ),
+            run("'((0 \"ls\" nil) (3 \"\" nil))", &env, &ctx)
+        );
+    }
+
+    #[test]
+    fn an_argument_is_completed_over_the_files_of_the_shells_directory() {
+        let (ctx, env) = editor();
+        let here = Scratch::new("files", &["alpha.txt", "alpine/", "beta"]);
+        typed_at_prompt("cat al", &here.path(), &env, &ctx);
+        let (region, candidates) = completion(&env, &ctx).expect("an answer");
+        assert_eq!(region, "al");
+        assert_eq!(
+            candidates,
+            [
+                ("alpha.txt".to_string(), "file".to_string()),
+                ("alpine/".to_string(), "directory".to_string()),
+                ("beta".to_string(), "file".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_name_is_offered_escaped_or_after_the_quote_it_was_started_with() {
+        let (ctx, env) = editor();
+        let here = Scratch::new("quoting", &["My Documents/"]);
+        typed_at_prompt("ls My", &here.path(), &env, &ctx);
+        assert_eq!(
+            values(&completion(&env, &ctx).expect("an answer").1),
+            ["My\\ Documents/"]
+        );
+        run("(eshell-kill-input) (insert \"ls 'My\")", &env, &ctx);
+        let (region, candidates) = completion(&env, &ctx).expect("an answer");
+        assert_eq!(region, "'My");
+        assert_eq!(values(&candidates), ["'My Documents/"]);
+    }
+
+    #[test]
+    fn cd_is_offered_directories_alone_even_behind_sudo() {
+        let (ctx, env) = editor();
+        let here = Scratch::new("cd", &["alpha.txt", "alpine/"]);
+        typed_at_prompt("sudo cd al", &here.path(), &env, &ctx);
+        assert_eq!(
+            values(&completion(&env, &ctx).expect("an answer").1),
+            ["alpine/"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_is_completed_over_the_path_and_the_shells_own_commands() {
+        let (ctx, env) = editor();
+        let bin = Scratch::new("path", &["rsedit-test-tool", "subdirectory/"]);
+        let here = Scratch::new("path-here", &[]);
+        run(&format!("(setenv \"PATH\" {})", quoted(&bin.path())), &env, &ctx);
+        // After a ; a command starts again. What is offered is all of them:
+        // matching what is typed is `completion-at-point''s.
+        typed_at_prompt("echo hi; rsedit-te", &here.path(), &env, &ctx);
+        let (region, candidates) = completion(&env, &ctx).expect("an answer");
+        assert_eq!(region, "rsedit-te");
+        assert!(
+            candidates.contains(&("rsedit-test-tool".to_string(), "command".to_string())),
+            "{candidates:?}"
+        );
+        assert!(
+            candidates.contains(&("export".to_string(), "builtin".to_string())),
+            "{candidates:?}"
+        );
+        assert!(!values(&candidates).contains(&"subdirectory/"));
+        run("(completion-at-point)", &env, &ctx);
+        assert_eq!(contents(&ctx, "*eshell*"), "$ echo hi; rsedit-test-tool");
+    }
+
+    #[test]
+    fn a_variable_is_completed_over_the_environment() {
+        let (ctx, env) = editor();
+        let here = Scratch::new("variables", &[]);
+        run(r#"(setenv "RSEDIT_ESHELL_VARIABLE" "x")"#, &env, &ctx);
+        typed_at_prompt("echo $RSEDIT_ESH", &here.path(), &env, &ctx);
+        let (region, candidates) = completion(&env, &ctx).expect("an answer");
+        assert_eq!(region, "$RSEDIT_ESH");
+        assert!(candidates.contains(&(
+            "$RSEDIT_ESHELL_VARIABLE".to_string(),
+            "variable".to_string()
+        )));
+        run("(eshell-kill-input) (insert \"echo ${RSEDIT_ESH\")", &env, &ctx);
+        assert!(
+            values(&completion(&env, &ctx).expect("an answer").1)
+                .contains(&"${RSEDIT_ESHELL_VARIABLE}")
+        );
+    }
+
+    #[test]
+    fn make_is_offered_the_targets_of_the_makefile() {
+        let (ctx, env) = editor();
+        let here = Scratch::new("make", &[]);
+        std::fs::write(
+            here.0.join("Makefile"),
+            "build: main.o\n\tcc -o x\ntest: build\nVARIABLE := 1\n.PHONY: build\n%.o: %.c\n",
+        )
+        .expect("a makefile");
+        typed_at_prompt("make ", &here.path(), &env, &ctx);
+        assert_eq!(
+            completion(&env, &ctx).expect("an answer").1,
+            [
+                ("build".to_string(), "target".to_string()),
+                ("test".to_string(), "target".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn git_is_offered_its_commands_then_its_branches() {
+        let (ctx, env) = editor();
+        let here = Scratch::new("git", &[".git/refs/heads/feature/", ".git/refs/tags/"]);
+        std::fs::write(here.0.join(".git/refs/heads/main"), "0\n").expect("a ref");
+        std::fs::write(here.0.join(".git/refs/heads/feature/x"), "0\n").expect("a ref");
+        std::fs::write(
+            here.0.join(".git/packed-refs"),
+            "# pack-refs\n1111 refs/tags/v1\n2222 refs/heads/old\n",
+        )
+        .expect("packed refs");
+        typed_at_prompt("git ch", &here.path(), &env, &ctx);
+        let commands = completion(&env, &ctx).expect("an answer").1;
+        assert!(values(&commands).contains(&"checkout"), "{commands:?}");
+        run("(eshell-kill-input) (insert \"git checkout \")", &env, &ctx);
+        let refs = completion(&env, &ctx).expect("an answer").1;
+        for wanted in [("main", "branch"), ("feature/x", "branch"), ("v1", "tag"), ("old", "branch")] {
+            assert!(
+                refs.contains(&(wanted.0.to_string(), wanted.1.to_string())),
+                "{wanted:?} not in {refs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_hosts_of_ssh_come_from_its_configuration_and_known_hosts() {
+        let (ctx, env) = editor();
+        assert_eq!(
+            run(
+                r#"(eshell--hosts-of "Host build box\nHost *.example\n  HostName x\n"
+                                     "box,10.0.0.1 ssh-ed25519 A\n[git.example]:2222 ssh-rsa B\n|1|hash= ssh-rsa C\n")"#,
+                &env,
+                &ctx
+            ),
+            strings(&["build", "box", "10.0.0.1", "git.example"])
+        );
+    }
+
+    #[test]
+    fn a_lisp_line_is_completed_over_the_editors_names() {
+        let (ctx, env) = editor();
+        let here = Scratch::new("lisp", &[]);
+        typed_at_prompt(",(eshell-history-del", &here.path(), &env, &ctx);
+        let (region, candidates) = completion(&env, &ctx).expect("an answer");
+        assert_eq!(region, "eshell-history-del");
+        assert!(values(&candidates).contains(&"eshell-history-delete-duplicates"));
+    }
+
+    #[test]
+    fn nothing_is_completed_above_the_prompt() {
+        let (ctx, env) = editor();
+        let here = Scratch::new("above", &["alpha"]);
+        typed_at_prompt("ls al", &here.path(), &env, &ctx);
+        run("(goto-char 1)", &env, &ctx);
+        assert!(completion(&env, &ctx).is_none());
+    }
+
+    #[test]
+    fn the_shells_completion_is_the_only_one_its_buffer_is_offered() {
+        let (ctx, env) = editor();
+        let here = Scratch::new("only", &["alpha.txt"]);
+        // A global source that would offer a second candidate for the same
+        // text, were it asked.
+        run(
+            "(defun capf-everywhere ()
+               (let ((bounds (bounds-of-thing-at-point 'symbol)))
+                 (list (nth 0 bounds) (nth 1 bounds) (list \"alphabet\"))))
+             (add-completion-function nil 'capf-everywhere)",
+            &env,
+            &ctx,
+        );
+        typed_at_prompt("cat alph", &here.path(), &env, &ctx);
+        run("(completion-at-point)", &env, &ctx);
+        assert_eq!(contents(&ctx, "*eshell*"), "$ cat alpha.txt");
+        assert_eq!(
+            run("(car (nth 1 (key-binding \"<tab>\")))", &env, &ctx),
+            LispExp::symbol("completion-at-point".into())
+        );
     }
 
     // ----------------------------------------------------------------

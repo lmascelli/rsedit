@@ -18,6 +18,9 @@ SYNOPSIS
     (eshell-history)
     (eshell-history-delete-duplicates)
     (eshell-history-clear)
+    (eshell-completion)
+    (eshell-complete-files WORD &optional DIRECTORIES)
+    (eshell-complete-directories WORDS)
     eshell-shells
     eshell-shell
     eshell-buffer-name
@@ -26,6 +29,8 @@ SYNOPSIS
     eshell-history-duplicates
     eshell-history-ignore
     eshell-history-save
+    eshell-completers
+    eshell-completion-wrappers
 
 DESCRIPTION
     M-x eshell opens *eshell*, a buffer with a shell running in it: bash
@@ -102,6 +107,40 @@ LISP AT THE PROMPT
     of a line a comma means nothing in sh and bash. Set the prefix to
     something else, or to nil to send every line to the shell.
 
+COMPLETING
+    Tab completes the word the cursor is in, from what that word can be
+    where it is on the line, read as the shell reads it: past a ;, a | or
+    a &&, a new command starts. The candidates open in the strip, as
+    everywhere else, and are matched against what you typed the same way:
+    the completion page says how.
+
+        $ gi<tab>               the programs on the PATH, and the
+                                shell's own commands: git, gio, ...
+        $ git che<tab>          git's commands: checkout, cherry-pick
+        $ git checkout <tab>    the branches and tags, and the files
+        $ cd sr<tab>            only directories: src/
+        $ cat My<tab>           the files: My\ Documents/, escaped
+        $ echo $HO<tab>         the environment: $HOME
+        $ make <tab>            the targets of the Makefile
+        $ ssh <tab>             the hosts of ~/.ssh/config and known_hosts
+        $ ,(eshell-hi<tab>      on a Lisp line, the editor's names
+
+    In the place of a command come the programs in the directories of the
+    PATH and the commands of the shell that are not programs, as cd and
+    export; a word with a / in it is a file. After a command come what
+    `eshell-completers' gives for it, or the files of the shell's
+    directory. After sudo, env, time and the others of
+    `eshell-completion-wrappers', a command starts again.
+
+    A name is written as the shell will read it: in sh and bash a space or
+    a $ in it gets a backslash, and after a quote you opened it comes
+    without one. The shells of Windows get it as it is.
+
+    Tab is the only completion in the buffer of a shell: the sources the
+    other buffers are completed from, the words of every buffer among them,
+    are not asked there. `eshell-completion' is the one source, and C-M-i
+    asks it too.
+
 THE HISTORY
     Every line you send, to the shell or as Lisp, goes into the history,
     one for all the shells' buffers. M-p puts the line before the one
@@ -170,6 +209,10 @@ THE SHELLS
         :prompt-regexp  what its prompt looks like, for Return on an
                         earlier line; a line up to $, #, % or > when
                         not given
+        :syntax         how it quotes and escapes, for completion:
+                        posix, the default, cmd or powershell
+        :commands       the commands it has that are not programs on
+                        the PATH, offered with those
 
     Any program that reads a line and answers is a shell to eshell: a
     REPL, a database's client, a debugger. EXAMPLES has one.
@@ -201,6 +244,16 @@ STOPPING
     The buffer stays, for reading; M-x eshell starts the same shell in
     it again. Closing the buffer stops its shell, and leaving the editor
     stops every shell still running.
+
+ADDING TO COMPLETION
+    `eshell-completers' says what follows a command: a list of (COMMAND .
+    FUNCTION). FUNCTION is given the words of the command, unquoted, the
+    command first and the word being completed last, and returns what that
+    word can be: strings, or (VALUE . DESCRIPTION) pairs. eshell writes
+    them as the shell reads them. `eshell-complete-files' returns the files
+    a word can be completed to, or its directories alone, for a completer
+    to offer with its own; `eshell-complete-directories' is the completer
+    of cd.
 
 FROM LISP
     `eshell-start' starts a shell, by its name in `eshell-shells', in a
@@ -260,6 +313,12 @@ LIMITS
     A Lisp line is one expression: what follows it on the line is not
     evaluated. It runs as a command does, and the editor waits for it.
 
+    Completion knows what the editor knows, not what the shell does: the
+    PATH and the environment the editor gives the shell when it starts,
+    not those a .bashrc or a command changed since, and not the shell's
+    aliases and functions. Options are not completed, and a name put in
+    alone is not followed by a space.
+
     The buffer keeps all that was printed in it: C-c M-o, or closing it,
     lets it go.
 
@@ -299,8 +358,17 @@ EXAMPLES
 
         (setq eshell-lisp-prefix nil)
 
+    Complete what follows cargo, its commands first, then files:
+
+        (defun my-cargo-words (words)
+          (if (= (length words) 2)
+              '("build" "check" "clippy" "doc" "run" "test")
+              (eshell-complete-files (car (reverse words)))))
+        (add-to-list 'eshell-completers '("cargo" . my-cargo-words))
+
 KEYS IN ESHELL MODE
     <ret>                   eshell-send-input
+    <tab>                   completion-at-point
     M-p                     eshell-previous-input
     M-n                     eshell-next-input
     M-r                     eshell-search-history

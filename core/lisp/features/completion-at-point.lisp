@@ -1,12 +1,27 @@
 ;;; completion-at-point --- the sources C-M-i asks what could go at point.
 ;;;
 ;;; The command, which merges what the sources offer, is built in; this module
-;;; is the five sources and their order. User manual: the `completion' page.
+;;; is the five sources, their order, and the file names they and other
+;;; modules' sources complete. User manual: the `completion' page.
 ;;; Design: `doc/architettura-editor.typ, <mod-completion-at-point>`.
 
 ;; ---------------------------------------------------------------------------
 ;; Files
 ;; ---------------------------------------------------------------------------
+
+(defun capf-file-candidates (text &optional here)
+  "Return the paths TEXT can be completed to: the entries of TEXT's
+directory, each after that directory as TEXT writes it, a subdirectory with a
+/ after it. A TEXT with no directory in it is completed in the working
+directory when HERE is not nil, and to nothing otherwise.
+
+Example:
+  (capf-file-candidates \"src/ma\")   => (\"src/main.rs\" \"src/modes/\" ...)"
+  (let ((directory (file-name-directory text)))
+    (cond (directory
+           (mapcar (lambda (entry) (concat directory entry)) (list-dir directory)))
+          (here (list-dir))
+          (t nil))))
 
 (defun capf-file-name ()
   "Complete a path when point is in one, over the entries of its directory."
@@ -16,13 +31,9 @@
     (if bounds
         (let* ((start (nth 0 bounds))
                (end (nth 1 bounds))
-               (text (buffer-substring start end))
-               (directory (file-name-directory text))
-               (entries (if directory (list-dir directory) nil)))
+               (entries (capf-file-candidates (buffer-substring start end))))
           (if entries
-              (list start end
-                    (mapcar (lambda (entry) (concat directory entry))
-                            entries)))))))
+              (list start end entries))))))
 
 ;; ---------------------------------------------------------------------------
 ;; The language of the buffer

@@ -29,6 +29,9 @@ pub struct MajorMode<B: BufferTrait> {
     /// Where completions come from in a buffer in this mode, tried before the
     /// global ones. See `crate::primitives::completion`.
     pub completion_functions: Vec<ELispExp<B>>,
+    /// Whether the global sources are asked after the mode's own: false for a
+    /// mode whose sources are all a buffer in it is to be completed from.
+    pub completion_global: bool,
     /// What the scanner reads to find this mode's expressions, or `None` for
     /// the default table.
     pub syntax_table: Option<SyntaxTable>,
@@ -47,6 +50,7 @@ impl<B: BufferTrait> MajorMode<B> {
             grammar: Grammar::default(),
             hooks: HashMap::new(),
             completion_functions: Vec::new(),
+            completion_global: true,
             syntax_table: None,
             lighter: None,
         }

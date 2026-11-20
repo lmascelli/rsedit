@@ -252,6 +252,9 @@ COUNTS
     C-u - 2 C-n goes up two lines, as (next-line -2) does, and C-u - M-d
     kills the word before point. Zero goes nowhere.
 
+    C-u starts a count only before a command's keys: after C-c it is the
+    second key of C-c C-u, as a mode may bind it.
+
 TYPING
     A character you type inserts itself. A run of typing undoes a word or
     two at a time, not a character at a time.

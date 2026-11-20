@@ -83,6 +83,19 @@ mod tests {
     }
 
     #[test]
+    fn the_names_of_the_variables_follow_what_setenv_did() {
+        let (ctx, env) = editor();
+        let has = |name: &str| {
+            run(&format!(r#"(member "{name}" (getenv-names))"#), &env, &ctx).is_truthy()
+        };
+        assert!(has("PATH"));
+        run(r#"(setenv "RSEDIT_TEST_THREE" "value")"#, &env, &ctx);
+        assert!(has("RSEDIT_TEST_THREE"));
+        run(r#"(setenv "PATH")"#, &env, &ctx);
+        assert!(!has("PATH"));
+    }
+
+    #[test]
     fn a_nonsense_variable_name_is_refused_rather_than_fatal() {
         // `set_var` panics on these, and a typo in a configuration file must
         // not take the editor down.

@@ -413,9 +413,16 @@ impl<B: BufferTrait> EditorState<B> {
         }
 
         // The prefix argument's reader comes next, unless the buffer's own
-        // keymap claims the key: a key the reader takes is not a command, and
-        // reaches no keymap.
-        if !(Commands::<B>::is_prefix_argument_key(&event) && self.local_key_claims(&event))
+        // keymap claims the key, or a sequence has begun: a key the reader
+        // takes is not a command, and reaches no keymap, but a C-u after C-c
+        // is the second key of C-c C-u, as in Emacs.
+        let in_sequence = !self
+            .pending_keys
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty();
+        if !in_sequence
+            && !(Commands::<B>::is_prefix_argument_key(&event) && self.local_key_claims(&event))
             && self.read_prefix_argument(&event)
         {
             // Recorded too: without it a macro would replay `C-u 5 C-n` as a

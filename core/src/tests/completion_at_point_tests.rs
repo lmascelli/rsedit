@@ -750,6 +750,91 @@ mod tests {
     }
 
     #[test]
+    fn a_mode_whose_sources_are_its_only_ones_never_asks_the_global_ones() {
+        let (ctx, env) = plain();
+        run("(make-mode 'toy)", &env, &ctx);
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "toy".into());
+        typed(&ctx, "ab");
+        run(
+            "(defun capf-mode () (list 0 2 (list \"abcd\" \"abce\")))\
+             (setq *asked* nil)\
+             (defun capf-global () (setq *asked* t) (list 0 2 (list \"abx\")))\
+             (setq *seen* nil)\
+             (defun present (items choose) (setq *seen* items))\
+             (setq *completion-read-function* 'present)",
+            &env,
+            &ctx,
+        );
+        run("(add-completion-function nil 'capf-global)", &env, &ctx);
+        run(
+            "(set-completion-functions 'toy '(capf-mode) :global nil)",
+            &env,
+            &ctx,
+        );
+        run("(completion-at-point)", &env, &ctx);
+        assert_eq!(strings(&run("*seen*", &env, &ctx)), vec!["abcd", "abce"]);
+        assert!(run("*asked*", &env, &ctx).is_nil(), "the global source was asked");
+    }
+
+    #[test]
+    fn a_mode_left_without_an_answer_does_not_fall_back_on_the_global_ones() {
+        let (ctx, env) = plain();
+        run(
+            "(make-mode 'toy) (defun capf-mode () nil)\
+             (defun capf-global () (list 0 2 (list \"abcd\")))",
+            &env,
+            &ctx,
+        );
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "toy".into());
+        typed(&ctx, "ab");
+        run("(add-completion-function nil 'capf-global)", &env, &ctx);
+        run(
+            "(set-completion-functions 'toy '(capf-mode) :global nil)",
+            &env,
+            &ctx,
+        );
+        run("(completion-at-point)", &env, &ctx);
+        assert_eq!(contents(&ctx), "ab");
+        assert!(echo(&ctx).contains("No completion source"), "{}", echo(&ctx));
+    }
+
+    #[test]
+    fn the_global_sources_come_back_with_global_t_and_stay_when_it_is_not_given() {
+        let (ctx, env) = plain();
+        run(
+            "(make-mode 'toy) (defun capf-mode () nil)\
+             (defun capf-global () (list 0 2 (list \"abcd\")))",
+            &env,
+            &ctx,
+        );
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "toy".into());
+        run("(add-completion-function nil 'capf-global)", &env, &ctx);
+        run(
+            "(set-completion-functions 'toy '(capf-mode) :global nil)",
+            &env,
+            &ctx,
+        );
+        // Replaced without :global, the list is still the mode's only one.
+        run("(set-completion-functions 'toy '(capf-mode))", &env, &ctx);
+        typed(&ctx, "ab");
+        run("(completion-at-point)", &env, &ctx);
+        assert_eq!(contents(&ctx), "ab");
+        run(
+            "(set-completion-functions 'toy '(capf-mode) :global t)",
+            &env,
+            &ctx,
+        );
+        run("(completion-at-point)", &env, &ctx);
+        assert_eq!(contents(&ctx), "abcd");
+    }
+
+    #[test]
+    fn global_is_refused_for_the_global_list() {
+        let (ctx, env) = plain();
+        assert!(eval_str("(set-completion-functions nil '() :global nil)", &env, &ctx).is_err());
+    }
+
+    #[test]
     fn a_modes_sources_do_not_leak_into_another_mode() {
         let (ctx, env) = plain();
         run(

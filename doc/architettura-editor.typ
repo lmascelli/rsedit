@@ -1523,7 +1523,8 @@ pub fn handle_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) 
 
 `C-u` e le cifre non arrivano alle keymap: `Commands::read_prefix_argument` li
 prende per primo, a meno che la keymap locale del buffer (`set-local-keymap`)
-non leghi `C-u` lei stessa (`local_key_claims`). Lo stato è la coppia
+non leghi `C-u` lei stessa (`local_key_claims`), o che una sequenza sia già
+cominciata: dopo `C-c`, `C-u` è il secondo tasto di `C-c C-u`, come in Emacs. Lo stato è la coppia
 `prefix_arg: Option<PrefixArg>` e `reading_prefix: bool`.
 
 #canvas(height: 3.7cm)[
@@ -6806,7 +6807,7 @@ e i lavori Lisp sono nel capitolo sul lavoro in background (@comandi-shell,
   [`files.rs`], [Visitare un file e riscriverlo: `find-file`, `save-buffer`, `write-file`, `revert-buffer`, `recover-file`, con le metà che le loro domande chiamano una volta risposte; `write_buffer` (@file-su-disco).],
   [`file_names.rs`], [I nomi dei file dal Lisp: `list-dir`, `expand-file-name` e le funzioni che smontano un nome, sopra quelle di `paths.rs` (@nomi-file); la directory di lavoro, `working-directory`, `cd` e `pwd` (@directory-di-lavoro).],
   [`filesystem.rs`], [Il disco: `file-exists-p`, `delete-file`, `rename-file`, `directory-files-recursive` con `walk_files`, `read-file-to-string` (@disco); `locate-dominating-file` e `locate-dominating-file-forget` (@risalita); `file-index` e `file-index-forget` (@indice-file).],
-  [`environment.rs`], [`getenv`, `setenv`, `path-separator`, `data-directory`.],
+  [`environment.rs`], [`getenv`, `getenv-names`, `setenv`, `path-separator`, `data-directory`.],
   [`quit.rs`], [`quit` e `save-some-buffers`, e `has_unsaved_work`, che dice se chiudere un buffer perderebbe qualcosa.],
   [`buffers.rs`], [Creare, cambiare, leggere e chiudere buffer; i valori Lisp appesi a un buffer; ciò che un buffer dice di sé.],
   [`windows.rs`], [Dividere, chiudere, scegliere e scorrere le finestre, `recenter`, le finestre flottanti.],
@@ -7265,7 +7266,12 @@ sostituire e i candidati, stringhe o coppie `(VALUE . DESCRIPTION)`, la forma
 che `*completion-read-function*` mostra già.
 
 `completion-at-point` chiede alle fonti del modo del buffer, poi a quelle di
-tutti i buffer (`add-completion-function`, `set-completion-functions`). La prima
+tutti i buffer (`add-completion-function`, `set-completion-functions`), a meno
+che il modo non abbia detto, con `:global nil`, che le sue sono le sole:
+`MajorMode::completion_global`, che `Modes::completion_sources` legge prima di
+aggiungere le globali. Un `set-completion-functions` senza `:global` lascia il
+valore com'era, perché rifare l'elenco non ridia al modo, senza volerlo, fonti
+che aveva escluso. La prima
 che risponde fissa il testo da completare, e quelle dopo che reclamano lo
 stesso testo aggiungono i loro candidati; una che ne reclama un altro si salta.
 Una risposta malformata costa quella fonte, e il log lo dice. I candidati si
@@ -8228,7 +8234,9 @@ d'uscita, la navigazione e il resoconto.
 Il comando `completion-at-point`, che chiede alle fonti e unisce ciò che
 offrono, è in Rust (@completamento); il modulo è le cinque fonti --- percorsi,
 parole del linguaggio, nomi dell'interprete, buffer, parole dei buffer --- e il
-loro ordine.
+loro ordine. `capf-file-candidates`, i percorsi a cui completa un testo, è
+il pezzo di `capf-file-name` che usano anche le fonti di altri moduli, come
+quella di eshell (@completamento-eshell): una regola sola per elencare i file.
 
 + *Una fonte di nomi prende i limiti da `bounds-of-thing-at-point`.* Così
   rivendica lo stesso testo delle altre, e i candidati si uniscono; solo
@@ -8583,6 +8591,85 @@ Le decisioni:
 + *Il primo profilo è quello di `$SHELL`, o sh.* Su Unix sh c'è sempre; bash
   no (macOS ha zsh). Su Windows cmd, che è sempre lì e il cui comportamento su
   una pipe è il più semplice; PowerShell si sceglie con `eshell-shell`.
+
+==== Il completamento <completamento-eshell>
+
+Tab, in `eshell-mode`, è `completion-at-point`: lo stesso comando, lo stesso
+filtro e la stessa striscia di ogni altro buffer (@completamento). Di eshell
+c'è una fonte sola, `eshell-completion`, l'unica del modo, che fa ciò che in
+Emacs fa pcomplete: legge la riga come la legge la shell, e chiede a chi lo sa
+che cosa può andare nella parola al punto.
+
+- *Una riga Lisp* si completa con le fonti di `completion-at-point.lisp`:
+  `capf-file-name`, poi `capf-symbols`.
+- *La lettura.* `eshell--words` legge dal marcatore al punto con la sintassi
+  del profilo, `:syntax`, una voce di `eshell--syntaxes`: il carattere di
+  escape, le virgolette, ciò che separa due comandi e le forme di una
+  variabile. Un separatore (`;`, `|`, `&`, una parentesi) fa ricominciare il
+  comando; `<` e `>` chiudono la parola senza farlo ricominciare, perché dopo
+  viene un file. Ogni parola è `(INIZIO TESTO APERTA)`: dove comincia, il
+  testo senza virgolette né escape, e la virgoletta rimasta aperta.
+  `eshell--unwrapped` toglie davanti i comandi che ne eseguono un altro,
+  `eshell-completion-wrappers`, con le loro opzioni.
+- *La scelta.* Una parola che comincia come una variabile si completa con
+  `getenv-names`; al posto del comando, con i programmi delle directory del
+  `PATH` (su Windows quelli con un'estensione di `PATHEXT`) e i `:commands`
+  del profilo, o con i file se la parola ha una `/`; dopo un comando, con la
+  funzione che `eshell-completers` gli associa, o con i file
+  (`eshell-complete-files`, sopra `capf-file-candidates`).
+- *La scrittura.* Chi offre candidati li dà senza virgolette, e
+  `eshell--quoted` li scrive come la parola è scritta: dopo la virgoletta
+  aperta, o con un backslash davanti ai caratteri speciali di una shell posix.
+  Se un nome ne ha lo dice prima una regexp sola, `eshell--special`: i
+  programmi del `PATH` sono migliaia, e un giro carattere per carattere in Lisp
+  costava secondi ed esauriva il carburante del comando.
+- *La regione* va dall'inizio della parola alla fine della parola dopo il
+  punto, e i candidati sono tutti quelli possibili: il filtro è di
+  `completion-at-point`, come per ogni fonte.
+
+Con 2 900 programmi nel `PATH` la fonte costa circa 50 ms in release e 300 in
+debug; i file e le variabili, qualche millisecondo.
+
+Le decisioni del completamento:
+
++ *Una fonte, non un secondo sistema.* Il filtro, la striscia, la scelta e la
+  sostituzione sono quelli di `completion-at-point`; eshell aggiunge la
+  lettura della riga e chi sa che cosa offrire, e per i file e i nomi del Lisp
+  usa i pezzi di `completion-at-point.lisp`, `capf-file-candidates` e
+  `capf-symbols`, invece di rifarli. Scartato: un comando suo su Tab, che
+  chiami `completion-offer`, cioè un secondo ingresso, con `C-M-i` che nello
+  stesso buffer darebbe altro.
++ *L'unica fonte del modo, con `:global nil`.* Le fonti globali dopo quella di
+  eshell mescolerebbero le parole di tutti i buffer e i nomi del Lisp ai file
+  e ai comandi, su una regione che spesso coincide. Le alternative:
+  - una fonte che risponde sempre, per fissare la regione: le globali che
+    reclamano lo stesso testo si aggiungono comunque, e una regione scelta
+    perché non coincida è un trucco che si rompe alla prima fonte diversa;
+  - l'elenco locale di Emacs, `completion-at-point-functions`, in cui un `t`
+    dice dove vanno le globali e la sua assenza le esclude: è la stessa idea,
+    ma qui rovescerebbe il significato degli elenchi che i modi hanno già,
+    come quello di manpage, che contano sulle globali dopo le proprie;
+  - una regola per tutti, «se una fonte del modo risponde, le globali non si
+    chiedono»: toglierebbe le parole dei buffer a ogni modo che vuole
+    aggiungere qualcosa e non sostituire.
+  L'opzione è del modo e la decide chi lo scrive, come `set-local-keymap`
+  decide dei tasti di un buffer.
++ *Le regole della shell sono dati.* Le sintassi (`eshell--syntaxes`), i
+  comandi interni (`:commands`) e i completer (`eshell-completers`) sono
+  tabelle: una shell o un comando nuovi non chiedono di toccare il lettore.
++ *Ciò che sa l'editor, non la shell.* Il `PATH` e l'ambiente sono quelli che
+  l'editor dà alla shell; alias, funzioni e variabili definiti dopo restano
+  fuori. Chiedere alla shell, come fa `bash-completion.el` con `compgen` in un
+  processo a parte, darebbe di più, ma solo per bash, con un processo e
+  un'attesa a ogni Tab: si può aggiungere come completer, e la fonte resta una.
++ *Niente cache dei programmi del `PATH`.* Costano 50 ms per Tab; una cache
+  dovrebbe sapere quando una directory cambia, o un programma appena installato
+  non comparirebbe.
++ *Niente opzioni, niente spazio dopo.* pcomplete completa le opzioni da una
+  specifica per comando, o, da Emacs 29, dall'output di `--help`, e mette uno
+  spazio dopo un completamento unico. Le opzioni si possono aggiungere in un
+  completer; lo spazio chiederebbe al runner un candidato che non si confronta
+  con ciò che è scritto.
 
 === `fill` <mod-fill>
 

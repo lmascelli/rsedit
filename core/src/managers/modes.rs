@@ -484,15 +484,18 @@ impl<B: BufferTrait> Modes<B> {
     // Completion sources
     // ------------------------------------------------------------------
 
-    /// Returns MODE's completion sources, then the global ones, copied out:
-    /// each is about to be called, and is arbitrary Lisp.
+    /// Returns MODE's completion sources, then the global ones unless MODE
+    /// asks for its own alone, copied out: each is about to be called, and is
+    /// arbitrary Lisp.
     pub fn completion_sources(&self, mode: &str) -> Vec<ELispExp<B>> {
-        let mut sources: Vec<ELispExp<B>> = self
+        let (mut sources, global) = self
             .registry
             .get(mode)
-            .map(|mode| mode.completion_functions.clone())
-            .unwrap_or_default();
-        sources.extend(self.global_completions.iter().cloned());
+            .map(|mode| (mode.completion_functions.clone(), mode.completion_global))
+            .unwrap_or_else(|| (Vec::new(), true));
+        if global {
+            sources.extend(self.global_completions.iter().cloned());
+        }
         sources
     }
 
@@ -521,14 +524,25 @@ impl<B: BufferTrait> Modes<B> {
     }
 
     /// Replaces a whole list, which is how a source is removed or the order
-    /// changed; false if MODE is unknown.
-    pub fn set_completions(&mut self, mode: Option<&str>, functions: Vec<ELispExp<B>>) -> bool {
+    /// changed, and, for a MODE, says whether the global sources follow its
+    /// own when GLOBAL is given; false if MODE is unknown.
+    pub fn set_completions(
+        &mut self,
+        mode: Option<&str>,
+        functions: Vec<ELispExp<B>>,
+        global: Option<bool>,
+    ) -> bool {
         match mode {
             None => {
                 self.global_completions = functions;
                 true
             }
-            Some(name) => self.edit(name, |mode| mode.completion_functions = functions),
+            Some(name) => self.edit(name, |mode| {
+                mode.completion_functions = functions;
+                if let Some(global) = global {
+                    mode.completion_global = global;
+                }
+            }),
         }
     }
 
