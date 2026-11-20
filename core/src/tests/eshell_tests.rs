@@ -110,6 +110,33 @@ mod tests {
     }
 
     #[test]
+    fn an_escape_that_ends_a_sequence_early_takes_nothing_after_it() {
+        let (ctx, env) = editor();
+        shell_buffer("", &env, &ctx);
+        let root = std::env::temp_dir().display().to_string();
+        // A prompt whose ESC \ lost its backslash, as a shell may print it.
+        let broken = format!("\u{1b}]7;file://host{root}\u{1b}$ ");
+        run(&format!("(eshell--output {})", quoted(&broken)), &env, &ctx);
+        assert_eq!(contents(&ctx, "*eshell*"), "$ ");
+        assert_eq!(run("(working-directory)", &env, &ctx), string(&root));
+    }
+
+    #[test]
+    fn character_sets_and_two_character_escapes_are_taken_out() {
+        let (ctx, env) = editor();
+        shell_buffer("", &env, &ctx);
+        run(
+            &format!(
+                "(eshell--output {})",
+                quoted("a\u{1b}(B\u{1b}[mb\u{1b}=c")
+            ),
+            &env,
+            &ctx,
+        );
+        assert_eq!(contents(&ctx, "*eshell*"), "abc");
+    }
+
+    #[test]
     fn a_windows_path_in_a_file_url_is_read_as_a_drive() {
         let (ctx, env) = editor();
         assert_eq!(
@@ -526,6 +553,58 @@ mod tests {
             prompts(3, &env, &ctx);
             let text = contents(&ctx, "*eshell*");
             assert!(text.ends_with("\n42\n$ echo $?\n0\n$ "), "{text:?}");
+            stop(&env, &ctx);
+        }
+
+        /// Returns where PROGRAM is on the PATH, if it is.
+        fn on_path(program: &str) -> Option<std::path::PathBuf> {
+            std::env::split_paths(&std::env::var_os("PATH")?)
+                .map(|directory| directory.join(program))
+                .find(|candidate| candidate.is_file())
+        }
+
+        #[test]
+        fn the_sh_shell_works_whichever_shell_sh_is() {
+            // bash called sh, as /bin/sh is on Fedora, Arch and macOS: it reads
+            // the backslashes of a prompt otherwise than dash does.
+            let Some(bash) = on_path("bash") else {
+                return;
+            };
+            let root = std::env::temp_dir().join(format!("rsedit-sh-{}", std::process::id()));
+            std::fs::create_dir_all(&root).expect("directory");
+            let sh = root.join("sh");
+            let _ = std::fs::remove_file(&sh);
+            std::os::unix::fs::symlink(&bash, &sh).expect("a link named sh");
+            let (ctx, env) = editor();
+            run(
+                &format!(
+                    r#"(setq eshell-shells
+                         (cons (cons 'bash-as-sh
+                                     (cons :program
+                                           (cons {}
+                                                 (cdr (cdr (cdr (assq 'sh eshell-shells)))))))
+                               eshell-shells))
+                       (eshell-start 'bash-as-sh "*eshell*")
+                       (switch-to-buffer "*eshell*")"#,
+                    quoted(&sh.display().to_string())
+                ),
+                &env,
+                &ctx,
+            );
+            prompts(1, &env, &ctx);
+            let physical = std::env::temp_dir().canonicalize().expect("a temp dir");
+            enter(&format!("cd {}", physical.display()), &env, &ctx);
+            prompts(2, &env, &ctx);
+            enter("echo hello", &env, &ctx);
+            prompts(3, &env, &ctx);
+            let text = contents(&ctx, "*eshell*");
+            let _ = std::fs::remove_dir_all(&root);
+            assert!(text.ends_with("$ echo hello\nhello\n$ "), "{text:?}");
+            assert!(!text.contains('\u{1b}') && !text.contains("7;file"), "{text:?}");
+            assert_eq!(
+                run("(working-directory)", &env, &ctx),
+                string(&physical.display().to_string())
+            );
             stop(&env, &ctx);
         }
 

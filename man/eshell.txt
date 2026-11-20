@@ -140,7 +140,8 @@ THE SHELLS
 
         bash            bash --noediting -i: the shell reads your
                         .bashrc, and prints its prompt
-        sh              sh -i, with a prompt of $
+        sh              sh -i +o emacs, with a prompt of $, whether sh
+                        is dash or bash
         cmd             cmd.exe, with UTF-8 in and out
         powershell      powershell.exe, Windows PowerShell
         pwsh            pwsh, PowerShell 6 and later, on any system

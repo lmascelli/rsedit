@@ -8435,11 +8435,14 @@ tutti i buffer.
   lasciato a metà, un escape o un `\r` finale che può essere la prima metà di
   un `\r\n`, fa di `\r\n` un `\n`, toglie in testa la copia della riga che
   una shell con `:echoes` stampa, e toglie gli escape: le sequenze CSI
-  (`ESC [`), le OSC (`ESC ]`, fino a `BEL` o `ESC \`) e quelle di due
-  caratteri. Una OSC 7,
-  `file://HOST/PERCORSO`, diventa la directory del buffer. Un escape che la
-  lettura ha tagliato resta per la consegna seguente, fino a 4 KiB; oltre, si
-  scarta il suo `ESC` e il resto passa. Un `\r` da solo diventa un `\n` in
+  (`ESC [`); le OSC (`ESC ]`), che finiscono a `BEL` o a `ESC \`, o, come in
+  un terminale, a un `ESC` seguito da altro, che comincia ciò che viene dopo;
+  la scelta di un insieme di caratteri, come `ESC ( B`, e gli escape di due
+  caratteri. Un `ESC` che non comincia niente se ne va da solo, e ciò che lo
+  segue resta: un prompt rovinato da un terminatore sbagliato si vede ancora.
+  Una OSC 7, `file://HOST/PERCORSO`, diventa la directory del buffer. Una CSI
+  o una OSC che la lettura ha tagliato resta per la consegna seguente, fino a
+  4 KiB; oltre, si scarta il suo `ESC` e il resto passa. Un `\r` da solo diventa un `\n` in
   `insert`, come in ogni testo inserito (@due-porte).
 - *La fine.* La consegna `exit` scrive `--- exited N ---` o `--- killed ---`
   e toglie il nome del processo dal buffer: da lì `eshell-process` risponde
@@ -8460,7 +8463,7 @@ scrivere funzioni.
   columns: (2.4cm, 1fr),
   header: ([Shell], [Come si avvia e perché]),
   [bash], [`bash --noediting -i`. `-i` la rende interattiva anche con lo stdin su una pipe: legge `.bashrc` e stampa il prompt, sullo stderr, che deve arrivare con l'output (`:errors merged`). Senza terminale dice «no job control in this shell», e ha ragione. Gestisce `INT`: `process-signal` lo manda al gruppo, il comando in primo piano muore, la shell dà un nuovo prompt. Ignora `TERM`, e `process-stop` la chiude con il `KILL` dopo due secondi. `TERM=dumb`, `PAGER=cat` e `GIT_PAGER=cat` evitano i programmi che disegnano o impaginano; `PROMPT_COMMAND` stampa la OSC 7 prima di ogni prompt.],
-  [sh], [`sh -i`: dash, o la shell POSIX del sistema. Come bash, ma il prompt è `PS1`, nell'ambiente, con la OSC 7 dentro e `${PWD}` espanso a ogni prompt; dash toglie un livello di backslash dal prompt, e il terminatore `ESC \` va scritto doppio.],
+  [sh], [`sh -i +o emacs`: la shell POSIX del sistema, che può essere dash (Debian, Ubuntu), bash (Fedora, Arch, macOS) o ash (Alpine). Come bash, ma il prompt è `PS1`, nell'ambiente, con la OSC 7 dentro e `${PWD}` espanso a ogni prompt. Ognuna legge i backslash del prompt a modo suo, dash ne toglie un livello e bash come sh due, ma nessuna rilegge il valore di una variabile: il terminatore `ESC \` sta in `RSEDIT_OSC_END`, e il prompt lo nomina. `+o emacs` spegne la modifica della riga, opzione che dash e bash conoscono (provate entrambe; ash solo se ha la modifica della riga): bash come sh, con `-i`, usa readline anche su una pipe, e readline ristampa ogni riga che legge; `--noediting`, che lo evita nel profilo di bash, dash lo rifiuta.],
   [cmd], [`cmd.exe /K "chcp 65001>nul"`: la pagina di codice della sua console nascosta (il processo parte con `CREATE_NO_WINDOW`) diventa UTF-8 prima del primo prompt; senza, i comandi interni scrivono nella pagina OEM, e ciò che non è ASCII arriva sbagliato. Con lo stdin su una pipe cmd stampa il prompt e poi ristampa ogni riga che legge: `:echoes` toglie la copia. `PROMPT=$E]7;file:///$P$E\$P$G` mette la OSC 7 nel prompt. Le righe finiscono con `\r\n`.],
   [PowerShell], [`powershell.exe -NoLogo -NoProfile -Command -`: legge i comandi dallo stdin, ma non stampa prompt, e senza prompt non si vede quando un comando è finito. Il profilo manda dopo ogni riga, con `:prompt`, un comando che lo stampa, e all'avvio, con `:init`, rende UTF-8 `[Console]::OutputEncoding`. `pwsh` è lo stesso per PowerShell 6 e seguenti, su ogni sistema.],
 )
@@ -8519,9 +8522,10 @@ Le complicazioni, comuni o di una shell sola:
   addomesticano. Una REPL che legge righe, come `python3 -i -u`, va senza
   altro.
 
-I test di `eshell_tests` fanno girare sh e bash; i profili di cmd e di
-PowerShell non hanno un test, perché i test con processi veri girano solo su
-Unix.
+I test di `eshell_tests` fanno girare sh e bash, e il profilo di sh anche
+con bash chiamato `sh`, come è `/bin/sh` dove non è dash; i profili di cmd e
+di PowerShell non hanno un test, perché i test con processi veri girano solo
+su Unix.
 
 Le decisioni:
 

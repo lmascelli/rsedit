@@ -27,11 +27,14 @@
            "PROMPT_COMMAND=printf '\\e]7;file://%s%s\\e\\\\' \"$HOSTNAME\" \"$PWD\""))
    (list 'sh
          :program "sh"
-         :args '("-i")
-         ;; dash takes one backslash away from a prompt, hence the two.
+         ;; No line editing: bash as sh would print back what it reads.
+         :args '("-i" "+o" "emacs")
+         ;; Each sh reads the backslashes of a prompt its own way -- dash
+         ;; takes one away, bash as sh two -- and none those of a value: the
+         ;; ESC \ that ends the sequence comes from a variable.
          :environment
-         '("TERM=dumb" "PAGER=cat" "GIT_PAGER=cat"
-           "PS1=\e]7;file://${PWD}\e\\\\$ "))
+         '("TERM=dumb" "PAGER=cat" "GIT_PAGER=cat" "RSEDIT_OSC_END=\e\\"
+           "PS1=\e]7;file://${PWD}${RSEDIT_OSC_END}$ "))
    (list 'cmd
          :program "cmd.exe"
          ;; UTF-8 in and out, before the first prompt; the banner is left out.
@@ -177,10 +180,15 @@ kept for the next output."
                   (skip nil))
               (setq clean (concat clean (substring text from at)))
               (cond
-               ;; An operating system command, as OSC 7.
-               ((string-match "^\e\\]([^\\x07\\x1b]*)(\\x07|\e\\\\)" tail)
-                (let ((payload (match-string 1 tail)))
-                  (setq skip (match-end 0))
+               ;; An operating system command, as OSC 7. It ends at BEL or at
+               ;; ESC \; an ESC followed by anything else ends it too, as a
+               ;; terminal ends it, and starts what follows.
+               ((string-match "^\e\\]([^\\x07\\x1b]*)(\\x07|\e\\\\|\e[^\\\\])" tail)
+                (let ((payload (match-string 1 tail))
+                      (ender (match-string 2 tail)))
+                  (setq skip (if (and (= (length ender) 2) (not (string= ender "\e\\")))
+                                 (- (match-end 0) 2)
+                                 (match-end 0)))
                   (when (string-prefix-p "7;" payload)
                     (let ((directory (eshell--directory (substring payload 2))))
                       (when (and directory (file-directory-p directory))
@@ -188,13 +196,20 @@ kept for the next output."
                ;; A control sequence: colours, the cursor, erasing.
                ((string-match "^\e\\[[0-?]*[ -/]*[@-~]" tail)
                 (setq skip (match-end 0)))
-               ;; One cut short: kept, unless it is too long to be one.
+               ;; One of the two cut short: kept, unless too long to be one.
                ((and (string-match-p "^\e(\\[[0-?]*[ -/]*|\\][^\\x07\\x1b]*\e?)?$" tail)
                      (< (length tail) 4096))
                 (buffer-put 'eshell--pending tail)
                 (setq done t))
-               ;; Two characters, or an escape that is not one.
-               (t (setq skip (min 2 (length tail)))))
+               ;; A character set chosen, as ESC ( B.
+               ((string-match "^\e[ -/]+[0-~]" tail)
+                (setq skip (match-end 0)))
+               ;; Two characters, as ESC c or ESC =.
+               ((string-match-p "^\e[0-~]" tail)
+                (setq skip 2))
+               ;; An escape that starts nothing: it goes, and what follows it
+               ;; stays.
+               (t (setq skip 1)))
               (if skip
                   (setq from (+ at skip))
                   (setq done t))))))
