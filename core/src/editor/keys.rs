@@ -390,6 +390,13 @@ impl<B: BufferTrait> EditorState<B> {
     /// command. A keyboard macro being recorded gets the key wherever it is
     /// used up, even when it runs nothing.
     pub fn handle_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
+        // A password that has expired is overwritten at the next key, rather
+        // than kept until the cache is next looked at.
+        self.passwords_mut(|cache| {
+            if !cache.is_empty() {
+                cache.purge(std::time::Instant::now());
+            }
+        });
         self.dispatch_key_event(event, env);
         // After the key, whatever it did, and outside its resolution: a
         // question it took down may leave a session behind.
@@ -497,9 +504,19 @@ impl<B: BufferTrait> EditorState<B> {
     /// `post-command-hook`, and no `post-self-insert-hook`.
     ///
     /// The terminal says a paste is a paste, and typed key by key it would be
-    /// undone a character at a time, and paired bracket by bracket.
+    /// undone a character at a time, and paired bracket by bracket. At a
+    /// password prompt TEXT goes into the password instead, without its line
+    /// breaks.
     pub fn handle_paste(&self, text: String, env: &Arc<Env<EditorState<B>>>) {
         if text.is_empty() {
+            return;
+        }
+        // Into the password, at a password prompt, and not as a command: a
+        // command's form, with the text in it, is kept as the last one run.
+        if crate::feature::password::is_password_prompt(self) {
+            let mut text = text;
+            crate::primitives::password::insert_typed(self, env, &text);
+            crate::feature::password::wipe_string(&mut text);
             return;
         }
         self.run_command_form(

@@ -124,6 +124,17 @@ only the newest copy of each line.")
 (defvar eshell-history-save t
   "Non-nil to keep the history of `eshell' from one run to the next.")
 
+(defvar eshell-watch-for-password-prompt t
+  "Non-nil to ask for a password in the minibuffer, without showing it, when
+a program in the shell ends its output with a line that
+`eshell-password-prompt-regexp' matches: what is typed goes to the program,
+and is written neither in the buffer nor in the history.")
+
+(defvar eshell-password-prompt-regexp
+  "(?i)(?:^|[^[:alnum:]])(?:password|passphrase|pass phrase|passcode|passwort|contraseña|mot de passe|senha).*[:：]\\s*$"
+  "A regexp matching the line a program asks for a password with: it ends
+with a colon, after a word for password.")
+
 (define-face 'eshell-input nil nil '("bold"))
 
 ;; ---------------------------------------------------------------------------
@@ -294,7 +305,26 @@ what it was on, and with what is being typed when it is there."
       (eshell--insert
        (eshell--escapes (eshell--unecho (eshell--join (split-string body "\r\n") "\n"))))
       (unless (string= held "")
-        (buffer-put 'eshell--pending (concat (or (buffer-get 'eshell--pending) "") held))))))
+        (buffer-put 'eshell--pending (concat (or (buffer-get 'eshell--pending) "") held)))))
+  (eshell--password-prompt))
+
+(defun eshell--password-prompt ()
+  "The line the output ends with when it asks for a password, as
+`eshell-password-prompt-regexp' says, and has not been asked for yet; nil
+otherwise."
+  (when (and eshell-watch-for-password-prompt
+             (stringp eshell-password-prompt-regexp)
+             (buffer-get 'eshell--process))
+    (let ((end (eshell--marker-position)))
+      (let ((start (eshell--line-start end)))
+        (when (and (> end start)
+                   (not (equal (buffer-get 'eshell--password-at) end)))
+          (let ((line (buffer-substring start end)))
+            (when (string-match-p eshell-password-prompt-regexp line)
+              ;; Asked once: more output on another line, as a second try
+              ;; after a wrong password, is asked for again.
+              (buffer-put 'eshell--password-at end)
+              line)))))))
 
 (defun eshell--at-line-start-p ()
   "Non-nil when the output ends a line, or there is none."
@@ -312,15 +342,63 @@ what it was on, and with what is being typed when it is there."
            "\n")))
 
 (defun eshell--receive (name kind value)
-  "Take VALUE, of KIND, from the shell NAME into its buffer."
+  "Take VALUE, of KIND, from the shell NAME into its buffer, and ask for the
+password it ends with, if it asks for one."
   (when (and (member name (all-buffer-names))
              (equal (buffer-get 'eshell--process name) name))
-    (with-current-buffer
-     name
-     (lambda ()
-       (cond ((eq kind 'output) (eshell--output value))
-             ((eq kind 'error) (eshell--insert (concat value "\n")))
-             (t (eshell--exited value)))))))
+    (let ((asking (with-current-buffer
+                   name
+                   (lambda ()
+                     (cond ((eq kind 'output) (eshell--output value))
+                           ((eq kind 'error) (progn (eshell--insert (concat value "\n")) nil))
+                           (t (progn (eshell--exited value) nil)))))))
+      ;; Asked from where the user is, not from the shell's buffer: the
+      ;; prompt gives the keyboard back there once it is answered.
+      (when asking
+        (eshell--ask-password name asking)))))
+
+;; ---------------------------------------------------------------------------
+;; Passwords
+;; ---------------------------------------------------------------------------
+
+(defun eshell--send-invisible (buffer prompt)
+  "Ask, titled PROMPT, for what the shell of BUFFER is to read without its
+being seen, and send it as a line; then start a line of output, as a
+terminal would on Return."
+  (process-send-password
+   (buffer-get 'eshell--process buffer) prompt
+   :newline (eshell--newline (eshell--profile buffer))
+   :on-sent (lambda (sent)
+              (when (and sent (member buffer (all-buffer-names)))
+                (with-current-buffer
+                 buffer
+                 (lambda ()
+                   (unless (eshell--at-line-start-p)
+                     (eshell--insert "\n"))))))
+   :on-cancel (lambda ()
+                (message "Nothing was sent: M-x eshell-send-invisible sends it, C-c C-c interrupts"))))
+
+(defun eshell--ask-password (name prompt)
+  "Ask for the password the program in the shell NAME asks for with PROMPT,
+and send it; when a prompt is open already, say how to send it later."
+  (if (member "*Minibuffer*" (all-buffer-names))
+      (message "%s asks for a password: M-x eshell-send-invisible there sends it" name)
+      (eshell--send-invisible name
+                              (if (equal (current-buffer) name)
+                                  prompt
+                                  (concat name ": " prompt)))))
+
+(defcommand eshell-send-invisible () nil
+  "Ask for a password, or anything else not to be seen, in the minibuffer
+without showing it, and send it to the shell of this buffer as a line: it
+is written neither in the buffer nor in the history. The question is the
+line the output ends with, when there is one."
+  (let ((handle (eshell--live-shell)))
+    (when handle
+      (let ((end (eshell--marker-position)))
+        (let ((line (buffer-substring (eshell--line-start end) end)))
+          (eshell--send-invisible (current-buffer)
+                                  (if (eshell--blank-p line) "Password: " line)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Starting a shell
@@ -1087,6 +1165,7 @@ files."
 
 (menu-bar-add '("Eshell" "Interrupt") 'eshell-interrupt nil :mode 'eshell-mode)
 (menu-bar-add '("Eshell" "Send End of Input") 'eshell-send-eof nil :mode 'eshell-mode)
+(menu-bar-add '("Eshell" "Send Password...") 'eshell-send-invisible nil :mode 'eshell-mode)
 (menu-bar-add '("Eshell" "Stop the Shell") 'eshell-kill nil :mode 'eshell-mode)
 (menu-bar-add '("Eshell" "--history") nil nil :mode 'eshell-mode)
 (menu-bar-add '("Eshell" "Search History...") 'eshell-search-history nil :mode 'eshell-mode)

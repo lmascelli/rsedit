@@ -11,6 +11,12 @@ impl<B: BufferTrait> EditorState<B> {
     /// DIRECTION says, when the command before this one killed too, so that a
     /// run of `C-k` yanks back as one passage.
     pub(crate) fn kill(&self, text: String, direction: Direction, env: &Arc<Env<Self>>) {
+        // What a password prompt shows is the password, or stands for it:
+        // neither goes on the ring, nor to the system clipboard with it.
+        if crate::feature::password::is_password_prompt(self) {
+            self.set_echo_message("Nothing is killed or copied from a password prompt");
+            return;
+        }
         // Read before the lock is taken: no lock of the editor is held while
         // the interpreter is touched.
         let to_clipboard = Self::clipboard_sync_enabled(env);

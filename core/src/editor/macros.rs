@@ -28,6 +28,12 @@ impl<B: BufferTrait> EditorState<B> {
         if self.macros(|macros| !macros.is_recording()) {
             return;
         }
+        // What is typed at a password prompt, Return and the way out
+        // included, is never recorded: the macro would keep the password,
+        // and a replay type it again.
+        if crate::feature::password::is_password_prompt(self) {
+            return;
+        }
         self.macros_mut(|macros| macros.observe(keys, command));
     }
 
@@ -43,6 +49,11 @@ impl<B: BufferTrait> EditorState<B> {
         env: &Arc<Env<EditorState<B>>>,
     ) -> usize {
         if keys.is_empty() {
+            return 0;
+        }
+        // The keys would be typed into the password.
+        if crate::feature::password::is_password_prompt(self) {
+            self.set_echo_message("A keyboard macro does not run in a password prompt");
             return 0;
         }
         if !self.macros_mut(|macros| macros.begin_replay()) {
@@ -65,6 +76,14 @@ impl<B: BufferTrait> EditorState<B> {
                     // What failed has said so already. That the macro stopped
                     // is another fact, and the echo area says it too.
                     self.set_echo_message("Macro stopped: a command in it failed");
+                    self.macros_mut(|macros| macros.end_replay());
+                    return done;
+                }
+                // A password prompt opened: the recording has none of what
+                // was typed at it, and the keys after it would be typed into
+                // the password. The prompt is left for the user to answer.
+                if crate::feature::password::is_password_prompt(self) {
+                    self.set_echo_message("Macro stopped at a password prompt");
                     self.macros_mut(|macros| macros.end_replay());
                     return done;
                 }

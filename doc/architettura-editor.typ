@@ -1883,7 +1883,7 @@ ricevendo il tipo come simbolo (`buffer`, `file`, …) e il prefisso.
   posto solo perderebbe il primo.
 
 // ===========================================================================
-= Minibuffer e ricerca incrementale <minibuffer>
+= Minibuffer, password e ricerca incrementale <minibuffer>
 // ===========================================================================
 
 == Il minibuffer
@@ -1965,6 +1965,85 @@ come si prepara una ricerca sono in `feature/isearch.rs`, con `isearch-mode` e
   sessione e l'algoritmo di ricerca sono descritti nel @testo.
 ]
 
+== Il prompt delle password <password>
+
+`read-passwd` chiede una password nel minibuffer senza mostrarla. Il prompt è
+un prompt come gli altri, aperto da `minibuffer-read` e quindi dal lettore che
+`*minibuffer-read-function*` nomina, in un modo suo, `read-passwd-mode`; ma la
+risposta non è nel buffer. `feature/password.rs` tiene il tipo `Secret`, lo
+stato del prompt aperto (`PasswordPrompt`), il modo e la cache;
+`primitives/password.rs` le primitive: l'apertura, i comandi del modo,
+`process-send-password` e la cache.
+
+#canvas(height: 4.2cm)[
+  #node(2.2cm, 0.8cm, 3.4cm, 0.9cm, [tasto \ (`self-insert` del modo)], fill: accent.lighten(85%))
+  #node(7.4cm, 0.8cm, 4.4cm, 0.9cm, [`PasswordPrompt` \ nei dati di `*Minibuffer*`])
+  #node(13.2cm, 0.8cm, 4.0cm, 0.9cm, [`Secret` \ `Vec<char>` azzerato])
+  #node(7.4cm, 3.0cm, 4.4cm, 0.9cm, [testo del buffer: `***` \ (`adopt_text`, sola lettura)], fill: paper)
+  #node(13.2cm, 3.0cm, 4.0cm, 0.9cm, [Invio: callback, \ processo o cache], fill: accent.lighten(85%))
+  #carrow((3.9cm, 0.8cm), (5.2cm, 0.8cm))
+  #carrow((9.6cm, 0.8cm), (11.2cm, 0.8cm))
+  #carrow((7.4cm, 1.25cm), (7.4cm, 2.55cm), label: [`redraw`], dx: 0.6cm)
+  #carrow((13.2cm, 1.25cm), (13.2cm, 2.55cm), label: [`reveal`, `bytes_with`], dx: 1.2cm)
+]
+
+- *Il segreto.* `Secret` è un `Vec<char>` che non lascia copie: lo spazio si
+  fa prima di inserire, e quando deve crescere i caratteri passano in una
+  memoria nuova e la vecchia si sovrascrive prima di restituirla; ciò che si
+  cancella si sovrascrive dove la coda lo lascia; il `Drop` sovrascrive tutto.
+  Le scritture sono volatili, che il compilatore non può togliere. `Debug`
+  dice quanti caratteri ha, mai quali. Ciò che ne esce è del chiamante:
+  `reveal` fa una `String`, `bytes_with` i byte per un processo.
+- *Dove sta.* Lo stato del prompt aperto sta nei dati del buffer
+  `*Minibuffer*`, sotto `PROMPT_DATA`: se ne va, e si azzera, quando il buffer
+  si chiude, comunque si chiuda. `is_password_prompt` risponde se il buffer
+  corrente è un prompt di password, e lo chiedono le difese elencate sotto.
+- *Il buffer mostra soltanto.* Dopo ogni comando del modo, `redraw` mette nel
+  buffer un `read-hide-char` per carattere, niente, o la password quando Tab la
+  mostra, con `adopt_text`: come il testo di un file letto, senza record
+  d'annullamento e senza le due porte (@due-porte). Il buffer è in sola
+  lettura (`set_read_only`), e così ogni altro comando che scrive --- un
+  `insert`, un `yank`, un `undo`, la storia --- è rifiutato dalle porte. Il
+  punto si muove: i comandi di movimento globali funzionano sulle stelle, e i
+  comandi del modo leggono il cursore dal punto, perché c'è un carattere per
+  carattere. Senza carattere da disegnare il buffer è vuoto e il cursore sta in
+  fondo.
+- *I tasti.* Il gestore dei caratteri della mappa di `read-passwd-mode` è
+  `read-passwd-self-insert`; Invio, Backspace, `C-d`, `C-k`, `C-u`, `C-y` e Tab
+  sono comandi del modo, Esc e `C-g` `minibuffer-cancel`. La stessa mappa è
+  anche la mappa locale del buffer, perché una mappa locale viene prima del
+  lettore dell'argomento prefisso (@tasto): così `C-u` cancella la password,
+  come in Emacs, invece di cominciare un argomento che nessuno prenderebbe.
+- *La conferma.* `read-passwd-confirm` toglie lo stato dal buffer prima di
+  chiuderlo, applica il DEFAULT a una risposta vuota e, con CONFIRM, riapre il
+  prompt con la prima risposta nello stato nuovo; la `Request`, ciò che è stato
+  chiesto, passa da un prompt all'altro in un `Arc`. Poi fa ciò che la
+  richiesta dice (`Answer`): chiama la funzione con una stringa, mettendo prima
+  il segreto in cache se c'è una chiave, oppure scrive i byte nell'input del
+  processo, senza fare una stringa Lisp. `minibuffer-confirm`, in un prompt di
+  password, fa lo stesso: ciò che il buffer contiene non è la risposta.
+- *Il lettore.* Un lettore che apre il buffer in un altro modo mostrerebbe la
+  password: `read-passwd` guarda il modo del buffer dopo che il lettore è
+  tornato, e se non è il suo chiude il prompt e dà errore.
+
+Le difese fuori dal modo sono quattro, ognuna una riga nel punto per cui
+passa tutto ciò che difende:
+
+#ref-table(
+  columns: (4.2cm, 1fr),
+  header: ([Dove], [Che cosa]),
+  [`EditorState::kill`], [Ogni kill e ogni copia, e la clipboard di sistema con loro: dal prompt di password non si uccide nulla, nemmeno la password mostrata. `copy-rectangle-as-kill`, che tiene il blocco senza passare dal kill ring, ha la stessa difesa.],
+  [`record_keys`], [La registrazione di una macro non tiene i tasti scritti nel prompt, Invio compreso.],
+  [`replay_keys`], [Una macro non si riproduce in un prompt di password, e si ferma quando ne apre uno: i tasti che seguono finirebbero nella password.],
+  [`handle_paste`], [Ciò che si incolla va nella password, senza i ritorni a capo, e non come comando: la forma di un comando, con il testo dentro, resta come l'ultima eseguita, quella che `repeat` ripete.],
+)
+
+La cache è `PasswordCache`, in un compartimento suo dietro un mutex
+(`passwords_mut`): una mappa da chiave a `Secret` con la scadenza.
+`password-cache-expiry` secondi dopo l'aggiunta una voce non si dà più; si
+sovrascrive alla prima lettura della cache o al primo tasto
+(`handle_key_event`), invece di un timer, che l'editor non ha.
+
 == Le decisioni <decisioni-minibuffer>
 
 + *Il minibuffer e la ricerca incrementale sono in Rust.* La politica
@@ -1976,6 +2055,33 @@ come si prepara una ricerca sono in `feature/isearch.rs`, con `isearch-mode` e
   prompt è aperto, e senza di lei i tasti non vorrebbero dire ciò che il prompt
   dice. Una terza candidata dovrebbe portare lo stesso argomento: «sarebbe più
   veloce in Rust» non lo è.
++ *Il prompt delle password è la terza, per un'altra ragione.* Non perché
+  troppe cose ne dipendano, ma perché la password non deve passare da nulla
+  che il Lisp raggiunga: una stringa di risp è immutabile e condivisa, e non si
+  azzera; una variabile si legge da chiunque; un buffer ha l'annullamento, il
+  kill ring e la storia. In Rust il segreto sta fuori da tutto questo, e le
+  difese sono nei punti da cui passa ogni kill, ogni macro e ogni incolla.
+  Scartato: il testo vero nel buffer e le stelle solo nel disegno, come il
+  `read-passwd-mode` di Emacs 29, che lascia la password a ogni comando che
+  legge il buffer e chiede un aggancio nuovo nella composizione.
++ *La password non è mai nel buffer, salvo quando si chiede di vederla.* Tab
+  la mostra mettendola nel buffer, che resta in sola lettura e da cui non si
+  uccide nulla: è ciò che l'utente ha chiesto, e mostrarla altrove, nel
+  disegno, sarebbe un secondo meccanismo per un caso solo. Costa che ciò che
+  Tab ha mostrato resti, finché la memoria non è riusata, nel testo vecchio
+  del buffer, che non si azzera.
++ *Una macro si ferma al prompt.* La macro non ha la password, e la
+  riproduzione non può scriverla; continuare scriverebbe nella password i tasti
+  registrati dopo. Fermarsi e lasciare il prompt aperto è la sola scelta che
+  non sbaglia in silenzio; Emacs registra la password nella macro.
++ *`read-hide-char` è una stringa, e nil non disegna nulla.* risp non ha
+  caratteri, e una stringa vuota o nil che valessero `*`, come il nil di
+  Emacs, toglierebbero il modo di non mostrare nemmeno la lunghezza, come fa
+  sudo in un terminale.
++ *La cache scade senza timer.* L'editor non ha un `run-at-time`: la scadenza
+  è un istante nella voce, controllato a ogni lettura, e ogni tasto toglie le
+  voci scadute, così una password non resta in memoria molto oltre la sua ora
+  nemmeno se nessuno la chiede più.
 + *Il meccanismo in Rust, l'aspetto sostituibile.* `minibuffer-read` chiama la
   funzione che `*minibuffer-read-function*` nomina, e ogni chiamante usa quella
   che vi si mette: un meccanismo scritto in Rust non lega il prompt che si
@@ -8467,6 +8573,18 @@ tutti i buffer.
   o una OSC che la lettura ha tagliato resta per la consegna seguente, fino a
   4 KiB; oltre, si scarta il suo `ESC` e il resto passa. Un `\r` da solo diventa un `\n` in
   `insert`, come in ogni testo inserito (@due-porte).
+- *Le password.* Dopo ogni consegna `eshell--output` guarda la riga su cui
+  l'output finisce, dall'inizio della riga al marcatore: se
+  `eshell-password-prompt-regexp` la riconosce, e a quella posizione non è
+  stata già chiesta (`eshell--password-at`), la restituisce.
+  `eshell--receive` la riceve fuori da `with-current-buffer`, perché il prompt
+  si apra dal buffer in cui l'utente sta e lì gli ridia la tastiera, e chiama
+  `process-send-password` (@password) con la riga come domanda: la password va
+  dal segreto all'input della shell senza diventare una stringa Lisp, e non
+  passa dal buffer né dalla storia. `:on-sent` va a capo nel buffer, come un
+  terminale farebbe all'Invio, perché `sudo -S` e `getpass` non lo fanno. Se un
+  altro prompt è aperto, un messaggio dice quale shell chiede, e
+  `eshell-send-invisible` la manda quando si vuole.
 - *La fine.* La consegna `exit` scrive `--- exited N ---` o `--- killed ---`
   e toglie il nome del processo dal buffer: da lì `eshell-process` risponde
   nil, e `M-x eshell` riavvia nello stesso buffer la shell che c'era. La
@@ -8496,7 +8614,9 @@ Le complicazioni, comuni o di una shell sola:
 - *Niente terminale, niente isatty.* I programmi che lo controllano cambiano
   comportamento: niente colori, `ls` una voce per riga, nessun impaginatore;
   quelli che disegnano (vim, less, top) non funzionano; quelli che leggono una
-  password da `/dev/tty` (sudo, ssh) non la trovano. Molti programmi tengono
+  password da `/dev/tty` (sudo, ssh) non la trovano. Chi la legge dallo stdin
+  (`sudo -S`, `read -s`, `getpass` di Python senza terminale) la riceve dal
+  prompt delle password, come dice il punto *Le password*. Molti programmi tengono
   l'output in un buffer quando non scrivono su un terminale, e lo mandano a
   blocchi o alla fine.
 - *Niente controllo dei lavori.* Senza terminale non c'è gruppo in primo

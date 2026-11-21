@@ -140,6 +140,7 @@ impl<B: BufferTrait> EditorState<B> {
             ))))),
             log,
             history: Arc::new(RwLock::new(History::default())),
+            passwords: Arc::default(),
             visits: Arc::new(RwLock::new(Visits::default())),
             kept_values: Arc::new(RwLock::new(KeptValues::default())),
             menus: Arc::new(RwLock::new(Menus::default())),
@@ -532,6 +533,7 @@ pub fn create_global_env<B: BufferTrait>()
     // The primitives and the commands, and the two features written in Rust.
     install_primitives(&editor_state, &env);
     install_minibuffer(&editor_state, env.clone());
+    install_password(&editor_state, env.clone());
     install_isearch(&editor_state, env.clone());
 
     // The configuration, and before it `rsedit-path`, the executable's path.

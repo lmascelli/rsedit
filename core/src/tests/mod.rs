@@ -80,6 +80,7 @@ mod out_of_range_tests;
 mod overlay_lisp_tests;
 mod overlay_tests;
 mod overwrite_tests;
+mod password_tests;
 mod paste_tests;
 mod paths_tests;
 /// Performance characterisation of the whole editor, interpreter included.

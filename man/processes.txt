@@ -140,7 +140,9 @@ LIMITS
     The program has no terminal, even when the editor runs in one: one
     that asks at the terminal, for a password or to take it over as an
     interactive shell does, is told there is none, and goes on without it
-    or gives up. It never takes the terminal the editor draws on.
+    or gives up. It never takes the terminal the editor draws on. One
+    that reads a password from its input is given it, unseen, by
+    `process-send-password': see `passwords'.
 
     A daemon the program starts leaves its process group, and is not
     stopped with it.
@@ -182,4 +184,4 @@ EXAMPLES
         (process-signal 'sh 'interrupt)
 
 SEE ALSO
-    shell, eshell, background, files
+    shell, eshell, passwords, background, files

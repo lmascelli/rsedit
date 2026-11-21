@@ -187,6 +187,12 @@ pub const COPY_RECTANGLE_AS_KILL_DOC: &str = "(copy-rectangle-as-kill): Keep the
          lines.";
 
 primitive!(copy_rectangle_as_kill, _args, _env, ctx, {
+    // What a password prompt shows is the password, or stands for it, as for
+    // a kill: see `EditorState::kill`.
+    if crate::feature::password::is_password_prompt(ctx) {
+        ctx.set_echo_message("Nothing is killed or copied from a password prompt");
+        return Ok(ELispExp::number(0.0));
+    }
     let taken = ctx.with_current_buffer(|buf| {
         let rect = require_rectangle(buf)?;
         Ok::<_, EvalError<EditorState<B>>>(text_of(&buf.text, &rect))

@@ -1,25 +1,14 @@
 #+author: Leonardo Mascelli
 #+title: rsedit
 
-* Work in progress.
+* Work in progress
+- [ ] eshell should prompt in the minibuffer for password
 --------------------------------------------------
 
 * Fixes todo
---------------------------------------------------
-- [ ] I percorsi esposti nei risultati (come in grep) devono partire dalla
-      working directory dove sono stati lanciati o essere percorsi assoluti
-      a scelta dell'utente. 
 
+--------------------------------------------------
 * Macro todo
-- [ ] An eshell like mode, where it is possible to both read from stdin/stderr associated
-      to a shell process. A mark to the end of the buffer is kept so that commands can be
-      obtained when pressing enter and be send to stdin. It must have a configurable
-      history where duplicates entries can be deleted. It also must support bash, Windows's
-      cmd and powershell and be configurable for other shells. Detail on how to do that and
-      their possible complications must be discussed. The spawned process must be handled in
-      a separate thread and the handle returned to the lisp environment. Also lisp expression
-      should be evalued, if this makes the module too complex maybe consider adding some special
-      syntax that consent distinguish between a lisp expression and a shell command.
 - [ ] Integrated terminal emulation
 - [ ] Macros are not listed in describe-function and not documented. (risp)
 - [ ] multiple cursors
@@ -32,9 +21,8 @@
       - Narrowing (C-x n n).
 - [ ] Popup dei tasti dopo un prefisso (come which-key), sopra il C-x C-h che c’è già.
 - [ ] Altri linguaggi: Markdown, JSON, YAML, Zig, MATLAB.
+
 --------------------------------------------------
-
-
 PROMPT 0 — CONTRATTO COMUNE
 
 Lavora in locale. A fine fase riporta modifiche essenziali, test ed

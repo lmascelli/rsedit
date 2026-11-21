@@ -11,6 +11,7 @@ use crate::editor::session::{SAVE_HISTORY, SESSION_SAVE_INTERVAL};
 use crate::editor::visits::{RECENT_FILES_LENGTH, SAVE_PLACE};
 use crate::feature::isearch::{CASE_FOLD, ISEARCH_LAZY_COUNT};
 use crate::feature::minibuffer::HISTORY_LENGTH;
+use crate::feature::password::{PASSWORD_CACHE, PASSWORD_CACHE_EXPIRY, READ_HIDE_CHAR};
 use crate::jobs::autosave::{AUTO_SAVE, AUTO_SAVE_DIRECTORY, AUTO_SAVE_INTERVAL};
 use crate::jobs::watcher::WATCH_FILE_INTERVAL;
 use crate::primitives::fill::{
@@ -279,6 +280,28 @@ pub const SETTINGS: &[Setting] = &[
         name: MINIBUFFER_LINES,
         doc: "How many rows the minibuffer's window takes at the bottom of the frame, above \
               the echo area: 1 unless you change it.",
+    },
+    Setting {
+        name: READ_HIDE_CHAR,
+        doc: "What is drawn for each character of a password typed at `read-passwd', as a \
+              one-character string: \"*\" unless you change it. nil, or the empty string, \
+              draws nothing, as a terminal does. Unlike Emacs' it is a string, not a \
+              character.\n\n\
+              Example:\n\
+              \x20 (setq read-hide-char \"\u{2022}\")",
+    },
+    Setting {
+        name: PASSWORD_CACHE,
+        doc: "Whether `password-cache-add' and `password-read-and-add' keep a password for \
+              `password-read' to find again: t unless you change it. nil keeps none, and \
+              finds none of those kept before.",
+    },
+    Setting {
+        name: PASSWORD_CACHE_EXPIRY,
+        doc: "How many seconds a password stays in the cache once it is added, 16 unless you \
+              change it; nil keeps it until it is removed or `password-reset' runs.\n\n\
+              Example:\n\
+              \x20 (setq password-cache-expiry 300)",
     },
     Setting {
         name: MINIBUFFER_READ_FUNCTION,

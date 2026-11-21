@@ -681,6 +681,70 @@ mod tests {
     // Real shells
     // ----------------------------------------------------------------
 
+    // ----------------------------------------------------------------
+    // A password asked for
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn the_lines_that_ask_for_a_password_are_told_from_the_others() {
+        let (ctx, env) = editor();
+        for (line, asks) in [
+            ("Password: ", true),
+            ("[sudo] password for leo: ", true),
+            ("[sudo] password di leo: ", true),
+            (
+                "Enter passphrase for key '/home/leo/.ssh/id_ed25519': ",
+                true,
+            ),
+            ("Password for 'https://leo@example.com': ", true),
+            ("Passwort:", true),
+            ("passwd: password updated successfully", false),
+            ("$ ", false),
+            ("Username: ", false),
+        ] {
+            let matched = run(
+                &format!(
+                    "(string-match-p eshell-password-prompt-regexp {})",
+                    quoted(line)
+                ),
+                &env,
+                &ctx,
+            );
+            assert_eq!(matched.is_truthy(), asks, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn a_password_prompt_is_seen_once_where_the_output_ends() {
+        let (ctx, env) = editor();
+        shell_buffer("", &env, &ctx);
+        // Watched only in a buffer whose shell runs.
+        run(r#"(buffer-put 'eshell--process "*eshell*")"#, &env, &ctx);
+        let prompt = "[sudo] password for leo: ";
+        assert_eq!(
+            run(&format!("(eshell--output {})", quoted(prompt)), &env, &ctx),
+            string(prompt)
+        );
+        // Nothing more on that line: not asked again.
+        assert!(run(r#"(eshell--output "")"#, &env, &ctx).is_nil());
+        // A second try, on a line of its own, is.
+        assert_eq!(
+            run(
+                &format!(
+                    "(eshell--output {})",
+                    quoted(&format!("\nSorry, try again.\n{prompt}"))
+                ),
+                &env,
+                &ctx
+            ),
+            string(prompt)
+        );
+        // A line that ends is not a question.
+        assert!(run(r#"(eshell--output "\nPassword: \n")"#, &env, &ctx).is_nil());
+        run("(setq eshell-watch-for-password-prompt nil)", &env, &ctx);
+        assert!(run(r#"(eshell--output "Password: ")"#, &env, &ctx).is_nil());
+    }
+
     #[cfg(unix)]
     mod running {
         use super::*;
@@ -911,6 +975,73 @@ mod tests {
                 run("(working-directory)", &env, &ctx),
                 string(&physical.display().to_string())
             );
+            stop(&env, &ctx);
+        }
+
+        #[test]
+        fn a_password_asked_for_is_read_hidden_and_reaches_the_program() {
+            use crate::input::{KeyCode, KeyEvent};
+            let (ctx, env) = editor();
+            sh(&env, &ctx);
+            enter(
+                r#"printf 'Password: '; read -r pw; echo "${#pw} characters""#,
+                &env,
+                &ctx,
+            );
+            tick_until(r#"(member "*Minibuffer*" (all-buffer-names))"#, &env, &ctx);
+            assert_eq!(ctx.get_current_buffer_name(), "*Minibuffer*");
+            for ch in "s3cr3t".chars() {
+                ctx.handle_key_event(KeyEvent::new(KeyCode::Char(ch)), &env);
+            }
+            assert_eq!(contents(&ctx, "*Minibuffer*"), "******");
+            ctx.handle_key_event(KeyEvent::new(KeyCode::Enter), &env);
+            assert_eq!(ctx.get_current_buffer_name(), "*eshell*");
+            prompts(2, &env, &ctx);
+            let text = contents(&ctx, "*eshell*");
+            // A line started after the question, as a terminal would.
+            assert!(text.contains("Password: \n6 characters\n$ "), "{text:?}");
+            assert!(!text.contains("s3cr3t"), "{text:?}");
+            let history = run("(eshell-history)", &env, &ctx);
+            assert!(!format!("{history:?}").contains("s3cr3t"), "{history:?}");
+            stop(&env, &ctx);
+        }
+
+        #[test]
+        fn eshell_send_invisible_sends_a_line_unseen() {
+            use crate::input::{KeyCode, KeyEvent};
+            let (ctx, env) = editor();
+            run("(setq eshell-watch-for-password-prompt nil)", &env, &ctx);
+            sh(&env, &ctx);
+            // Sent once the program reads: a line sent before, in the pipe
+            // with the command, a shell may take as more commands.
+            enter(
+                r#"printf 'Word? '; read -r word; echo "got ${#word}""#,
+                &env,
+                &ctx,
+            );
+            tick_until(r#"(string-suffix-p "Word? " (buffer-string))"#, &env, &ctx);
+            run("(eshell-send-invisible)", &env, &ctx);
+            assert_eq!(ctx.get_current_buffer_name(), "*Minibuffer*");
+            // The question is the line the output ends with.
+            let question = ctx.windows(|windows| {
+                windows.root().window_ids().into_iter().find_map(|id| {
+                    windows
+                        .root()
+                        .window(id)?
+                        .prompt
+                        .as_ref()
+                        .map(|p| p.text.clone())
+                })
+            });
+            assert_eq!(question.as_deref(), Some("Word? "));
+            for ch in "abcd".chars() {
+                ctx.handle_key_event(KeyEvent::new(KeyCode::Char(ch)), &env);
+            }
+            ctx.handle_key_event(KeyEvent::new(KeyCode::Enter), &env);
+            prompts(2, &env, &ctx);
+            let text = contents(&ctx, "*eshell*");
+            assert!(text.contains("got 4\n$ "), "{text:?}");
+            assert!(!text.contains("abcd"), "{text:?}");
             stop(&env, &ctx);
         }
 

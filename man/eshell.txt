@@ -15,6 +15,7 @@ SYNOPSIS
     (eshell-interrupt)
     (eshell-send-eof)
     (eshell-kill)
+    (eshell-send-invisible)
     (eshell-history)
     (eshell-history-delete-duplicates)
     (eshell-history-clear)
@@ -29,6 +30,8 @@ SYNOPSIS
     eshell-history-duplicates
     eshell-history-ignore
     eshell-history-save
+    eshell-watch-for-password-prompt
+    eshell-password-prompt-regexp
     eshell-completers
     eshell-completion-wrappers
 
@@ -245,6 +248,48 @@ STOPPING
     it again. Closing the buffer stops its shell, and leaving the editor
     stops every shell still running.
 
+PASSWORDS
+    A program that asks for a password on its input is answered from the
+    minibuffer, without the password being shown. When what the shell
+    prints ends with a line that `eshell-password-prompt-regexp' matches,
+    and nothing after it, that line becomes the question of a password
+    prompt:
+
+        $ sudo -S true
+        [sudo] password for leo:
+
+    and in the minibuffer, as you type:
+
+        [sudo] password for leo: ******
+
+    What you type goes to the program, followed by a newline, and the
+    output goes on from a line of its own, as at a terminal. It is
+    written neither in the buffer nor in the history. The prompt is the
+    one `read-passwd' opens: the `passwords' page says what its keys do
+    and where the password does not go. Escape closes it and sends
+    nothing; the program goes on waiting, and C-c C-c stops it. A
+    program that asks again, after a wrong password, is asked for again.
+    When another prompt is open as the question comes, the echo area says
+    which shell asks.
+
+    M-x eshell-send-invisible asks for a password, or anything else not
+    to be seen, and sends it to the shell of the buffer as a line; the
+    question is the line the output ends with. Use it once the program is
+    waiting for it: a line sent before, while the shell is still reading
+    the command, may be read by the shell as one more command. Set
+    `eshell-watch-for-password-prompt' to nil to be asked only then.
+
+    The regexp matches a word for password -- password, passphrase,
+    passcode, Passwort, contraseña, mot de passe, senha -- and then a
+    colon at the end of the line. A program that prints such a line and
+    waits for something else is asked for a password too: Escape closes
+    the prompt, and you answer the program from the buffer.
+
+    sudo asks at the terminal unless -S tells it to read its input. To
+    have it do so whenever it is typed in bash, put this in ~/.bashrc:
+
+        [ "$TERM" = dumb ] && alias sudo='sudo -S'
+
 ADDING TO COMPLETION
     `eshell-completers' says what follows a command: a list of (COMMAND .
     FUNCTION). FUNCTION is given the words of the command, unquoted, the
@@ -277,7 +322,8 @@ LIMITS
     A shell buffer is not a terminal. A program that draws on the screen
     -- vim, less, top, a menu -- cannot run in it, and one that asks for
     a password at the terminal, as sudo and ssh do, does not find one:
-    sudo -S reads the password from its input, ssh can use a key.
+    sudo -S reads the password from its input, and is answered as the
+    PASSWORDS section says; ssh can use a key, or an agent.
     Colours, and what else a program asks a terminal for, are taken out
     rather than drawn. A carriage return that redraws a line, as a
     progress bar does, starts a line of its own.
@@ -354,6 +400,15 @@ EXAMPLES
         (eshell-start 'python "*python*")
         (switch-to-buffer "*python*")
 
+    A key that sends a password to the shell, for a program whose
+    question the regexp does not know:
+
+        (define-key 'eshell-mode "C-c C-p" 'eshell-send-invisible)
+
+    Never asked for a password unless you ask:
+
+        (setq eshell-watch-for-password-prompt nil)
+
     Every line to the shell, none evaluated as Lisp:
 
         (setq eshell-lisp-prefix nil)
@@ -380,4 +435,4 @@ KEYS IN ESHELL MODE
     C-c M-o                 eshell-clear
 
 SEE ALSO
-    shell, processes, session, repl, minibuffer, background
+    shell, processes, passwords, session, repl, minibuffer, background

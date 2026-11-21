@@ -63,6 +63,7 @@ pub(crate) mod mouse;
 pub(crate) mod movement;
 pub(crate) mod occur;
 mod overlays;
+pub(crate) mod password;
 pub(crate) mod processes;
 mod quit;
 mod rectangle;
@@ -171,6 +172,7 @@ pub fn install_primitives<B: BufferTrait>(
     movement::install(&into);
     occur::install(&into);
     overlays::install(&into);
+    password::install(&into);
     quit::install(&into);
     rectangle::install(&into);
     region::install(&into);

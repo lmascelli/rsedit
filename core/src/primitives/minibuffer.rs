@@ -27,7 +27,12 @@ primitive!(minibuffer_cleanup_primitive, _args, env, ctx, {
 const MINIBUFFER_CONFIRM_DOC: &str = "(minibuffer-confirm): Close the prompt, remember what was \
          typed in its history, and call its ON-CONFIRM with the text. Return in a prompt.";
 
-primitive!(minibuffer_confirm, _args, env, ctx, {
+primitive!(minibuffer_confirm, args, env, ctx, {
+    // What a password prompt's buffer holds is not its answer, and its answer
+    // is remembered in no history.
+    if crate::feature::password::is_password_prompt(ctx) {
+        return super::password::read_passwd_confirm(args, env, ctx);
+    }
     let input = ctx.with_current_buffer(|buf| buf.text.to_string());
     let on_confirm = env.get_variable("*minibuffer-on-confirm*");
 

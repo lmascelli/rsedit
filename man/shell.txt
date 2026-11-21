@@ -94,7 +94,9 @@ FROM LISP
 LIMITS
     A command that asks for a password at the terminal, as sudo and ssh
     may, cannot be given one: the system stops it as it asks, and it waits
-    there until C-c C-k.
+    there until C-c C-k. Nor can one that reads it from its input, which
+    a shell command does not have: run it in `eshell', which asks for the
+    password in the minibuffer.
 
     A daemon the command starts leaves its process group, and is not
     stopped with it. One that keeps the output it was given keeps the

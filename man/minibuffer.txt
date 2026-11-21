@@ -36,7 +36,9 @@ DESCRIPTION
     C-g closes the prompt without answering.
     Tab completes what you have typed, as the `completion' page describes,
     and the arrow keys bring back what you answered at the same prompt
-    before.
+    before. A password is asked for in a prompt of its own, which shows a
+    * for each character and keeps the password out of the buffer and
+    the history: see `passwords'.
 
 ANSWERING
         <ret>           answer with what is typed
@@ -206,5 +208,5 @@ KEYS IN MINIBUFFER MODE
     <down>                  history-next
 
 SEE ALSO
-    completion, keymaps, writing-commands, rectangles, virtual-text, repl,
-    session
+    completion, passwords, keymaps, writing-commands, rectangles,
+    virtual-text, repl, session

@@ -11,6 +11,7 @@ use crate::{
     commands::{ArgSpec, Invocation, PrefixArg},
     feature::isearch::install_isearch,
     feature::minibuffer::install_minibuffer,
+    feature::password::{PasswordCache, install_password},
     input::{
         KeyEvent, Keymap, MouseButton, MouseEvent, MouseKind, OnUnbound, TransientKeymap,
         describe_keys, fill_default_keymaps,
@@ -264,6 +265,11 @@ pub struct EditorState<B: BufferTrait> {
     /// has got to. See [`History`].
     history: Arc<RwLock<History>>,
 
+    /// The passwords kept for a while, by key: Emacs' password cache. A mutex
+    /// rather than a lock with two sides, since even reading it forgets what
+    /// has expired. See [`PasswordCache`].
+    passwords: Arc<std::sync::Mutex<PasswordCache>>,
+
     /// The files visited, and where point was left in each. See [`Visits`].
     visits: Arc<RwLock<Visits>>,
 
@@ -501,6 +507,14 @@ impl<B: BufferTrait> EditorState<B> {
         f(&mut self
             .history
             .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// Runs F on the passwords kept for a while, under their lock.
+    pub(crate) fn passwords_mut<R>(&self, f: impl FnOnce(&mut PasswordCache) -> R) -> R {
+        f(&mut self
+            .passwords
+            .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
