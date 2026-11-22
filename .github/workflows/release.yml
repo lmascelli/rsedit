@@ -228,6 +228,7 @@ jobs:
           archive.with_name(archive.name + ".sha256").write_text(
               digest + "  " + archive.name + "\n",
               encoding="utf-8",
+              newline="\n",
           )
           PY
 
