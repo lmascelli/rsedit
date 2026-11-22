@@ -65,6 +65,9 @@ YANKING
     pressing it again goes on round the ring. After anything else M-y says
     so, rather than replace text it did not put there.
 
+    A yank leaves point after the text it put in and the mark, inactive,
+    at its start, and so does a paste: C-x C-x then selects what came in.
+
     The ring drops the oldest kill when it is full: M-x set-kill-ring-max
     changes how many it keeps.
 

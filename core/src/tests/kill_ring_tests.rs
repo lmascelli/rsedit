@@ -199,6 +199,55 @@ mod tests {
         assert_eq!(text_of(&ctx), "second", "and wraps back round");
     }
 
+    fn mark_of(ctx: &Ctx) -> Option<crate::buffer::Mark> {
+        ctx.with_buffer("*scratch*", |b| b.mark).expect("*scratch*")
+    }
+
+    fn point_of(ctx: &Ctx) -> usize {
+        ctx.with_buffer("*scratch*", |b| b.text.cursor_pos_1d())
+            .expect("*scratch*")
+    }
+
+    #[test]
+    fn yank_leaves_the_mark_inactive_at_the_start_of_the_text() {
+        let (ctx, env) = editor_with("ab");
+        eval_str("(kill-new \"XYZ\") (goto-char 1) (yank)", &env, &ctx).expect("yank");
+        assert_eq!(text_of(&ctx), "aXYZb");
+        assert_eq!(point_of(&ctx), 4, "point after the yanked text");
+        let mark = mark_of(&ctx).expect("a yank sets the mark");
+        assert_eq!(mark.at, 1, "at the start of the yanked text");
+        assert!(!mark.active, "with no region drawn");
+    }
+
+    #[test]
+    fn yank_pop_keeps_the_mark_at_the_start_of_the_replacement() {
+        let (ctx, env) = editor_with("ab");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
+        eval_str(
+            "(kill-new \"long text\") (kill-new \"s\") (goto-char 1)",
+            &env,
+            &ctx,
+        )
+        .expect("two kills");
+        press(&ctx, &env, KeyCode::Char('y'), ctrl());
+        press(&ctx, &env, KeyCode::Char('y'), alt());
+        assert_eq!(text_of(&ctx), "along textb");
+        assert_eq!(point_of(&ctx), 10);
+        assert_eq!(mark_of(&ctx).map(|m| (m.at, m.active)), Some((1, false)));
+    }
+
+    #[test]
+    fn a_yank_on_an_empty_ring_leaves_the_mark_alone() {
+        let (ctx, env) = editor_with("abc");
+        eval_str("(goto-char 2) (yank)", &env, &ctx).expect("yank");
+        assert_eq!(mark_of(&ctx), None);
+    }
+
     #[test]
     fn yank_pop_refuses_when_the_previous_command_was_not_a_yank() {
         let (ctx, env) = editor_with("");

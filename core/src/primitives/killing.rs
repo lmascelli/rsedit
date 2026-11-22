@@ -241,7 +241,8 @@ primitive!(current_kill, args, _env, ctx, {
 });
 
 pub const YANK_DOC: &str = "(yank): Insert the latest kill at point and return it, or return nil \
-         when the kill ring is empty.";
+         when the kill ring is empty. Point ends after the text and the mark, inactive, at its \
+         start, so that `exchange-point-and-mark' selects what was yanked.";
 
 primitive!(yank, _args, _env, ctx, {
     let Some(text) = ctx.current_kill() else {
@@ -249,7 +250,7 @@ primitive!(yank, _args, _env, ctx, {
     };
     let inserted = ctx.with_current_buffer_mut(|buf| {
         let at = buf.text.cursor_pos_1d();
-        edits::insert_text(buf, at, &text).then_some(at)
+        edits::insert_pasted(buf, at, &text).then_some(at)
     });
     let Some(at) = inserted else {
         return Ok(edits::edited(ctx, false));
@@ -260,7 +261,7 @@ primitive!(yank, _args, _env, ctx, {
 
 pub const YANK_POP_DOC: &str = "(yank-pop): Replace the text just yanked with the kill before it \
          in the ring, and return that. Only straight after a `yank' or another `yank-pop': \
-         otherwise it signals an error.";
+         otherwise it signals an error. The mark stays, inactive, at the start of the text.";
 
 primitive!(yank_pop, _args, _env, ctx, {
     let Some((at, len)) = ctx.yank_to_replace() else {
@@ -276,7 +277,7 @@ primitive!(yank_pop, _args, _env, ctx, {
         // undo step like any other command. The second step is not attempted
         // if the first was refused, which would leave the replacement in a
         // buffer the old text never left.
-        edits::delete_range(buf, at, at + len) && edits::insert_text(buf, at, &text)
+        edits::delete_range(buf, at, at + len) && edits::insert_pasted(buf, at, &text)
     });
     if !happened {
         return Ok(edits::edited(ctx, false));

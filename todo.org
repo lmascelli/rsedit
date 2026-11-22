@@ -37,4 +37,4 @@ PROMPT 0 — CONTRATTO COMUNE
 Lavora in locale su rsedit. Aggiorna prima la tua versione con il
 repository online. A fine fase riporta modifiche essenziali, test ed
 eventuali decisioni aperte ed allega in chat un patch file con cui
-possa applicare le modifiche.
+possa applicare le modifiche. Non modificare il repository direttamente.

@@ -238,6 +238,25 @@ pub(crate) fn insert_at_point<B: BufferTrait>(buf: &mut Buffer<B>, content: &str
     insert_text(buf, at, content)
 }
 
+/// Inserts CONTENT at offset AT as a paste does, and returns whether the
+/// buffer accepted it: the mark is left at the start of the inserted text,
+/// inactive, as in Emacs, so that `exchange-point-and-mark` goes back to
+/// where the paste began and selects what it put in. A refused insertion
+/// leaves the mark alone. The yanks and `insert-pasted-text` come through
+/// here.
+#[must_use]
+pub(crate) fn insert_pasted<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, content: &str) -> bool {
+    let at = at.min(buf.text.len());
+    if !insert_text(buf, at, content) {
+        return false;
+    }
+    buf.mark = Some(Mark {
+        active: false,
+        ..Mark::new(at)
+    });
+    true
+}
+
 /// The name of the minor mode in which a character typed takes the place of
 /// the one after point.
 pub(crate) const OVERWRITE_MODE: &str = "overwrite-mode";
@@ -350,8 +369,9 @@ primitive!(delete_region, args, _env, ctx, {
 
 pub const INSERT_PASTED_TEXT_DOC: &str = "(insert-pasted-text STRING): Insert STRING at point as \
          one paste, which is what the terminal's paste runs: one command and one undo step, \
-         without `post-self-insert-hook', so nothing in it is paired. A read-only buffer refuses \
-         it.\n\n\
+         without `post-self-insert-hook', so nothing in it is paired. Point ends after it and the \
+         mark, inactive, at its start, so that `exchange-point-and-mark' selects it. A read-only \
+         buffer refuses it.\n\n\
          Example:\n\
          (insert-pasted-text \"fn main() {}\")";
 
@@ -366,7 +386,10 @@ primitive!(insert_pasted_text, args, _env, ctx, {
     // line endings are made plain at this door, which every paste comes
     // through; `insert` keeps a CR written on purpose.
     let text = normalize_line_endings(text);
-    let happened = ctx.with_current_buffer_mut(|buf| insert_at_point(buf, &text));
+    let happened = ctx.with_current_buffer_mut(|buf| {
+        let at = buf.text.cursor_pos_1d();
+        insert_pasted(buf, at, &text)
+    });
     Ok(edited(ctx, happened))
 });
 

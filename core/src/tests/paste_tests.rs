@@ -70,6 +70,58 @@ mod tests {
         assert_eq!(point(&ctx), 11);
     }
 
+    fn mark(ctx: &Ctx) -> Option<crate::buffer::Mark> {
+        ctx.with_current_buffer(|b| b.mark)
+    }
+
+    #[test]
+    fn a_paste_leaves_the_mark_where_it_began() {
+        let (ctx, env) = editor();
+        run(r#"(insert "before ")"#, &env, &ctx);
+        ctx.handle_paste("pasted".to_string(), &env);
+        let mark = mark(&ctx).expect("a paste sets the mark");
+        assert_eq!(mark.at, 7, "at the start of the pasted text");
+        assert!(!mark.active, "without drawing a region over it");
+        assert_eq!(point(&ctx), 13, "point after it");
+        // So that C-x C-x selects exactly what came in.
+        run("(exchange-point-and-mark)", &env, &ctx);
+        assert_eq!(point(&ctx), 7);
+        assert_eq!(
+            run("(list (region-beginning) (region-end))", &env, &ctx),
+            run("(list 7 13)", &env, &ctx)
+        );
+    }
+
+    #[test]
+    fn a_paste_in_the_middle_marks_its_own_start() {
+        let (ctx, env) = editor();
+        run(
+            r#"(insert "ac") (goto-char 1) (set-mark 0) (goto-char 1)"#,
+            &env,
+            &ctx,
+        );
+        ctx.handle_paste("b".to_string(), &env);
+        assert_eq!(contents(&ctx), "abc");
+        let mark = mark(&ctx).expect("mark");
+        assert_eq!(
+            (mark.at, mark.active),
+            (1, false),
+            "the old mark is replaced"
+        );
+    }
+
+    #[test]
+    fn a_refused_paste_leaves_the_mark_alone() {
+        let (ctx, env) = editor();
+        run(
+            r#"(insert "text") (set-mark 2) (deactivate-mark) (set-buffer-read-only t)"#,
+            &env,
+            &ctx,
+        );
+        ctx.handle_paste("nope".to_string(), &env);
+        assert_eq!(mark(&ctx).map(|m| m.at), Some(2));
+    }
+
     #[test]
     fn a_paste_keeps_its_newlines() {
         let (ctx, env) = editor();
