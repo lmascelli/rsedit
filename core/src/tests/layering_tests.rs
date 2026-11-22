@@ -168,6 +168,7 @@ mod tests {
     const UI: &[(&str, &str)] = &[
         ("ui/mod.rs", include_str!("../ui/mod.rs")),
         ("ui/compose.rs", include_str!("../ui/compose.rs")),
+        ("ui/echo_area.rs", include_str!("../ui/echo_area.rs")),
         ("ui/faces.rs", include_str!("../ui/faces.rs")),
         ("ui/findings.rs", include_str!("../ui/findings.rs")),
         ("ui/frame.rs", include_str!("../ui/frame.rs")),

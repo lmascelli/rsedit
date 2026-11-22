@@ -28,6 +28,7 @@ mod dired_tests;
 mod distributed_mode_role_tests;
 mod doc_faithfulness_tests;
 mod doc_pointer_tests;
+mod echo_area_tests;
 mod echo_tests;
 mod edit_protection_tests;
 mod electric_indent_tests;

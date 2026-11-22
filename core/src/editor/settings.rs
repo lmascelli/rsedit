@@ -40,6 +40,17 @@ pub const SETTINGS: &[Setting] = &[
               \x20 (setq echo-message-timeout nil)",
     },
     Setting {
+        name: MAX_ECHO_AREA_HEIGHT,
+        doc: "How many rows the echo area may grow to, for a message of more than one line: \
+              a number under 1 is that part of the frame's height, one of 1 or more that many \
+              rows, as Emacs' `max-mini-window-height'. The windows above give the rows up \
+              while the message is shown. A message with more lines shows its first ones, the \
+              last row saying how many are left out; 1 keeps every message on one row. 0.25 \
+              unless you change it; anything else but a positive number counts as 0.25.\n\n\
+              Example:\n\
+              \x20 (setq max-echo-area-height 10)",
+    },
+    Setting {
         name: MODE_LINE_FORMAT,
         doc: "What the status line at the bottom of each window shows: this text, with each \
               escape replaced.\n\n\
@@ -472,6 +483,14 @@ pub const ECHO_MESSAGE_TIMEOUT: &str = "echo-message-timeout";
 /// [`ECHO_MESSAGE_TIMEOUT`] to something else.
 pub const DEFAULT_ECHO_MESSAGE_TIMEOUT: f64 = 5.0;
 
+/// The name of the Lisp variable holding how far the echo area may grow for a
+/// message of more than one line.
+pub const MAX_ECHO_AREA_HEIGHT: &str = "max-echo-area-height";
+
+/// How far the echo area may grow when nothing says otherwise: a quarter of
+/// the frame, as Emacs' `max-mini-window-height`.
+pub const DEFAULT_MAX_ECHO_AREA_HEIGHT: f64 = 0.25;
+
 /// The name of the Lisp variable holding how many rows the minibuffer's
 /// window takes.
 pub const MINIBUFFER_LINES: &str = "minibuffer-lines";
@@ -762,6 +781,31 @@ pub(super) fn echo_timeout<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Op
         }
         _ => None,
     }
+}
+
+/// Returns how many rows the echo area may take in a frame SCREEN_HEIGHT rows
+/// high, as Lisp's [`MAX_ECHO_AREA_HEIGHT`] has it now: one at least, and one
+/// less than the frame at most, so that a window keeps a row.
+///
+/// A number under 1 is a part of the frame's height, one of 1 or more a
+/// number of rows; anything else -- nil, zero, a negative, a string -- is the
+/// default, as a nonsensical `minibuffer-lines` is: the echo area must show
+/// something.
+pub(super) fn echo_area_limit<B: BufferTrait>(
+    env: &Arc<Env<EditorState<B>>>,
+    screen_height: usize,
+) -> usize {
+    let asked = match env.get_variable(MAX_ECHO_AREA_HEIGHT) {
+        Some(ELispExp::Number(n)) if n.is_finite() && n > 0.0 => n,
+        _ => DEFAULT_MAX_ECHO_AREA_HEIGHT,
+    };
+    let rows = if asked < 1.0 {
+        (screen_height as f64 * asked).floor() as usize
+    } else {
+        // Saturating: a huge number is as many rows as there are.
+        asked.floor() as usize
+    };
+    rows.min(screen_height.saturating_sub(1)).max(1)
 }
 
 /// The name of the Lisp variable that sends a visit to an entry of a listing

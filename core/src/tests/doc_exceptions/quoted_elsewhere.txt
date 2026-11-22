@@ -46,3 +46,4 @@ underline
 warning
 
 # Emacs's names, where the text compares the two
+max-mini-window-height

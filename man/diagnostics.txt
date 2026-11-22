@@ -13,11 +13,13 @@ SYNOPSIS
     (backtrace-show MESSAGE FRAMES)
     (backtrace-dismiss)
     echo-message-timeout
+    max-echo-area-height
     debug-on-error
 
 DESCRIPTION
     The editor says things in three places. The echo area, the last line
-    of the screen, shows the latest message for a few seconds. The log
+    of the screen, shows the latest message for a few seconds; it takes a
+    line more for each line more the message has. The log
     keeps every message and every report, in order, and C-h e shows it.
     The log file, rsedit.log, is a copy of the log on disk, for when the
     editor is no longer there to ask.
@@ -27,6 +29,21 @@ THE ECHO AREA
     and adds it to the log. `set-echo-message' only shows it. A message
     stays `echo-message-timeout' seconds, or until the next one replaces
     it.
+
+    A message of several lines, a newline between one and the next, takes
+    a row of the echo area for each, and the windows above give up the
+    rows while it is shown: they have them back when it goes, and the
+    window with the cursor keeps it in sight meanwhile. A line longer than
+    the screen is cut, not wrapped. What a transient keymap asks, as the
+    question of a replace, is shown the same way, in place of the message.
+
+    `max-echo-area-height' says how far the echo area may grow: a number
+    under 1 is that part of the screen's height, a quarter unless you
+    change it, and one of 1 or more that many rows. It always leaves the
+    windows a row. A message with more lines than that shows its first
+    ones, and the last row ends with how many are left out, as
+    "[+12 lines]": with `message', C-h e has them all. 1 keeps every
+    message on one row.
 
 THE LOG
     Everything the editor reports goes in the log: messages, commands that
@@ -112,6 +129,11 @@ EXAMPLES
     Keep each message until the next one replaces it:
 
         (setq echo-message-timeout nil)
+
+    Let a long message have up to ten rows, or none but the one:
+
+        (setq max-echo-area-height 10)
+        (setq max-echo-area-height 1)
 
     Leave a trace from your own code, without a message on the screen:
 

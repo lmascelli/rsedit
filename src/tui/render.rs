@@ -235,23 +235,24 @@ pub(crate) fn draw_frame<W: Write>(
         }
     }
 
-    // The echo area, on the last row, which no window takes: the message, or
-    // what a transient keymap offers in its place.
-    let echo_line = if frame.prompt.is_empty() {
-        &frame.echo_message
-    } else {
-        &frame.prompt
-    };
-    if base.bg.is_some() {
-        // Painted whole, where the page has a colour: a terminal that does
-        // not erase in the background colour would leave the row its own.
-        let row = fit(echo_line, frame.width);
-        draw_clipped_row(out, 0, frame_h - 1, &row, clip)?;
-    } else if !echo_line.is_empty() {
-        draw_clipped_row(out, 0, frame_h - 1, echo_line, clip)?;
+    // The echo area, on the last rows, which no window takes: the message, or
+    // what a transient keymap offers in its place, a row for each line the
+    // editor cut it into.
+    let echo_top = frame.echo_top() as isize;
+    for row in 0..frame.echo_height() {
+        let line = frame.echo_area.get(row).map_or("", String::as_str);
+        let y = echo_top + row as isize;
+        if base.bg.is_some() {
+            // Painted whole, where the page has a colour: a terminal that
+            // does not erase in the background colour would leave the row
+            // its own.
+            draw_clipped_row(out, 0, y, &fit(line, frame.width), clip)?;
+        } else if !line.is_empty() {
+            draw_clipped_row(out, 0, y, line, clip)?;
+        }
     }
 
-    // What the editor is waiting for, at the right end of the same row, over
+    // What the editor is waiting for, at the right end of the last row, over
     // the message where they meet.
     if !frame.pending_input.is_empty() {
         let start = frame_w - cells(&frame.pending_input) as isize;

@@ -1,9 +1,11 @@
 //! What the screen shows, apart from any front end: the windows and how they
 //! share the frame, how one is composed into rows, highlights, a gutter and a
-//! status line, the findings drawn over a buffer, the faces and the theme, the menus, and the frame a front end draws.
+//! status line, the findings drawn over a buffer, the faces and the theme, the menus, the rows of
+//! the echo area, and the frame a front end draws.
 //!
 //! Design: `doc/architettura-editor.typ, <frame>`.
 mod compose;
+mod echo_area;
 mod faces;
 pub(crate) mod fill_column;
 mod findings;
@@ -23,6 +25,7 @@ pub use compose::{
     ComposeSettings, Highlight, NEVER_RECENTER, RenderableWindowView, SearchMarks, Separator,
     SpotMarks, compose_layout, window_highlights,
 };
+pub use echo_area::echo_rows;
 pub use faces::{Color, Face, NAMED_COLORS, Style, Theme};
 pub use fill_column::FillColumnGuide;
 pub use findings::{BufferFindings, FindingMark, FindingMarks, finding_message_at};

@@ -780,6 +780,72 @@ fn the_echo_area_is_painted_whole_where_the_page_has_a_colour() {
     assert_eq!(last_row.chars().count(), COLS as usize);
 }
 
+/// Returns the text printed at the start of each row from FROM down, as
+/// (row, text), the padding a coloured page adds taken off.
+fn rows_from(rendered: &str, from: u16) -> Vec<(u16, String)> {
+    printed(rendered)
+        .into_iter()
+        .filter(|(x, y, _)| *x == 0 && *y >= from)
+        .map(|(_, y, text)| (y, text.trim_end().to_string()))
+        .collect()
+}
+
+/// A message of several lines is drawn a line to a row at the bottom, with
+/// the windows above it, and not on one row with a picture of each newline.
+#[test]
+fn a_message_of_several_lines_is_drawn_a_line_to_a_row() {
+    let (state, env) = editor();
+    state.set_echo_message("first\nsecond\nthird");
+    let rendered = frame(&state, &env);
+    assert_eq!(
+        rows_from(&rendered, ROWS - 3),
+        vec![
+            (ROWS - 3, "first".to_string()),
+            (ROWS - 2, "second".to_string()),
+            (ROWS - 1, "third".to_string()),
+        ]
+    );
+    assert!(!rendered.contains('\u{240a}'), "{rendered:?}");
+    let (_, row) = expected_cursor(&state, &env);
+    assert!(
+        row < ROWS - 3,
+        "the cursor is in the windows, not the echo area"
+    );
+}
+
+/// What is being typed goes at the right end of the echo area's last row; and
+/// on a coloured page every row of it is painted whole.
+#[test]
+fn every_row_of_the_echo_area_is_drawn_and_what_is_typed_ends_the_last() {
+    let snapshot = FrameSnapshot {
+        echo_area: vec!["one".into(), "two".into()],
+        pending_input: "C-x-".into(),
+        theme: Arc::new(paged_theme()),
+        width: COLS as usize,
+        height: ROWS as usize,
+        ..Default::default()
+    };
+    let mut out: Vec<u8> = Vec::new();
+    render_to(&mut out, &snapshot, TrueColor).expect("rendering must succeed");
+    let rendered = String::from_utf8(out).expect("crossterm emits valid UTF-8");
+    let drawn = printed(&rendered);
+    for (y, text) in [(ROWS - 2, "one"), (ROWS - 1, "two")] {
+        let row = drawn
+            .iter()
+            .find(|(x, at, _)| *x == 0 && *at == y)
+            .map(|(_, _, row)| row.clone())
+            .unwrap_or_else(|| panic!("row {y} is drawn: {drawn:?}"));
+        assert!(row.starts_with(text), "{row:?}");
+        assert_eq!(row.chars().count(), COLS as usize, "painted whole");
+    }
+    assert!(
+        drawn
+            .iter()
+            .any(|(x, y, text)| *x == COLS - 4 && *y == ROWS - 1 && text == "C-x-"),
+        "{drawn:?}"
+    );
+}
+
 #[test]
 fn a_theme_with_no_default_colours_draws_as_the_terminal_does() {
     let rendered = frame_with(&["alpha beta"], Vec::new());

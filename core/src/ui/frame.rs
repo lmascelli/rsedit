@@ -30,9 +30,17 @@ pub struct FrameSnapshot {
     pub pending_input: String,
 
     /// What a transient keymap is offering or asking, or empty when none is
-    /// installed. Shown in place of [`Self::echo_message`]: they share one
-    /// row, and this is what the editor is waiting on.
+    /// installed. Shown in place of [`Self::echo_message`]: they share the
+    /// echo area, and this is what the editor is waiting on.
     pub prompt: String,
+
+    /// The rows of the echo area, top to bottom, as the front end draws them
+    /// at the bottom of the frame: the lines of [`Self::prompt`] when there
+    /// is one, else those of [`Self::echo_message`], as many as
+    /// `max-echo-area-height` lets them take, cut by
+    /// [`echo_rows`](super::echo_rows). The windows were composed in the rows
+    /// above them. One empty row when there is nothing to say.
+    pub echo_area: Vec<String>,
 
     /// How each face is drawn, as the theme stood at capture time.
     pub theme: std::sync::Arc<Theme>,
@@ -78,5 +86,17 @@ impl FrameSnapshot {
     /// Returns the view that had focus, if it is on screen.
     pub fn focused_view(&self) -> Option<&RenderableWindowView> {
         self.views.iter().find(|v| v.is_focused)
+    }
+
+    /// Returns how many rows at the bottom of the frame are the echo area's:
+    /// one for each of [`Self::echo_area`], and one at least, which a frame
+    /// built by hand, with none, has all the same.
+    pub fn echo_height(&self) -> usize {
+        self.echo_area.len().max(1)
+    }
+
+    /// Returns the row of the frame the echo area starts on.
+    pub fn echo_top(&self) -> usize {
+        self.height.saturating_sub(self.echo_height())
     }
 }

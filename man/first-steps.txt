@@ -14,7 +14,7 @@ WHAT IS ON THE SCREEN
     The text you are editing, and a bar across the bottom of each window
     saying which buffer it is and whether it has unsaved changes. The last
     line of the screen is the echo area, where the editor says things and
-    asks questions.
+    asks questions; it grows by a line for each line more it has to say.
 
     A *buffer* is some text the editor is holding. A *window* is a view onto
     one. They are different things on purpose: two windows can show one

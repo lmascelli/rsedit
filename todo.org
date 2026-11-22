@@ -2,10 +2,23 @@
 #+title: rsedit
 
 * Work in progress
-- [ ] eshell should prompt in the minibuffer for password
---------------------------------------------------
 
+--------------------------------------------------
 * Fixes todo
+- [ ] echo area should be able to expand to write multilines output
+- [ ] pasting some text should place the mark where the paste happens
+- [ ] i don't feel that the cwd system is coherent. i have to check
+      often in which directory the working directory is. Maybe switching
+      completely to the emacs approch for single buffers and keeping
+      the project directory when working in a project is a better
+      behaviour. Project shoul somehow keep track of its buffers (also)
+      an eshell one and custom ones (with naming match rules) and
+      switch the working directory when a switch to buffer or create
+      buffer hook is called. Ask for alternative.
+- [ ] Better integration for builtin modules. The modules are ok to be
+      completely separated but one of them (maybe the project system)
+      should be able to orchestrate them when used to make the work
+      feel smooth.
 
 --------------------------------------------------
 * Macro todo
@@ -25,5 +38,7 @@
 --------------------------------------------------
 PROMPT 0 — CONTRATTO COMUNE
 
-Lavora in locale. A fine fase riporta modifiche essenziali, test ed
-eventuali decisioni aperte ed allega in chat un patch file.
+Lavora in locale su rsedit. Aggiorna prima la tua versione con il
+repository online. A fine fase riporta modifiche essenziali, test ed
+eventuali decisioni aperte ed allega in chat un patch file con cui
+possa applicare le modifiche.

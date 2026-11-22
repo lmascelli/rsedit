@@ -597,29 +597,30 @@ impl<'editor, B: BufferTrait> eframe::App for EditorApp<'editor, B> {
                         });
                     }
                 }
-                let echo = if !snapshot.prompt.is_empty() {
-                    &snapshot.prompt
-                } else {
-                    &snapshot.echo_message
-                };
-                let mut text = echo.to_owned();
-                if !snapshot.pending_input.is_empty() {
-                    if !text.is_empty() {
-                        text.push_str("   ");
+                // The echo area's rows, as the editor cut them, at the bottom;
+                // what is being typed after the last of them.
+                let echo_top = snapshot.echo_top();
+                let echo_height = snapshot.echo_height();
+                for index in 0..echo_height {
+                    let mut text = snapshot.echo_area.get(index).cloned().unwrap_or_default();
+                    if index + 1 == echo_height && !snapshot.pending_input.is_empty() {
+                        if !text.is_empty() {
+                            text.push_str("   ");
+                        }
+                        text.push_str(&snapshot.pending_input);
                     }
-                    text.push_str(&snapshot.pending_input);
+                    row(
+                        &painter,
+                        grid,
+                        0,
+                        (echo_top + index) as isize,
+                        grid.columns,
+                        &text,
+                        &[],
+                        &font,
+                        default,
+                    );
                 }
-                row(
-                    &painter,
-                    grid,
-                    0,
-                    grid.rows as isize - 1,
-                    grid.columns,
-                    &text,
-                    &[],
-                    &font,
-                    default,
-                );
                 // An update when the editor says one is due -- a message
                 // expiring, colour arriving, a drag past a window's edge --
                 // and none otherwise: a key, the mouse or a job's change

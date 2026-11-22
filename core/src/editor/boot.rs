@@ -411,6 +411,11 @@ pub fn create_global_env<B: BufferTrait>()
         ECHO_MESSAGE_TIMEOUT.into(),
         ELispExp::number(DEFAULT_ECHO_MESSAGE_TIMEOUT),
     );
+    // How far the echo area grows for a message of several lines.
+    env.set_variable(
+        MAX_ECHO_AREA_HEIGHT.into(),
+        ELispExp::number(DEFAULT_MAX_ECHO_AREA_HEIGHT),
+    );
 
     env.set_variable(
         MINIBUFFER_LINES.into(),

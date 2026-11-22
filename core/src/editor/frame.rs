@@ -121,6 +121,7 @@ impl<B: BufferTrait> EditorState<B> {
         // its own, and taking one under an editor's lock would add an edge to
         // the order that nothing else keeps.
         let echo_timeout = echo_timeout(env);
+        let echo_limit = echo_area_limit(env, screen_height);
         // Before the windows and never with them: an `Arc`, cloned out, and the
         // lock given straight back.
         let theme = self.theme();
@@ -169,8 +170,8 @@ impl<B: BufferTrait> EditorState<B> {
 
         // The tiled tree, the floats and the focus in one acquisition, with
         // the buffers they show.
-        let (views, separators, focused_window_id, at_point) =
-            self.windows_mut_with_buffers(|windows, buffers| {
+        let (views, separators, focused_window_id, echo_message, echo_area) = self
+            .windows_mut_with_buffers(|windows, buffers| {
                 let focused_window_id = windows.focused();
                 let mut views = Vec::new();
                 let mut separator_rects = Vec::new();
@@ -200,20 +201,38 @@ impl<B: BufferTrait> EditorState<B> {
                     findings: findings.as_ref(),
                     scroll_conservatively,
                 };
-                // The focused tiled window's: a prompt or a float has the
-                // keyboard for something else.
-                let at_point = windows.focused_buffer().and_then(|buffer| {
-                    crate::ui::finding_message_at(buffers, &buffer, findings.as_ref())
-                });
+                // The finding at point is said when the echo area has nothing
+                // else to say, and stops being said when point leaves it: the
+                // focused tiled window's, since a prompt or a float has the
+                // keyboard for something else. Found before the windows are
+                // composed, which moves no point, because how many rows it
+                // takes is how many the windows give up.
+                let echo_message = if stored_message.is_empty() {
+                    windows
+                        .focused_buffer()
+                        .and_then(|buffer| {
+                            crate::ui::finding_message_at(buffers, &buffer, findings.as_ref())
+                        })
+                        .unwrap_or_default()
+                } else {
+                    stored_message
+                };
+                let said = if prompt.is_empty() {
+                    &echo_message
+                } else {
+                    &prompt
+                };
+                let echo_area = crate::ui::echo_rows(said, echo_limit, screen_width);
                 windows.root_mut().compute_tiled_views(
                     Rect {
                         x: 0,
                         y: 0,
                         width: screen_width,
-                        // The bottom row is the echo area's, drawn over what is
-                        // under it: a window's status line there would share
-                        // the row with a message.
-                        height: screen_height.saturating_sub(1),
+                        // The bottom rows are the echo area's, one for each
+                        // line it shows, drawn over what is under them: a
+                        // window's status line there would share a row with a
+                        // message.
+                        height: screen_height.saturating_sub(echo_area.len().max(1)),
                     },
                     focus,
                     buffers,
@@ -300,22 +319,21 @@ impl<B: BufferTrait> EditorState<B> {
                     });
                 }
 
-                (views, separators, focused_window_id, at_point)
+                (
+                    views,
+                    separators,
+                    focused_window_id,
+                    echo_message,
+                    echo_area,
+                )
             });
-
-        // The finding at point is said when the echo area has nothing else
-        // to say, and stops being said when point leaves it.
-        let echo_message = if stored_message.is_empty() {
-            at_point.unwrap_or_default()
-        } else {
-            stored_message
-        };
 
         FrameSnapshot {
             views,
             echo_message,
             pending_input,
             prompt,
+            echo_area,
             theme,
             focused_window_id,
             width: screen_width,

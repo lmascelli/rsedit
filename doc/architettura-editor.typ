@@ -333,7 +333,8 @@ c'è.
 + Ogni impostazione che l'editor legge (`editor/settings.rs`) riceve il suo
   valore iniziale, così che `(setq ...)` in una configurazione modifichi un
   valore che esiste già: per esempio `mouse-mode` (`nil`),
-  `echo-message-timeout` (5), `minibuffer-lines` (1),
+  `echo-message-timeout` (5), `max-echo-area-height` (0,25),
+  `minibuffer-lines` (1),
   `window-separator` (`│`), `auto-save` (`t`) e `watch-file-interval` (3).
   `document_settings` dà a ognuna la documentazione che `C-h v` mostra.
   Vengono creati il modo `fundamental-mode` e il modo minore `read-only-mode`
@@ -5588,15 +5589,42 @@ lock in un ordine fisso e non fa I/O; il disegno avviene dopo, senza lock.
 + Legge l'area messaggi, vuota se il messaggio è scaduto.
 + Con `windows` in scrittura (lo scorrimento può dover seguire il punto) e
   `buffers` in lettura, attraverso `windows_mut_with_buffers`, cerca la
-  coppia di parentesi della finestra con il focus, compone ogni foglia
-  dell'albero nel rettangolo del frame meno l'ultima riga, raccogliendo i
-  separatori; poi compone le flottanti, e cerca la segnalazione al punto
-  della finestra con il focus.
-+ Se l'area messaggi è vuota, vi mette il messaggio di quella segnalazione.
+  coppia di parentesi della finestra con il focus e, se l'area messaggi è
+  vuota, vi mette il messaggio della segnalazione al punto della finestra
+  con il focus. Poi taglia in righe ciò che l'area messaggi mostra --- il
+  messaggio della keymap transitoria, se c'è, altrimenti il messaggio ---
+  con `echo_rows` (`ui/echo_area.rs`), fino a quante ne concede
+  `max-echo-area-height` (@area-messaggi); compone ogni foglia dell'albero
+  nel rettangolo del frame meno quelle righe, raccogliendo i separatori, e
+  poi le flottanti.
 + Consuma il testo destinato agli appunti (`take_pending_clipboard`).
 
 Ogni foglia si compone come dice @composizione. Le finestre flottanti si
 compongono dopo, ognuna nel suo rettangolo, senza margine né riga di stato.
+
+=== L'area messaggi <area-messaggi>
+
+L'area messaggi ha una riga per ogni linea di ciò che dice. `echo_rows(testo,
+limite, larghezza)` divide il testo a ogni `\n` (e a ogni `\r\n`); il `\n`
+finale chiude l'ultima linea e non ne apre un'altra, e un testo vuoto è una
+riga vuota. Una linea più larga del frame resta intera: la taglia il
+front-end, come quando l'area era una riga sola. Con più linee del limite si
+mostrano le prime, e l'ultima si accorcia quanto basta per finire con quante
+ne mancano, `[+12 lines]`, sempre visibile.
+
+Il limite è `echo_area_limit` (`editor/settings.rs`), letto da
+`max-echo-area-height` prima di ogni lock: un numero sotto 1 è quella parte
+dell'altezza del frame, uno da 1 in su quel numero di righe, come
+`max-mini-window-height` di Emacs; ogni altro valore vale il default, 0,25.
+Il risultato sta fra 1 e l'altezza del frame meno 1, perché le finestre
+tengano una riga. Le righe dell'area messaggi le cedono le finestre affiancate
+in basso, il minibuffer compreso, che resta subito sopra; le riprendono quando
+il messaggio scade o lo sostituisce uno più corto. Le flottanti hanno le loro
+coordinate e non si spostano: l'area messaggi, disegnata dopo, le copre dove
+le incontra.
+
+Il messaggio della segnalazione al punto è la prima linea del messaggio della
+segnalazione (@segnalazioni-schermo), e quindi non allarga mai l'area.
 
 #ref-table(
   columns: (4.4cm, 1fr),
@@ -5604,6 +5632,7 @@ compongono dopo, ognuna nel suo rettangolo, senza margine né riga di stato.
   [`views`], [Un `RenderableWindowView` per finestra: rettangolo, nome del buffer, titolo, focus, cursore relativo, righe di testo, evidenziazioni (riga, colonne, faccia), riga di stato, bordo, margine e sua larghezza.],
   [`separators`], [Rettangoli e carattere delle linee tra finestre affiancate.],
   [`echo_message`, `prompt`], [Il messaggio, o quello della segnalazione al punto quando non ce n'è, e l'eventuale offerta della keymap transitoria, che lo sostituisce.],
+  [`echo_area`], [Le righe dell'area messaggi, dall'alto, come il front-end le disegna in fondo al frame: le linee dell'offerta o del messaggio, al più `max-echo-area-height`; una riga vuota se non c'è nulla da dire. `echo_height()` ne conta almeno una, `echo_top()` dà la riga da cui partono.],
   [`pending_input`], [`C-u 4 C-x-`: ciò che l'editor sta leggendo.],
   [`theme`], [Gli stili delle facce (`Arc<Theme>`).],
   [`focused_window_id`, `width`, `height`], [Come dice il nome.],
@@ -6088,8 +6117,9 @@ pulisce lo schermo; disegna i separatori (prima delle finestre, perché una flot
 deve poterli coprire); per ogni vista disegna bordo e titolo, ogni riga del
 rettangolo riempita fino alla larghezza, contata in celle (così una flottante è opaca), il
 margine cella per cella, le evidenziazioni sopra il testo, la riga di stato
-sotto il rettangolo; poi l'area messaggi nell'ultima riga, l'input in sospeso
-allineato a destra nella stessa riga, il cursore #emph[per ultimo] e infine,
+sotto il rettangolo; poi l'area messaggi nelle sue righe in fondo
+(`echo_area`, da `echo_top()`), l'input in sospeso allineato a destra
+nell'ultima, il cursore #emph[per ultimo] e infine,
 se c'è, la sequenza OSC 52 per gli appunti.
 
 La pagina è la faccia `default`: i suoi colori, senza gli attributi (`page`).
@@ -6098,7 +6128,8 @@ due colori, così ciò che segue --- le righe di testo, i bordi, l'area
 messaggi --- li ha senza chiederli, e `apply_style` scrive solo ciò che una
 faccia cambia. Lo schermo si pulisce con i colori già in vigore, perché un
 terminale cancella nel colore di sfondo corrente; dove la pagina ha uno
-sfondo, l'ultima riga si scrive intera, la sola che nessuna finestra copre.
+sfondo, le righe dell'area messaggi si scrivono intere, le sole che nessuna
+finestra copre.
 Con una faccia `default` senza colori non si emette nulla in più.
 
 I colori sono risolti dal front-end secondo la profondità del terminale:
@@ -6343,6 +6374,16 @@ egui, come dice @gui.
   buffer: il front-end chiede `next_redraw_in` e riceve una durata sola, e un
   secondo front-end ha lo stesso comportamento chiedendo la stessa cosa.
   `None` è la risposta comune, e un editor fermo non costa nulla.
++ *L'area messaggi cresce con il messaggio, e la decide il core.* Un messaggio
+  di più linee scritto su una riga sola mostrerebbe `␊` al posto degli a capo
+  e ne taglierebbe quasi tutto. Le righe le sceglie `snapshot`, che deve
+  comunque sapere quante toglierne alle finestre prima di comporle; i
+  front-end disegnano `echo_area` com'è, e un terzo front-end non ripete la
+  regola. Il tetto, un quarto del frame come in Emacs, evita che un'uscita
+  lunga si prenda lo schermo; ciò che non entra si conta sull'ultima riga, e
+  con `message` resta nel log (`C-h e`). Le linee lunghe non vanno a capo:
+  una riga sola che cresce a ogni messaggio lungo farebbe saltare le finestre
+  più spesso di quanto aiuti.
 + *Le flottanti non hanno margine né riga di stato.* Una flottante è un prompt
   o una striscia di scelte, poche righe lette e chiuse: numerarle non dice
   nulla, e il bordo dice già che cosa sono.
@@ -9707,6 +9748,7 @@ Le variabili che l'editor legge da Lisp:
   columns: (4.6cm, 2.2cm, 1fr),
   header: ([Variabile], [Default], [Effetto]),
   [`echo-message-timeout`], [5], [Secondi di permanenza di un messaggio; `nil` per sempre.],
+  [`max-echo-area-height`], [0,25], [Fin dove cresce l'area messaggi per un messaggio di più linee: sotto 1 una parte del frame, da 1 righe (@area-messaggi).],
   [`mode-line-format`], [vedi sopra], [Riga di stato.],
   [`window-separator`], [`"│"`], [Carattere tra finestre; `nil` per uno spazio.],
   [`display-line-numbers-type`], [`t`], [I numeri di `display-line-numbers-mode`: `'relative` per la distanza dal punto, ogni altro valore per il numero della riga (@margine).],
