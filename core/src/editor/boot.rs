@@ -13,8 +13,8 @@ pub(crate) const WELCOME: &str = "Welcome to rsedit";
 /// The `init.lisp` the editor writes for somebody who has none.
 ///
 /// `require` lines and settings, and nothing that needs a macro: the modules
-/// it loads are what define the macros, and without one -- no `data/lisp`
-/// beside a test binary, a module taken out -- a form using it is an ordinary
+/// it loads are what define the macros, and without one -- none in a test's
+/// editor, a module taken out -- a form using it is an ordinary
 /// call, which fails and takes the editor down with it. A command belongs in a
 /// module, or in Rust.
 ///
@@ -195,11 +195,23 @@ pub(crate) fn top_level<B: BufferTrait>(
     env
 }
 
+/// Whether [`isolate_config_for_tests`] was called: the editors of this
+/// process are a test's, and start with none of the editor's own modules in
+/// `lisp-path`.
+static ISOLATED_FOR_TESTS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Points this process's configuration, data, cache and state at directories
 /// of its own, in the system's temporary directory, once: building an editor
 /// in a test then neither writes into the configuration of whoever runs the
 /// tests, nor loads their plugins, nor depends on where `HOME` points at that
 /// instant, which several tests move.
+///
+/// And leaves the editor's own modules out of `lisp-path`, so that every test
+/// starts with no module loaded, whatever its `init.lisp` requires: a test
+/// that wants one loads it, or puts the data directory's folders in
+/// `lisp-path` itself. The themes and the pages are written out as for a
+/// person, into the data directory of the suite's own.
 ///
 /// Through [`CONFIG_DIR`], [`DATA_DIR`], [`CACHE_DIR`] and [`STATE_DIR`], the
 /// doors a person would use, so that the tests go through what `crate::paths`
@@ -228,6 +240,7 @@ pub fn isolate_config_for_tests() {
             std::env::set_var(DATA_DIR, dir("data"));
             std::env::set_var(STATE_DIR, dir("state"));
         }
+        ISOLATED_FOR_TESTS.store(true, std::sync::atomic::Ordering::Relaxed);
     });
 }
 
@@ -237,19 +250,30 @@ pub fn isolate_config_for_tests() {
 /// directory, a folder made here when it is missing, so that there is a place
 /// to install one; they are recorded, and nothing of theirs is loaded.
 ///
-/// The editor's modules are looked for beside the executable only, unlike its
-/// themes and pages: a test binary has none there, and so every test starts
-/// with no module loaded, whatever its `init.lisp` requires.
+/// The editor's own modules, themes and pages are written out into the data
+/// directory first, when what is there is not this executable's
+/// ([`crate::shipped_data`]). When they cannot be, the log says so, and what
+/// is there is used all the same. A test's editor has no module of the
+/// editor's in `lisp-path`: see [`isolate_config_for_tests`].
 fn set_search_paths<B: BufferTrait>(
     editor_state: &EditorState<B>,
     env: &Arc<Env<EditorState<B>>>,
     config: Option<&std::path::Path>,
 ) {
-    let plugins = match app_dir(DirOptions {
+    let data = match app_dir(DirOptions {
         dir: AppDir::Data,
         create: true,
     }) {
-        Ok(data) => {
+        Ok(data) => Some(data),
+        Err(why) => {
+            editor_state.log_diagnostic(&format!(
+                "[ERROR] No data directory, for the plugins nor for the editor's own modules: {why}"
+            ));
+            None
+        }
+    };
+    let plugins = match &data {
+        Some(data) => {
             let root = data.join("plugins");
             // The editor starts without it all the same: with no plugins.
             if let Err(why) = std::fs::create_dir_all(&root) {
@@ -260,35 +284,32 @@ fn set_search_paths<B: BufferTrait>(
             }
             editor_state.find_plugins(&root)
         }
-        Err(why) => {
-            editor_state
-                .log_diagnostic(&format!("[ERROR] No data directory for the plugins: {why}"));
-            Vec::new()
-        }
+        None => Vec::new(),
     };
-    let mut lisp_path: Vec<PathBuf> = config.map(|dir| dir.join("lisp")).into_iter().collect();
-    let mut theme_path: Vec<PathBuf> = config.map(|dir| dir.join("themes")).into_iter().collect();
-    for plugin in &plugins {
-        lisp_path.push(plugin.directory.clone());
-        theme_path.push(plugin.directory.join("themes"));
-    }
-    match std::env::current_exe() {
-        Ok(exe) => {
-            let shipped = exe
-                .parent()
-                .expect("Failed to get the parent directory of rsedit")
-                .join("data")
-                .join("lisp");
-            lisp_path.extend(MODULE_KINDS.iter().map(|kind| shipped.join(kind)));
-        }
-        Err(e) => {
-            editor_state.log_diagnostic(&format!(
-                "[ERROR] Failed to find the path of rsedit executable. {:?}",
-                e
-            ));
+    if let Some(data) = &data {
+        match crate::shipped_data::ensure_in(data) {
+            Ok(true) => editor_state.log_diagnostic(&format!(
+                "[INFO] The editor's modules, themes and pages written out into {}",
+                data.display()
+            )),
+            Ok(false) => {}
+            Err(why) => editor_state.log_diagnostic(&format!(
+                "[ERROR] The editor's modules, themes and pages could not be written out into {}: \
+                 {why}. What is there is used; `rsedit --restore-data` writes them again",
+                data.display()
+            )),
         }
     }
-    theme_path.extend(crate::paths::installed_data_dir().map(|data| data.join("themes")));
+    let plugin_dirs: Vec<PathBuf> = plugins
+        .iter()
+        .map(|plugin| plugin.directory.clone())
+        .collect();
+    let (lisp_path, theme_path) = search_paths(
+        config,
+        &plugin_dirs,
+        data.as_deref(),
+        !ISOLATED_FOR_TESTS.load(std::sync::atomic::Ordering::Relaxed),
+    );
     editor_state.loader_mut(|loader| loader.set_plugins(plugins));
     let list = |paths: Vec<PathBuf>| {
         ELispExp::proper_list(
@@ -300,6 +321,31 @@ fn set_search_paths<B: BufferTrait>(
     };
     env.set_variable(LISP_PATH.into(), list(lisp_path));
     env.set_variable(THEME_PATH.into(), list(theme_path));
+}
+
+/// Returns `lisp-path` and `theme-path`, each in the order it is searched:
+/// the folder of its own under CONFIG, then each of PLUGINS, then the
+/// editor's own under DATA -- its modules only with SHIPPED_MODULES.
+pub(crate) fn search_paths(
+    config: Option<&std::path::Path>,
+    plugins: &[PathBuf],
+    data: Option<&std::path::Path>,
+    shipped_modules: bool,
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut lisp_path: Vec<PathBuf> = config.map(|dir| dir.join("lisp")).into_iter().collect();
+    let mut theme_path: Vec<PathBuf> = config.map(|dir| dir.join("themes")).into_iter().collect();
+    for plugin in plugins {
+        lisp_path.push(plugin.clone());
+        theme_path.push(plugin.join("themes"));
+    }
+    if let Some(data) = data {
+        if shipped_modules {
+            let shipped = data.join("lisp");
+            lisp_path.extend(MODULE_KINDS.iter().map(|kind| shipped.join(kind)));
+        }
+        theme_path.push(data.join("themes"));
+    }
+    (lisp_path, theme_path)
 }
 
 /// Builds an editor and the Lisp environment wired to it, and loads the

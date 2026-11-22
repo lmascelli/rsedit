@@ -225,7 +225,7 @@ mod tests {
         // name has just changed.
         //
         // The rule is registered here rather than relying on a shipped
-        // language module, because a test binary has no `data/lisp` beside it
+        // language module, because a test's editor has none in `lisp-path`
         // -- and because what is under test is the reconsidering, not which
         // modes happen to exist.
         let sandbox = Sandbox::new("mode");

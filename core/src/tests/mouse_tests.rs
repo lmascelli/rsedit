@@ -835,7 +835,7 @@ mod tests {
     ///
     /// `create_global_env` evaluates that file with `?`, so anything it raises
     /// takes the editor down; and the modules it loads are not always there --
-    /// a test binary has no `data/lisp` beside it, and each `require` answers
+    /// a test's editor has none in `lisp-path`, and each `require` answers
     /// nil. Without them `defcommand` is not a macro, and a form written with
     /// it is an ordinary call, which raises. So nothing is loaded here first.
     #[test]

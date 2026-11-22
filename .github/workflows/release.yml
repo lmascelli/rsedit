@@ -130,80 +130,87 @@ jobs:
 
           bundle.mkdir(parents=True)
           shutil.copy2(build / executable, bundle / executable)
-          shutil.copytree(build / "data", bundle / "data")
 
           for document in ["LICENSE", "README.md"]:
               shutil.copy2(document, bundle / document)
 
-          def check_data(root):
-              # Ciò che core/build.rs mette accanto all'eseguibile: i moduli
-              # in data/lisp, una sottodirectory per tipo (base, features,
-              # languages), come in core/lisp; i temi e le pagine piatti.
-              kinds = sorted(
-                  kind for kind in Path("core/lisp").iterdir() if kind.is_dir()
-              )
-              if not kinds:
-                  raise RuntimeError("Risorse mancanti: core/lisp/*/")
-              packaged_kinds = sorted(
-                  kind.name
-                  for kind in (root / "data" / "lisp").iterdir()
-                  if kind.is_dir()
-              )
-              if packaged_kinds != [kind.name for kind in kinds]:
-                  raise RuntimeError(
-                      "Tipi di moduli diversi in data/lisp: "
-                      + ", ".join(packaged_kinds)
+          def check_data(program):
+              # I moduli, i temi e le pagine stanno nell'eseguibile:
+              # --restore-data li scrive in una directory dei dati sua, che
+              # deve contenere ciò che c'è nei sorgenti. I moduli in lisp,
+              # una sottodirectory per tipo (base, features, languages), come
+              # in core/lisp; i temi e le pagine piatti.
+              with tempfile.TemporaryDirectory() as scratch:
+                  data = Path(scratch) / "data"
+                  subprocess.run(
+                      [str(program), "--restore-data"],
+                      env=dict(os.environ, RSEDIT_DATA_DIR=str(data)),
+                      check=True,
+                      timeout=30,
                   )
-              stray = sorted((root / "data" / "lisp").glob("*.lisp"))
-              if stray:
-                  raise RuntimeError(
-                      "Moduli fuori dalle sottodirectory: "
-                      + ", ".join(str(path) for path in stray)
-                  )
+                  if not (data / ".shipped-data").is_file():
+                      raise RuntimeError("Timbro mancante: " + str(data))
 
-              groups = [
-                  (kind, Path("lisp") / kind.name, "*.lisp") for kind in kinds
-              ]
-              groups += [
-                  (Path("themes"), Path("themes"), "*.lisp"),
-                  (Path("man"), Path("man"), "*.txt"),
-              ]
-              for source, destination, pattern in groups:
-                  files_by_name = {
-                      path.name: path for path in source.glob(pattern)
-                  }
-                  if destination == Path("man"):
-                      generated = (
-                          build / "data" / destination / "risp-base-index.txt"
-                      )
-                      if not generated.is_file() or not generated.stat().st_size:
-                          raise RuntimeError(
-                              "Risorsa generata mancante o vuota: "
-                              + str(generated)
-                          )
-                      files_by_name[generated.name] = generated
-                  files = sorted(
-                      files_by_name.values(), key=lambda path: path.name
+                  kinds = sorted(
+                      kind for kind in Path("core/lisp").iterdir()
+                      if kind.is_dir()
                   )
-                  if not files:
-                      raise RuntimeError("Risorse mancanti: " + str(source))
-                  packaged_dir = root / "data" / destination
-                  expected = {path.name for path in files}
-                  found = {path.name for path in packaged_dir.glob(pattern)}
-                  if found != expected:
+                  if not kinds:
+                      raise RuntimeError("Risorse mancanti: core/lisp/*/")
+                  packaged_kinds = sorted(
+                      kind.name
+                      for kind in (data / "lisp").iterdir()
+                      if kind.is_dir()
+                  )
+                  if packaged_kinds != [kind.name for kind in kinds]:
                       raise RuntimeError(
-                          "Risorse diverse in " + str(packaged_dir)
-                          + ": mancano " + str(sorted(expected - found))
-                          + ", in più " + str(sorted(found - expected))
+                          "Tipi di moduli diversi in lisp: "
+                          + ", ".join(packaged_kinds)
                       )
-                  for source_file in files:
-                      packaged = packaged_dir / source_file.name
-                      if packaged.read_bytes() != source_file.read_bytes():
-                          raise RuntimeError(
-                              "Risorsa non corretta: " + str(packaged)
-                          )
+                  stray = sorted((data / "lisp").glob("*.lisp"))
+                  if stray:
+                      raise RuntimeError(
+                          "Moduli fuori dalle sottodirectory: "
+                          + ", ".join(str(path) for path in stray)
+                      )
 
-          check_data(bundle)
+                  groups = [
+                      (kind, Path("lisp") / kind.name, "*.lisp")
+                      for kind in kinds
+                  ]
+                  groups += [
+                      (Path("themes"), Path("themes"), "*.lisp"),
+                      (Path("man"), Path("man"), "*.txt"),
+                  ]
+                  for source, destination, pattern in groups:
+                      expected = {path.name for path in source.glob(pattern)}
+                      if not expected:
+                          raise RuntimeError("Risorse mancanti: " + str(source))
+                      packaged_dir = data / destination
+                      if destination == Path("man"):
+                          generated = packaged_dir / "risp-base-index.txt"
+                          if (not generated.is_file()
+                                  or not generated.stat().st_size):
+                              raise RuntimeError(
+                                  "Risorsa generata mancante o vuota: "
+                                  + str(generated)
+                              )
+                          expected.add(generated.name)
+                      found = {path.name for path in packaged_dir.glob(pattern)}
+                      if found != expected:
+                          raise RuntimeError(
+                              "Risorse diverse in " + str(packaged_dir)
+                              + ": mancano " + str(sorted(expected - found))
+                              + ", in più " + str(sorted(found - expected))
+                          )
+                      for source_file in source.glob(pattern):
+                          packaged = packaged_dir / source_file.name
+                          if packaged.read_bytes() != source_file.read_bytes():
+                              raise RuntimeError(
+                                  "Risorsa non corretta: " + str(packaged)
+                              )
+
+          check_data(bundle / executable)
           Path("dist").mkdir()
 
           archive = Path(shutil.make_archive(
@@ -216,7 +223,10 @@ jobs:
           with tempfile.TemporaryDirectory() as temporary:
               shutil.unpack_archive(str(archive), temporary)
               extracted = Path(temporary) / name
-              check_data(extracted)
+              found = sorted(path.name for path in extracted.iterdir())
+              if found != sorted([executable, "LICENSE", "README.md"]):
+                  raise RuntimeError("Archivio non previsto: " + str(found))
+              check_data(extracted / executable)
               subprocess.run(
                   [str(extracted / executable), "--help"],
                   cwd=temporary,

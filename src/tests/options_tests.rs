@@ -17,3 +17,13 @@ fn cli_keeps_paths_and_handles_option_terminator() {
     );
     assert!(Options::parse([OsString::from("--font")]).is_err());
 }
+
+#[test]
+fn restore_data_is_an_option_and_after_the_terminator_a_file() {
+    let options = Options::parse([OsString::from("--restore-data")]).unwrap();
+    assert!(options.restore_data);
+    assert!(options.files.is_empty());
+    let options = Options::parse(["--", "--restore-data"].map(OsString::from)).unwrap();
+    assert!(!options.restore_data);
+    assert_eq!(options.files, vec![PathBuf::from("--restore-data")]);
+}

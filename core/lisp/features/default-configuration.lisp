@@ -5,9 +5,9 @@
 ;;; User manual: the `configuration' page.
 ;;; Design: `doc/architettura-editor.typ, <mod-default-configuration>`.
 
-;; Nothing here may need a macro. Where no module is found -- a test binary
-;; with no data/lisp beside it -- each `require' answers nil, and a form
-;; written with a macro would be an ordinary call, which fails.
+;; Nothing here may need a macro. Where no module is found -- in a test's
+;; editor, whose `lisp-path' has none -- each `require' answers nil, and a
+;; form written with a macro would be an ordinary call, which fails.
 
 (defvar default-configuration-skip nil
   "The modules `default-configuration' does not load, as a list of their

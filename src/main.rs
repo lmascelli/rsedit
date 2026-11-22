@@ -7,6 +7,7 @@ mod gui;
 mod tui;
 use rsedit_core::{
     AppDir, DirOptions, ELispExp, EditorState, Env, GapBuffer, app_dir, create_global_env, eval,
+    restore_data,
 };
 use std::io::{self, IsTerminal};
 use std::sync::Arc;
@@ -71,6 +72,9 @@ struct Options {
     font: Option<PathBuf>,
     /// `--help` or `-h`.
     help: bool,
+    /// `--restore-data`: the editor's own modules, themes and pages written
+    /// out again into the data directory, and no editor started.
+    restore_data: bool,
 }
 
 impl Options {
@@ -85,6 +89,7 @@ impl Options {
                 Some("--") if !positional => positional = true,
                 Some("--gui") if !positional => options.gui = true,
                 Some("--help" | "-h") if !positional => options.help = true,
+                Some("--restore-data") if !positional => options.restore_data = true,
                 Some("--font") if !positional => {
                     options.font = Some(args.next().ok_or("--font requires a font file")?.into());
                 }
@@ -104,12 +109,23 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     if options.help {
         println!(
             "rsedit [--gui] [--font MONOSPACE.ttf] [--] [FILES...]\n\
+            rsedit --restore-data\n\
             In the terminal; in a window with --gui, or when stdin is not a terminal.\n\
+            --restore-data writes the editor's own modules, themes and pages out again\n\
+            into its data directory, replacing what is there, and exits.\n\
             M-x: commands; C-x C-f: open; C-x C-s: save; C-x C-c: quit.\n\
             In the window, on Linux and Windows: Ctrl+Shift+V pastes; Ctrl+V keeps its binding.\n\
             On macOS: Cmd+O/S/Q, Cmd+C/X/V and Cmd+Z are native shortcuts.\n\
             The manual, from inside the editor: C-h m guide."
         );
+        return Ok(());
+    }
+    // Before any editor, which would load what is there: what is there may
+    // be what keeps one from starting.
+    if options.restore_data {
+        let dir =
+            restore_data().map_err(|why| format!("rsedit could not restore its data: {why}"))?;
+        println!("rsedit: data restored in {}", dir.display());
         return Ok(());
     }
 

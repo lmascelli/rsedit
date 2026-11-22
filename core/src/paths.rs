@@ -1,5 +1,5 @@
 //! Where the editor keeps what it keeps on disk: its configuration, its data,
-//! its cache and its state, and where its own data was installed. [`app_dir`] is asked
+//! its cache and its state, its own data among the data. [`app_dir`] is asked
 //! for a directory by what it is for, and answers with where that is on this
 //! system, making it when asked to.
 //!
@@ -50,8 +50,9 @@ pub enum AppDir {
     /// What the editor keeps that it can make again, such as its log.
     /// Deleting it loses nothing that matters.
     Cache,
-    /// What is installed for the editor rather than written for it, such as
-    /// its plugins.
+    /// What is installed for the editor rather than written for it: its
+    /// plugins, and its own modules, themes and manual pages, which it
+    /// writes out there from the executable.
     Data,
     /// What the editor remembers from one run to the next, such as the
     /// answers given at its prompts. Deleting it loses that memory and
@@ -165,22 +166,14 @@ pub(crate) fn app_dir_path(dir: AppDir) -> Result<PathBuf, DirError> {
     locate(dir).ok_or(DirError::Undetermined(dir))
 }
 
-/// Returns the directory the editor's own data was installed in -- its
-/// modules, themes and manual pages -- or `None` when the executable cannot
-/// be found.
+/// Returns the directory the editor's own data is written out in -- its
+/// modules, themes and manual pages, carried in the executable -- whether or
+/// not it is there yet: the data directory. `None` when nothing in the
+/// environment says where that is.
 ///
-/// `data` beside the executable, or one level up when only that one is
-/// there; when neither is, the one beside it, which is where it should be.
-pub(crate) fn installed_data_dir() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let parent = exe.parent()?;
-    // One level up because a test binary lives in `target/<profile>/deps/`
-    // while the data was put in `target/<profile>/data/` -- so without this
-    // the editor's own pages are unreachable from every test that looks for
-    // them, which is exactly the code that needs testing.
-    let candidates = [parent.join("data"), parent.join("..").join("data")];
-    let found = candidates.iter().find(|path| path.is_dir());
-    Some(found.unwrap_or(&candidates[0]).clone())
+/// What is written there, and when: [`crate::shipped_data`].
+pub(crate) fn shipped_data_dir() -> Option<PathBuf> {
+    app_dir_path(AppDir::Data).ok()
 }
 
 /// Returns where DIR is, from the environment, whether or not it is there.

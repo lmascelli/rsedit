@@ -113,6 +113,7 @@ mod sexp_command_tests;
 mod sexp_tests;
 mod shell_tests;
 mod shipped;
+mod shipped_data_tests;
 mod shipped_lisp_tests;
 mod syntax_tests;
 mod theme_system_tests;

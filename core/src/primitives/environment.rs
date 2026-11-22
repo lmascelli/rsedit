@@ -108,8 +108,8 @@ primitive!(path_separator, _args, _env, _ctx, {
 });
 
 pub const DATA_DIRECTORY_DOC: &str = "(data-directory &optional KIND): Return the directory the \
-         editor's own data is installed in, or nil when it cannot be found. With KIND, a string \
-         such as \"man\" or \"lisp\", return that subdirectory of it.\n\n\
+         editor's own data is written out in, the data directory, or nil when there is none. \
+         With KIND, a string such as \"man\" or \"lisp\", return that subdirectory of it.\n\n\
          Example:\n\
          (data-directory \"man\")";
 
@@ -125,8 +125,8 @@ primitive!(data_directory, args, _env, ctx, {
             });
         }
     };
-    let Some(base) = crate::paths::installed_data_dir() else {
-        ctx.log_diagnostic("Cannot find the rsedit executable, so nor its data directory");
+    let Some(base) = crate::paths::shipped_data_dir() else {
+        ctx.log_diagnostic("Nothing in the environment says where the data directory is");
         return Ok(ELispExp::nil());
     };
     let path = match kind {

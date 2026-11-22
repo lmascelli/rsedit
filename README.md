@@ -53,10 +53,12 @@ cd rsedit
 cargo run --release -- path/to/file
 ```
 
-The build copies the Lisp modules, the manual pages and the themes into
-`target/<profile>/data`, beside the executable, and the editor reads them from
-there. To run it from somewhere else, copy the executable together with its
-`data` directory.
+The Lisp modules, the manual pages and the themes are built into the
+executable, so the executable is all there is to copy. At its start the editor
+writes them out into its data directory (`~/.local/share/rsedit` on Linux and
+macOS, `%LOCALAPPDATA%\rsedit\data` on Windows) when they are missing or come
+from another version; `rsedit --restore-data` writes them out again and exits.
+The `configuration` manual page has the details.
 
 On its first start the editor writes a commented `init.lisp` into its
 configuration directory. Inside the editor, `C-h m` followed by `guide` opens

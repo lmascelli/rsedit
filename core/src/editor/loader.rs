@@ -11,8 +11,8 @@ use risp::{ParserError, SourceMap};
 use std::path::Path;
 
 /// The directories the editor's modules are kept in, by kind, in the order
-/// `lisp-path` lists them: `data/lisp/base` and the others beside the
-/// executable, `core/lisp/base` and the others in the source.
+/// `lisp-path` lists them: `lisp/base` and the others in the data
+/// directory, `core/lisp/base` and the others in the source.
 pub(crate) const MODULE_KINDS: [&str; 3] = ["base", "features", "languages"];
 
 /// The file in a plugin's directory that says what the plugin is.

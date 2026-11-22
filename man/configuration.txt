@@ -57,6 +57,18 @@ WHERE THE FILES ARE
         ~/.local/share/rsedit
         %LOCALAPPDATA%\rsedit\data
 
+    The editor's own modules, themes and pages are carried in the
+    executable, which is all there is to install. At its start the editor
+    writes them out into the lisp, themes and man folders of the data
+    directory when they are not there, or come from another version. Those
+    three folders are the editor's own and are replaced whole: a module or
+    a theme of yours goes in the lisp or themes folder of the configuration
+    directory, which is searched first. When they are damaged,
+
+        rsedit --restore-data
+
+    writes them out again, whatever is there, and exits.
+
     What the editor remembers from one run to the next, such as the
     answers given at its prompts, goes in the state directory:
 
@@ -135,8 +147,8 @@ MODULES
     One written before, which requires each module by name, has to add the
     new line by hand, or be replaced by the one line.
 
-    The modules are installed beside the editor, in three folders of
-    data/lisp: base, what the others are written with; features, one for
+    The modules are written out into the data directory, in three folders
+    of lisp: base, what the others are written with; features, one for
     each thing the editor does; and languages, one for each language it
     colours. You can read all of them. The one to read first is
     rust-mode.lisp: a whole mode in one short file.

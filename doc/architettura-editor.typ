@@ -166,7 +166,8 @@ lì e nella mappa di `lib.rs`.
   columns: (3.4cm, 1fr),
   header: ([Percorso], [Contenuto]),
   [`lib.rs`], [Ordine dei moduli e superficie pubblica (`pub use`). Tutto il resto è `pub(crate)`.],
-  [`paths.rs`], [Le directory dell'editor, configurazione, dati, cache e stato, secondo le convenzioni di ogni sistema: `app_dir` (@directory); quella dei dati installati con l'editor, `installed_data_dir`; e i nomi dei file, resi assoluti e smontati senza chiedere al disco (@nomi-file).],
+  [`paths.rs`], [Le directory dell'editor, configurazione, dati, cache e stato, secondo le convenzioni di ogni sistema: `app_dir` (@directory); quella in cui l'editor scrive i propri dati, `shipped_data_dir`; e i nomi dei file, resi assoluti e smontati senza chiedere al disco (@nomi-file).],
+  [`shipped_data.rs`], [I moduli, i temi e le pagine che l'eseguibile porta con sé, e la loro scrittura nella directory dei dati: `ensure_in`, `restore_data` (@dati-distribuiti).],
   [`buffer/`], [`Buffer`, `BufferTrait`, `GapBuffer`, undo, mark, overlay, testo virtuale, cache di colorazione (`syntax.rs`) e di scansione (`scan.rs`), timbro del file su disco (`disk.rs`), codifica del file (`coding.rs`, @codifiche).],
   [`text/`], [Ciò che si può calcolare sul testo conoscendo solo `BufferTrait`: la ricerca (`search.rs`), le sessioni di ricerca incrementale e di sostituzione (`isearch.rs`, `replace.rs`), il kill ring, i rettangoli, le liste di posizioni (`results.rs`), il riempimento (`fill.rs`).],
   [`input.rs`], [`KeyEvent`, `KeyCode`, `MouseEvent`, `Keymap`, `TransientKeymap`, la lettura e la scrittura dei nomi dei tasti (`parse_key_sequence`, `describe_keys`), i legami scritti in Rust (`fill_default_keymaps`).],
@@ -181,7 +182,7 @@ lì e nella mappa di `lib.rs`.
   [`ui/`], [La descrizione dello schermo: l'albero delle finestre e le flottanti (`windows.rs`), la composizione di una finestra (`compose.rs`), le righe e le loro colonne (`layout.rs`), il margine dei numeri (`gutter.rs`), le segnalazioni sullo schermo (`findings.rs`), la riga di stato (`mode_line.rs`), facce e temi (`faces.rs`), `FrameSnapshot` (`frame.rs`) (@frame).],
   [`tests/`], [Circa cento file di test dell'editor, più `perf/` (@test).],
   [`../lisp/`], [I venticinque moduli Lisp distribuiti con l'editor, in tre cartelle: `base/`, `features/`, `languages/` (@moduli-lisp).],
-  [`../build.rs`], [Copia ogni cartella dei moduli in `target/<profilo>/data/lisp`, accanto all'eseguibile, e con loro i temi e le pagine del manuale.],
+  [`../build.rs`], [Scrive in `OUT_DIR/shipped_data.rs` la tabella dei moduli, dei temi e delle pagine del manuale, presi con `include_bytes!`, e il timbro che dice quali dati sono (@dati-distribuiti).],
   [`../../src/`], [I front-end: `main.rs` (la riga di comando e l'avvio); `tui/`, il terminale, con il ciclo in `mod.rs`, i tasti e il mouse in `input.rs`, i colori in `colour.rs` e il disegno in `render.rs` (@ciclo-tui, @tui); `gui/`, una finestra grafica con egui, con `Core` in `mod.rs`, il ciclo in `app.rs`, i tasti in `keys.rs` e il disegno in `paint.rs` (@gui).],
 )
 
@@ -271,7 +272,9 @@ WorkManager ne conosce uno: gli altri due vivono dentro il suo
 == Dal `main` al ciclo degli eventi
 
 `src/main.rs` legge la riga di comando --- i file da aprire, `--gui`,
-`--font FILE` e `--help` --- e chiama `create_global_env::<GapBuffer>()`; poi
+`--font FILE`, `--help` e `--restore-data`, che riscrive i dati dell'editor
+ed esce senza costruirne uno (@dati-distribuiti) --- e chiama
+`create_global_env::<GapBuffer>()`; poi
 attiva il file di log `rsedit.log` nella directory della cache (@directory)
 con `start_log_file`, legge la sessione lasciata dall'avvio precedente con
 `load_session` (@memoria), apre ogni file della riga di comando valutando
@@ -344,7 +347,9 @@ c'è.
 + `rsedit-path` riceve il percorso dell'eseguibile.
 + `set_search_paths` crea, se manca, la cartella `plugins` nella directory dei
   dati, vi cerca i plugin, li registra in
-  `Loader` e dà il primo valore a `lisp-path` e a `theme-path`: la
+  `Loader`, vi scrive i moduli, i temi e le pagine dell'editor se il timbro
+  non è quello di questo eseguibile (@dati-distribuiti) e dà il primo valore
+  a `lisp-path` e a `theme-path`, calcolati da `search_paths`: la
   configurazione, poi i plugin, poi l'editor (@percorsi-moduli).
 + Se manca, `init.lisp` viene creato con `DEFAULT_INIT_LISP` (vedi sotto).
 + `load_init` valuta `init.lisp` con `eval_file`, e `init.lisp` carica i
@@ -362,7 +367,8 @@ c'è.
 
 L'editor tiene quattro directory sue: quella della configurazione, con
 `init.lisp`; quella dei dati, con ciò che si installa per l'editor invece di
-scriverlo, oggi i plugin; quella della cache, con ciò che può rifare, come
+scriverlo: i plugin, e i moduli, i temi e le pagine che l'editor stesso vi
+scrive dall'eseguibile (@dati-distribuiti); quella della cache, con ciò che può rifare, come
 il file di log: cancellarla non perde nulla che conti; e quella dello stato,
 con ciò che ricorda da un avvio all'altro, oggi la sessione (@memoria):
 cancellarla perde quel ricordo e nient'altro. Le trova `app_dir`, in
@@ -390,11 +396,6 @@ la directory si possa scrivere non viene controllato. La scelta tra le fonti,
 ne provano la precedenza senza scrivere nell'ambiente del processo, che tutti
 i test vedono. `isolate_config_for_tests` dà invece a ogni processo di test
 quattro directory sue, attraverso le quattro variabili `RSEDIT_*`.
-
-I dati installati #emph[con] l'editor --- moduli, temi, pagine --- non sono
-una di queste: stanno in `data` accanto all'eseguibile, e `installed_data_dir`
-li cerca lì o un livello sopra, dove `build.rs` li mette per i binari di test
-in `target/<profilo>/deps/`. La usano `data-directory` e `theme-path`.
 
 Cinque decisioni:
 
@@ -428,7 +429,63 @@ Cinque decisioni:
   plugin di chi lancia i test entrerebbero in `lisp-path`. È la porta di una
   persona, così i test
   passano da `app_dir` invece di aggirarla. È pubblica per i test del crate
-  binario, che il `cfg(test)` di una libreria non raggiunge.
+  binario, che il `cfg(test)` di una libreria non raggiunge. Toglie anche i
+  moduli dell'editor da `lisp-path`: ogni test parte senza moduli, qualunque
+  cosa chieda il suo `init.lisp`, come quando un binario di test non aveva
+  `data/lisp` accanto; temi e pagine vengono scritti come per una persona,
+  nella directory dei dati del processo.
+
+=== I dati distribuiti con l'editor <dati-distribuiti>
+
+I moduli Lisp, i temi e le pagine del manuale stanno dentro l'eseguibile.
+`build.rs` scrive in `OUT_DIR/shipped_data.rs` la tabella `FILES`: ogni file
+con il percorso a cui va scritto sotto la directory dei dati, `/` tra le
+parti, e i suoi byte presi con `include_bytes!`; più `STAMP`, la versione e
+un hash FNV-1a di ogni percorso e di ogni byte. L'indice delle funzioni
+dell'interprete, `risp::BASE_FUNCTION_INDEX`, diventa
+`man/risp-base-index.txt`. Accanto all'eseguibile non va più nulla: basta
+copiarlo.
+
+A ogni avvio `set_search_paths` chiama `shipped_data::ensure_in` sulla
+directory dei dati, che legge soltanto il file del timbro, `.shipped-data`.
+Se manca o dice altro, `write_out` scrive tutto in una cartella
+`.staging-<pid>-<n>`, toglie il timbro, mette ognuna delle cartelle `PARTS`
+--- `lisp`, `themes`, `man` --- al posto di quella in uso, spostata prima in
+`.old-<pid>-<n>`, e scrive il timbro per ultimo. Le altre cartelle della
+directory dei dati, `plugins` tra queste, restano come sono. Se la scrittura
+fallisce il log lo dice, e l'editor usa ciò che c'è. `--restore-data`, sulla
+riga di comando, chiama `restore_data`, che scrive tutto qualunque cosa dica
+il timbro, ed esce prima di costruire un editor.
+
+Cinque decisioni:
+
++ *Le cartelle sono dell'editor.* Vengono sostituite intere, con ciò che
+  contengono: i moduli e i temi della persona vanno nella configurazione,
+  che viene prima in `lisp-path` e in `theme-path` e li nasconde. Scartato:
+  lasciare la cartella alla persona, che a ogni aggiornamento chiederebbe di
+  capire quali file ha cambiato --- un manifesto di hash, le versioni nuove
+  messe accanto --- per ottenere ciò che la configurazione già dà.
++ *Scritti su disco, e non letti dall'eseguibile.* Il loader, `SourceMap`,
+  `data-directory`, le pagine del manuale e il salto a una definizione
+  lavorano su file veri, e la persona può leggere i moduli con qualunque
+  strumento. Scartato: una sorgente virtuale in `lisp-path`, che avrebbe
+  chiesto a tutti questi di conoscerla.
++ *Si legge solo il timbro.* All'avvio costa un file di poche decine di byte;
+  il primo avvio, o il primo dopo un aggiornamento, scrive circa 1,2 MB. Un
+  file rovinato sotto un timbro giusto non viene visto: lo ripara
+  `--restore-data`. Scartato, per ora: confrontare l'hash di ogni modulo
+  quando si carica.
++ *Il timbro per ultimo.* Viene tolto prima di sostituire qualcosa e scritto
+  solo quando tutto è al suo posto: un avvio interrotto a metà non lascia un
+  timbro, e il successivo riscrive tutto. Le cartelle di lavoro più vecchie
+  di un'ora sono di un avvio interrotto, e il successivo le cancella; una più
+  giovane può essere di un altro editor che parte nello stesso momento. Due
+  editor dello stesso processo scrivono uno dopo l'altro, sotto `WRITING`; due
+  processi che partono insieme scrivono gli stessi dati, e `swap_in` riprova
+  se l'altro ha messo la sua cartella nel frattempo.
++ *L'emergenza è sulla riga di comando.* Se i moduli di `base` sono rovinati,
+  i comandi Lisp che li userebbero non ci sono: `--restore-data` lavora in
+  Rust, prima di qualunque valutazione.
 
 === La memoria tra un avvio e l'altro <memoria>
 
@@ -8055,9 +8112,9 @@ tasti, i comandi di alto livello, i modi dei linguaggi, l'interfaccia dei
 completamenti. I moduli stanno in tre cartelle, per genere: `base/`, ciò con
 cui gli altri sono scritti; `features/`, una funzionalità ciascuno;
 `languages/`, un linguaggio ciascuno. I temi sono dati e non codice, e stanno
-fuori, in `themes/`. `build.rs` copia ogni cartella di `core/lisp` in
-`target/<profilo>/data/lisp/<genere>` a ogni compilazione, e un modulo nuovo
-arriva accanto all'eseguibile da solo. `MODULE_KINDS`, in `editor/loader.rs`,
+fuori, in `themes/`. `build.rs` mette ogni file di `core/lisp` nell'eseguibile
+a ogni compilazione, e l'editor lo scrive in `lisp/<genere>` nella directory
+dei dati (@dati-distribuiti): un modulo nuovo arriva da solo. `MODULE_KINDS`, in `editor/loader.rs`,
 è l'elenco dei generi che `lisp-path` nomina; `loading_tests` controlla che
 coincida con le cartelle e che ogni modulo distribuito sia caricato
 dall'`init.lisp` predefinito, attraverso `default-configuration`.
@@ -8147,8 +8204,8 @@ l'editor.
 #ref-table(
   columns: (2.6cm, 1fr),
   header: ([Variabile], [Directory, in ordine]),
-  [`lisp-path`], [`<configurazione>/lisp`; la cartella di ogni plugin; `data/lisp/base`, `data/lisp/features`, `data/lisp/languages` accanto all'eseguibile.],
-  [`theme-path`], [`<configurazione>/themes`; la cartella `themes` di ogni plugin; `themes` dei dati installati (`installed_data_dir`).],
+  [`lisp-path`], [`<configurazione>/lisp`; la cartella di ogni plugin; `lisp/base`, `lisp/features`, `lisp/languages` nella directory dei dati (@dati-distribuiti).],
+  [`theme-path`], [`<configurazione>/themes`; la cartella `themes` di ogni plugin; `themes` nella directory dei dati.],
 )
 
 Un file in una directory ne nasconde uno con lo stesso nome in una
@@ -8502,7 +8559,7 @@ riga dell'`init.lisp` predefinito (`DEFAULT_INIT_LISP`, in `editor/boot.rs`).
 + *Togliere per nome, prima del `require`.* `default-configuration-skip` è un
   `defvar`, quindi un valore impostato prima che il modulo si carichi resta. Un
   modulo tolto che un altro chiede si carica lo stesso.
-+ *Niente macro.* In un binario di test, senza `data/lisp` accanto, ogni
++ *Niente macro.* In un editor dei test, senza i moduli in `lisp-path`, ogni
   `require` risponde nil, e una forma scritta con una macro di un modulo
   sarebbe una chiamata qualunque, che fallisce: il modulo deve caricarsi anche
   così, come l'`init.lisp` predefinito.

@@ -1,8 +1,9 @@
 # Manual pages
 
 The user's manual: one plain-text page per topic, read in the editor with
-`C-h m` or `M-x manpage`. The build copies every `.txt` file here beside the
-executable, into `target/<profile>/data/man`.
+`C-h m` or `M-x manpage`. The build puts every `.txt` file here in the
+executable, and the editor writes them out into the `man` folder of its data
+directory.
 
 The pages are the complete reference for using the editor. A docstring is the
 short reference for one name, and `C-h f` points from it to the page that is

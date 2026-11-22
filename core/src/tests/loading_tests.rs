@@ -259,8 +259,8 @@ mod tests {
     fn eval_file_still_finds_a_module_by_its_bare_name() {
         // What an init.lisp written before `require` says.
         let (ctx, env) = editor();
-        let shipped = crate::paths::installed_data_dir()
-            .expect("the data beside the test binary")
+        let shipped = crate::paths::shipped_data_dir()
+            .expect("the suite's data directory")
             .join("lisp");
         let dirs: Vec<PathBuf> = MODULE_KINDS.iter().map(|kind| shipped.join(kind)).collect();
         let dirs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
@@ -377,12 +377,40 @@ mod tests {
 
     #[test]
     fn the_editor_looks_in_the_persons_folders_first_and_its_own_last() {
+        let config = Path::new("config");
+        let plugin = PathBuf::from("plugins").join("one");
+        let data = Path::new("data");
+        let (lisp, themes) = crate::editor::boot::search_paths(
+            Some(config),
+            std::slice::from_ref(&plugin),
+            Some(data),
+            true,
+        );
+        let mut expected = vec![config.join("lisp"), plugin.clone()];
+        expected.extend(["base", "features", "languages"].map(|kind| data.join("lisp").join(kind)));
+        assert_eq!(lisp, expected);
+        assert_eq!(
+            themes,
+            [
+                config.join("themes"),
+                plugin.join("themes"),
+                data.join("themes")
+            ]
+        );
+        // A test's editor: the editor's own modules left out.
+        let (lisp, _) = crate::editor::boot::search_paths(Some(config), &[], Some(data), false);
+        assert_eq!(lisp, [config.join("lisp")]);
+    }
+
+    #[test]
+    fn a_tests_editor_searches_the_suites_folders() {
         let (ctx, env) = editor();
         let config = crate::paths::app_dir(crate::paths::DirOptions {
             dir: crate::paths::AppDir::Config,
             create: false,
         })
         .expect("the suite's own configuration");
+        let data = crate::paths::shipped_data_dir().expect("the suite's data directory");
         let strings = |name: &str| -> Vec<String> {
             run(name, &env, &ctx)
                 .iter()
@@ -397,19 +425,15 @@ mod tests {
             lisp.first(),
             Some(&config.join("lisp").display().to_string())
         );
-        let tail: Vec<&str> = lisp
-            .iter()
-            .rev()
-            .take(3)
-            .map(|dir| Path::new(dir).file_name().unwrap().to_str().unwrap())
-            .collect();
-        assert_eq!(tail, ["languages", "features", "base"]);
         let themes = strings("theme-path");
         assert_eq!(
             themes.first(),
             Some(&config.join("themes").display().to_string())
         );
-        assert!(themes.last().is_some_and(|dir| dir.ends_with("themes")));
+        assert_eq!(
+            themes.last(),
+            Some(&data.join("themes").display().to_string())
+        );
     }
 
     // -- themes --------------------------------------------------------------
@@ -429,8 +453,8 @@ mod tests {
             "mine/zzz-mine.lisp",
             "(put 'zzz-mine-theme 'faces '((keyword \"blue\" nil nil)))",
         );
-        let shipped = crate::paths::installed_data_dir()
-            .expect("the data beside the test binary")
+        let shipped = crate::paths::shipped_data_dir()
+            .expect("the suite's data directory")
             .join("themes");
         set_path("theme-path", &[&mine, &shipped], &env);
         let names: Vec<String> = run("(available-themes)", &env, &ctx)
@@ -455,8 +479,8 @@ mod tests {
     #[test]
     fn the_default_init_loads_every_shipped_module_each_from_its_own_file() {
         let (ctx, env) = editor();
-        let shipped = crate::paths::installed_data_dir()
-            .expect("the data beside the test binary")
+        let shipped = crate::paths::shipped_data_dir()
+            .expect("the suite's data directory")
             .join("lisp");
         let dirs: Vec<PathBuf> = MODULE_KINDS.iter().map(|kind| shipped.join(kind)).collect();
         let dirs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();

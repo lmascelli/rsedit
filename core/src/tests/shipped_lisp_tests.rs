@@ -26,9 +26,9 @@ mod tests {
     }
 
     #[test]
-    fn every_module_the_default_init_loads_is_beside_the_binary() {
-        // The editor finds its modules where build.rs copies them, beside the
-        // binary, each kind in its own directory.
+    fn every_module_the_default_init_loads_is_in_the_data_directory() {
+        // The editor finds its modules where it writes them out, in the data
+        // directory, each kind in its own directory.
         let (ctx, env) = loaded();
         let LispExp::String(dir) = eval(
             &Parser::new("(data-directory \"lisp\")")
@@ -38,7 +38,7 @@ mod tests {
             &ctx,
         )
         .expect("data-directory must not fail") else {
-            panic!("the data directory beside the test binary is missing");
+            panic!("the suite has no data directory");
         };
         let modules = default_modules();
         assert!(modules.contains(&"preview".to_string()), "{modules:?}");

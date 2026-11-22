@@ -526,8 +526,8 @@ PATHS
     the environment every program the editor starts sees, and
     `getenv-names' lists the names in it; the editor's own process keeps
     the one it started with, so a ~ in a path is still the home it had.
-    `data-directory' is where the editor's own modules, pages and themes
-    are installed.
+    `data-directory' is the data directory, where the editor writes out
+    its own modules, pages and themes.
 
 EXAMPLES
     Answer every yes-or-no question with y or n:

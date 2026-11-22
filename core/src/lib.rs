@@ -13,6 +13,8 @@
 //!                editors: the state a job works on is a type parameter.
 //!   paths.rs     where the editor keeps what it keeps on disk -- its
 //!                configuration, its cache -- by each system's conventions.
+//!   shipped_data.rs  the modules, themes and pages the executable carries,
+//!                written out into the data directory of paths.rs.
 //!   buffer/      text storage, and BufferTrait -- the only thing anything
 //!                else is allowed to assume about it. A buffer emits a topic
 //!                of work/ when its text changes, not knowing who listens.
@@ -81,8 +83,9 @@
 pub(crate) mod buffer;
 pub(crate) mod text;
 
-// -- where the editor's own directories are ----------------------------------
+// -- where the editor's own directories are, and the data it carries --------
 pub(crate) mod paths;
+pub(crate) mod shipped_data;
 
 // -- what the editor takes in, and what a name can mean ----------------------
 pub(crate) mod commands;
@@ -129,6 +132,7 @@ pub use crate::{
         AppDir, CACHE_DIR, CONFIG_DIR, DATA_DIR, DirError, DirOptions, STATE_DIR, XDG_CACHE_HOME,
         XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_STATE_HOME, app_dir,
     },
+    shipped_data::restore_data,
     ui::{
         Color, Face, FrameSnapshot, GutterCell, Highlight, MENU_SEPARATOR, Menu, MenuItem,
         MenuItemId, MenuKind, MenuRequest, NAMED_COLORS, Rect, RenderableWindowView, Separator,

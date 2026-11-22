@@ -300,20 +300,20 @@ mod tests {
     // ----------------------------------------------------------------
 
     #[test]
-    fn the_data_directory_is_beside_the_executable() {
+    fn the_pages_are_in_the_data_directory() {
         let (ctx, env) = editor();
         let man = text_of(&run(r#"(data-directory "man")"#, &env, &ctx));
-        assert!(
-            man.ends_with("data/man") || man.ends_with("data\\man"),
-            "got {man}"
-        );
+        let data = crate::paths::shipped_data_dir().expect("the suite's data directory");
+        assert_eq!(std::path::PathBuf::from(&man), data.join("man"));
+        assert!(data.join("man").join("buffers.txt").is_file(), "{man}");
     }
 
     #[test]
     fn data_directory_without_a_kind_is_the_root_of_it() {
         let (ctx, env) = editor();
         let root = text_of(&run("(data-directory)", &env, &ctx));
-        assert!(root.ends_with("data"), "got {root}");
+        let data = crate::paths::shipped_data_dir().expect("the suite's data directory");
+        assert_eq!(std::path::PathBuf::from(&root), data);
     }
 
     #[test]
@@ -361,7 +361,8 @@ mod tests {
 
     #[test]
     fn rsedits_own_page_is_found() {
-        // Shipped in man/ and copied to data/man by the build.
+        // Shipped in man/, carried in the executable and written out into
+        // the data directory's `man` when the editor starts.
         let (ctx, env) = editor();
         let page = run(r#"(manpage--rsedit-page "buffers")"#, &env, &ctx);
         assert!(!page.is_nil(), "the shipped `buffers` page should be found");
