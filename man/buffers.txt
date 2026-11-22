@@ -10,6 +10,8 @@ SYNOPSIS
     (kill-buffer &optional BUFFER-OR-NAME)
     (kill-buffer-without-saving &optional BUFFER-OR-NAME)
     (close-buffer &optional BUFFER-OR-NAME)
+    (rename-buffer NEWNAME &optional UNIQUE)
+    renamed-buffer-old-name
     (with-current-buffer NAME FUNCTION)
     (buffer-string)
     (buffer-substring START END)
@@ -100,6 +102,14 @@ KILLING A BUFFER
     a floating window showing it closes. Killing the last buffer leaves a
     new, empty *scratch*. A command still writing into the buffer, such as
     a shell command, is stopped.
+
+RENAMING A BUFFER
+    M-x rename-buffer asks for a new name for the buffer you are in. A
+    name another buffer has is refused; with a prefix argument the first
+    free of NAME<2>, NAME<3>, ... is taken instead. The windows that show
+    it follow, and after-rename-buffer-hook runs with the buffer current,
+    `renamed-buffer-old-name' holding the name it had. C-x C-w, when the
+    new file gives the buffer a new name, runs it too.
 
 READ ONLY
     A read-only buffer refuses every change to its text, from a key or from

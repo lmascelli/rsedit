@@ -589,6 +589,7 @@ mod tests {
         sandbox.dir("app/.git").file("app/src/main.rs", "");
         let elsewhere = Sandbox::new("claimed-elsewhere");
         let (ctx, env) = editor();
+        run("(project-claim-mode 1)", &env, &ctx);
         visit(&sandbox, "app/src/main.rs", &env, &ctx);
         let name = format!("*{}-notes*", "app");
 
@@ -741,5 +742,149 @@ mod tests {
             1
         );
         run(r#"(kill-buffer-without-saving "*app-eshell*")"#, &env, &ctx);
+    }
+
+    #[test]
+    fn claiming_by_name_is_off_until_project_claim_mode_turns_it_on() {
+        let sandbox = Sandbox::new("claim-off");
+        sandbox.dir("app/.git").file("app/src/main.rs", "");
+        let (ctx, env) = editor();
+        visit(&sandbox, "app/src/main.rs", &env, &ctx);
+
+        run(r#"(buffer-create "*app-first*")"#, &env, &ctx);
+        assert_eq!(ctx.directory_of("*app-first*"), sandbox.path("app/src"));
+        assert_eq!(
+            run(r#"(buffer-get 'project-root "*app-first*")"#, &env, &ctx),
+            LispExp::nil()
+        );
+
+        run("(project-claim-mode 1)", &env, &ctx);
+        run(r#"(buffer-create "*app-second*")"#, &env, &ctx);
+        assert_eq!(
+            bare(&ctx.directory_of("*app-second*")),
+            bare(&sandbox.root("app"))
+        );
+
+        run("(project-claim-mode 0)", &env, &ctx);
+        run(r#"(buffer-create "*app-third*")"#, &env, &ctx);
+        assert_eq!(ctx.directory_of("*app-third*"), sandbox.path("app/src"));
+    }
+
+    #[test]
+    fn a_buffer_renamed_to_a_project_s_name_is_claimed() {
+        let sandbox = Sandbox::new("claim-rename");
+        sandbox.dir("app/.git").file("app/src/main.rs", "");
+        let (ctx, env) = editor();
+        run("(project-claim-mode 1)", &env, &ctx);
+        visit(&sandbox, "app/src/main.rs", &env, &ctx);
+        run(
+            r#"(buffer-create "*scribble*") (switch-to-buffer "*scribble*")"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(ctx.directory_of("*scribble*"), sandbox.path("app/src"));
+
+        run(r#"(rename-buffer "*app-scribble*")"#, &env, &ctx);
+
+        assert_eq!(
+            bare(&ctx.directory_of("*app-scribble*")),
+            bare(&sandbox.root("app"))
+        );
+        assert_eq!(
+            string(run(
+                r#"(buffer-get 'project-root "*app-scribble*")"#,
+                &env,
+                &ctx
+            )),
+            sandbox.root("app")
+        );
+    }
+
+    #[test]
+    fn only_a_name_a_rule_could_match_is_looked_up() {
+        let (ctx, env) = editor();
+        for (name, could) in [
+            ("*app-notes*", true),
+            ("*Help*", false),
+            ("*Occur*", false),
+            ("notes.txt", false),
+        ] {
+            assert_eq!(
+                run(&format!("(project--could-be-named-p {name:?})"), &env, &ctx).is_truthy(),
+                could,
+                "{name}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn each_project_builds_into_its_own_output() {
+        let first = Sandbox::new("build-first");
+        first.dir("app/.git");
+        let second = Sandbox::new("build-second");
+        second.dir("lib/.git");
+        let (ctx, env) = editor();
+        run("(setq results-reuse-buffer t)", &env, &ctx);
+
+        run(&format!("(cd {:?})", first.path("app")), &env, &ctx);
+        run(r#"(project-compile-command "true")"#, &env, &ctx);
+        settle(&ctx);
+        run(r#"(switch-to-buffer "*scratch*")"#, &env, &ctx);
+        run(&format!("(cd {:?})", second.path("lib")), &env, &ctx);
+        run(r#"(project-compile-command "true")"#, &env, &ctx);
+        settle(&ctx);
+
+        assert!(ctx.has_buffer("*app-compile*"));
+        assert!(ctx.has_buffer("*lib-compile*"));
+        assert_eq!(
+            bare(&ctx.directory_of("*app-compile*")),
+            bare(&first.root("app"))
+        );
+        assert_eq!(
+            string(run(
+                r#"(buffer-get 'project-root "*lib-compile*")"#,
+                &env,
+                &ctx
+            )),
+            second.root("lib")
+        );
+
+        // Built again, the first project's output is used again, not the
+        // newest build's.
+        run(r#"(switch-to-buffer "*scratch*")"#, &env, &ctx);
+        run(&format!("(cd {:?})", first.path("app")), &env, &ctx);
+        run(r#"(project-compile-command "true")"#, &env, &ctx);
+        settle(&ctx);
+        let builds: Vec<String> = strings(&run("(all-buffer-names)", &env, &ctx))
+            .into_iter()
+            .filter(|name| name.ends_with("-compile*") || name.contains("-compile*<"))
+            .collect();
+        assert_eq!(builds.len(), 2, "{builds:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn g_in_a_project_s_build_runs_it_again_in_the_same_output() {
+        let sandbox = Sandbox::new("rebuild");
+        sandbox.dir("app/.git");
+        let (ctx, env) = editor();
+        run("(setq results-reuse-buffer t)", &env, &ctx);
+        run(&format!("(cd {:?})", sandbox.path("app")), &env, &ctx);
+        run(r#"(project-compile-command "true")"#, &env, &ctx);
+        settle(&ctx);
+
+        run(
+            r#"(with-current-buffer "*app-compile*" (lambda () (compilation-recompile)))"#,
+            &env,
+            &ctx,
+        );
+        settle(&ctx);
+
+        assert_eq!(
+            string(run("compilation--buffer", &env, &ctx)),
+            "*app-compile*"
+        );
+        assert!(!ctx.has_buffer("*Shell Output*"));
     }
 }

@@ -128,6 +128,13 @@ impl<B: BufferTrait> EditorState<B> {
         let pending_input = self.pending_input();
         let prompt = self.transient_message();
         let mode_line_format = mode_line_format(env);
+        let mode_line_directory = crate::ui::ModeLineDirectory {
+            fallback: self.working_directory(),
+            home: std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .ok(),
+            style: mode_line_directory_style(env),
+        };
         let separator_char = window_separator(env);
         let gutter = line_numbers(env);
         let scroll_conservatively = scroll_conservatively(env);
@@ -193,6 +200,7 @@ impl<B: BufferTrait> EditorState<B> {
                 );
                 let settings = ComposeSettings {
                     mode_line_format: &mode_line_format,
+                    mode_line_directory: &mode_line_directory,
                     gutter,
                     tabs: &tabs,
                     fill_guide: fill_guide.as_ref(),

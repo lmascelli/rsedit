@@ -49,6 +49,8 @@ pub struct Separator {
 #[derive(Clone, Copy, Debug)]
 pub struct ComposeSettings<'a> {
     pub mode_line_format: &'a str,
+    /// What `%d` in the status line needs besides the buffer.
+    pub mode_line_directory: &'a crate::ui::mode_line::ModeLineDirectory,
     /// The line numbers of a window whose buffer has them on.
     pub gutter: GutterSpec,
     /// How far a Tab reaches, mode by mode.
@@ -170,6 +172,7 @@ impl LayoutNode {
                                 .unwrap_or_else(std::sync::PoisonError::into_inner),
                             rect.height - 1,
                             findings.map_or("", |found| found.count.as_str()),
+                            settings.mode_line_directory,
                         )
                     })
                 });

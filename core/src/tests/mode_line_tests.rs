@@ -71,6 +71,55 @@ mod tests {
     }
 
     #[test]
+    fn percent_d_shows_the_buffer_s_directory_as_the_style_says() {
+        let (ctx, env) = editor_with("text");
+        let home = std::env::temp_dir().join("rsedit-mode-line-home");
+        let directory = home.join("src").join("app");
+        std::fs::create_dir_all(&directory).expect("making the directories");
+        ctx.with_buffer_mut("*scratch*", |b| {
+            b.directory = Some(directory.display().to_string())
+        });
+        eval_str(r#"(setq mode-line-format "[%d]")"#, &env, &ctx).expect("format");
+
+        eval_str("(setq mode-line-directory-style 'full)", &env, &ctx).expect("style");
+        assert_eq!(mode_line(&ctx, &env), format!("[{}]", directory.display()));
+
+        eval_str("(setq mode-line-directory-style 2)", &env, &ctx).expect("style");
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(mode_line(&ctx, &env), format!("[…{sep}src{sep}app]"));
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_abbreviated_style_writes_home_as_a_tilde() {
+        use crate::ui::{DirectoryStyle, ModeLineDirectory};
+        let shown = ModeLineDirectory {
+            fallback: "/".into(),
+            home: Some("/home/me".into()),
+            style: DirectoryStyle::Abbreviated,
+        };
+        assert_eq!(shown.written("/home/me/src/app"), "~/src/app");
+        assert_eq!(shown.written("/home/me"), "~");
+        assert_eq!(shown.written("/home/meow/x"), "/home/meow/x");
+        assert_eq!(shown.written("/etc"), "/etc");
+        let last = ModeLineDirectory {
+            style: DirectoryStyle::Last(1),
+            ..shown
+        };
+        assert_eq!(last.written("/home/me/src/app"), "…/app");
+        assert_eq!(last.written("/home/me"), "~");
+    }
+
+    #[test]
+    fn the_default_format_shows_no_directory() {
+        let (ctx, env) = editor_with("text");
+        let directory = ctx.working_directory();
+        let line = mode_line(&ctx, &env);
+        assert!(!line.contains(&directory), "{line:?}");
+    }
+
+    #[test]
     fn the_modified_flag_follows_the_buffer() {
         let (ctx, env) = editor_with("alpha");
         assert!(mode_line(&ctx, &env).contains("--"), "unmodified");

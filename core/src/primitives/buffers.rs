@@ -5,6 +5,54 @@
 use super::*;
 use risp::{Lambda, eval};
 
+pub const RENAME_BUFFER_DOC: &str = "(rename-buffer NEWNAME &optional UNIQUE): Give the \
+         current buffer the name NEWNAME, and return it. A NEWNAME another buffer has is an \
+         error, unless UNIQUE, a prefix argument at M-x rename-buffer, is non-nil: then the \
+         first of NEWNAME<2>, NEWNAME<3>, ... that is free is taken, and returned. The windows \
+         that show the buffer follow it, and `after-rename-buffer-hook' runs with it current, \
+         `renamed-buffer-old-name' holding the name it had.\n\n\
+         Example:\n\
+         (rename-buffer \"*notes*\" t)";
+
+primitive!(rename_buffer, args, env, ctx, {
+    let new = match args.first() {
+        Some(ELispExp::String(name)) if !name.is_empty() => name.to_string(),
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String, not empty".into(),
+                got: other.cloned().unwrap_or_else(ELispExp::nil),
+            });
+        }
+    };
+    let unique = args.get(1).is_some_and(|exp| !exp.is_nil());
+    let old = ctx.get_current_buffer_name();
+    if new == old {
+        return Ok(ELispExp::string(new));
+    }
+    if old == crate::feature::minibuffer::PROMPT_BUFFER {
+        return Err(EvalError::RuntimeMessage(
+            "The minibuffer cannot be renamed".into(),
+        ));
+    }
+    let new = if ctx.has_buffer(&new) {
+        if !unique {
+            return Err(EvalError::RuntimeMessage(format!(
+                "Buffer name {new} is in use"
+            )));
+        }
+        ctx.free_name_for_work(&new)
+    } else {
+        new
+    };
+    if ctx.rename_buffer_running_hook(&old, &new, &env) {
+        Ok(ELispExp::string(new))
+    } else {
+        Err(EvalError::RuntimeMessage(format!(
+            "Buffer name {new} is in use"
+        )))
+    }
+});
+
 pub const CURRENT_BUFFER_DOC: &str = "(current-buffer): Return the name of the current buffer.";
 
 primitive!(current_buffer, _args, _env, ctx, {
@@ -525,6 +573,12 @@ primitive!(buffer_file_name, args, _env, ctx, {
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     // Remembering something about one buffer, for as long as it exists.
     into.function("buffer-put", buffer_put, BUFFER_PUT_DOC);
+    into.command(
+        "rename-buffer",
+        rename_buffer,
+        &["sRename buffer (to new name): ", "P"],
+        RENAME_BUFFER_DOC,
+    );
     into.function("buffer-get", buffer_get, BUFFER_GET_DOC);
     into.function("buffer-substring", buffer_substring, BUFFER_SUBSTRING_DOC);
     into.function("switch-to-buffer", switch_to_buffer, SWITCH_TO_BUFFER_DOC);

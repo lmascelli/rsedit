@@ -469,4 +469,52 @@ mod tests {
             run(r#"(list "outer" "inner")"#, &env, &ctx)
         );
     }
+
+    // ---------------- renaming a buffer ----------------
+
+    #[test]
+    fn rename_buffer_renames_and_runs_after_rename_buffer_hook() {
+        let (ctx, env) = editor();
+        run(
+            r#"(setq told nil)
+               (defun note-rename ()
+                 (setq told (list renamed-buffer-old-name (current-buffer))))
+               (add-hook nil "after-rename-buffer-hook" 'note-rename)
+               (buffer-create "*before*")
+               (switch-to-buffer "*before*")"#,
+            &env,
+            &ctx,
+        );
+
+        assert_eq!(
+            run(r#"(rename-buffer "*after*")"#, &env, &ctx),
+            LispExp::string("*after*".to_string())
+        );
+        assert_eq!(ctx.get_current_buffer_name(), "*after*");
+        assert!(!ctx.has_buffer("*before*"));
+        assert_eq!(
+            run("told", &env, &ctx),
+            run(r#"(list "*before*" "*after*")"#, &env, &ctx)
+        );
+        // Told only while the hook runs.
+        assert_eq!(run("renamed-buffer-old-name", &env, &ctx), LispExp::nil());
+    }
+
+    #[test]
+    fn rename_buffer_to_a_name_in_use_is_refused_unless_unique() {
+        let (ctx, env) = editor();
+        run(
+            r#"(buffer-create "*taken*") (buffer-create "*mine*") (switch-to-buffer "*mine*")"#,
+            &env,
+            &ctx,
+        );
+
+        assert!(eval_str(r#"(rename-buffer "*taken*")"#, &env, &ctx).is_err());
+        assert_eq!(ctx.get_current_buffer_name(), "*mine*");
+        assert_eq!(
+            run(r#"(rename-buffer "*taken*" t)"#, &env, &ctx),
+            LispExp::string("*taken*<2>".to_string())
+        );
+        assert_eq!(ctx.get_current_buffer_name(), "*taken*<2>");
+    }
 }

@@ -226,14 +226,18 @@ primitive!(set_buffer_directory, args, _env, ctx, {
     Ok(answer)
 });
 
-pub const CD_DOC: &str = "(cd DIRECTORY): Make DIRECTORY, read in the working directory, the \
-         current buffer's directory, and return it; nil, and a message, when it is not a \
-         directory. Relative file names are read in it from then on in this buffer, shell \
-         commands start in it, and buffers made from this one start there too; no other buffer \
-         moves, and a command already running stays where it started. Inside `with-directory' it \
-         moves that call's directory instead, until the call returns.\n\n\
+pub const CD_DOC: &str = "(cd DIRECTORY &optional GLOBAL): Make DIRECTORY, read in the working \
+         directory, the current buffer's directory, and return it; nil, and a message, when it \
+         is not a directory. Relative file names are read in it from then on in this buffer, \
+         shell commands start in it, and buffers made from this one start there too; no other \
+         buffer moves, and a command already running stays where it started. Inside \
+         `with-directory' it moves that call's directory instead, until the call returns. With \
+         GLOBAL non-nil, a prefix argument at M-x cd, it moves the editor's working directory \
+         too: the one a buffer with neither a file nor a directory of its own goes by, as \
+         *scratch* at startup.\n\n\
          Example:\n\
-         (cd \"~/src/rsedit\")";
+         (cd \"~/src/rsedit\")\n\
+         (cd \"~/src/rsedit\" t)";
 
 primitive!(cd, args, _env, ctx, {
     let Some(ELispExp::String(path)) = args.first() else {
@@ -242,9 +246,16 @@ primitive!(cd, args, _env, ctx, {
             got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         });
     };
-    match ctx.change_directory(path) {
+    let global = args.get(1).is_some_and(|exp| !exp.is_nil());
+    let moved = if global {
+        ctx.change_editor_directory(path)
+    } else {
+        ctx.change_directory(path)
+    };
+    match moved {
         Ok(directory) => {
-            ctx.set_echo_message(&format!("Directory {directory}"));
+            let whose = if global { " (editor-wide)" } else { "" };
+            ctx.set_echo_message(&format!("Directory {directory}{whose}"));
             Ok(ELispExp::string(directory))
         }
         Err(why) => {
@@ -318,7 +329,7 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         working_directory,
         WORKING_DIRECTORY_DOC,
     );
-    into.command("cd", cd, &["fChange directory: "], CD_DOC);
+    into.command("cd", cd, &["fChange directory: ", "P"], CD_DOC);
     into.function(
         "set-buffer-directory",
         set_buffer_directory,

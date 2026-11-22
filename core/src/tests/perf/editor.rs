@@ -472,6 +472,11 @@ fn layout(report: &mut Report) {
                     &buffers,
                     ComposeSettings {
                         mode_line_format: " %b ",
+                        mode_line_directory: &crate::ui::ModeLineDirectory {
+                            fallback: "/".into(),
+                            home: None,
+                            style: crate::ui::DirectoryStyle::Abbreviated,
+                        },
                         gutter: GutterSpec::default(),
                         tabs: &crate::ui::layout::TabWidths::default(),
                         fill_guide: None,

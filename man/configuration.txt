@@ -19,6 +19,7 @@ SYNOPSIS
     display-line-numbers-type
     display-line-numbers-width
     mode-line-format
+    mode-line-directory-style
 
 DESCRIPTION
     The editor reads one file when it starts: init.lisp, in its
@@ -185,6 +186,7 @@ SETTINGS
         display-line-numbers-type   t, or 'relative
         display-line-numbers-width  the fewest digits the numbers take
         mode-line-format            what each window's status line shows
+        mode-line-directory-style   how %d writes the buffer's directory
 
     M-x display-line-numbers-mode numbers the lines of the buffer you are in,
     in every window showing it, and takes the numbers away again. It is a
@@ -240,6 +242,17 @@ EXAMPLES
     A shorter status line: the buffer, then the line and the column.
 
         (setq mode-line-format " %b  L%l C%c ")
+
+    The directory of each buffer in its status line, after its name, as
+    its last two directories (`files' says which directory a buffer has):
+
+        (setq mode-line-directory-style 2)
+        (setq mode-line-format " %*%i %b  %d   %m%n %s%!  L%l C%c   %p ")
+
+    %d writes the whole path with the home directory as ~ unless
+    `mode-line-directory-style' says otherwise: 'full writes it as it is,
+    a number N only its last N directories. The status line shows no
+    directory until the format has %d.
 
     A command of your own, on a key of your own:
 

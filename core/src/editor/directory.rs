@@ -48,9 +48,9 @@ impl Drop for DirectoryScope {
 }
 
 impl<B: BufferTrait> EditorState<B> {
-    /// Returns the editor's working directory: where it was started. What a
-    /// buffer with no directory of its own and no file goes by; nothing moves
-    /// it, since `cd` moves a buffer's.
+    /// Returns the editor's working directory: where it was started, until
+    /// `(cd DIR t)` moves it. What a buffer with no directory of its own and
+    /// no file goes by; a plain `cd` moves a buffer's, not this one.
     pub(crate) fn working_directory(&self) -> String {
         self.working_directory
             .read()
@@ -71,6 +71,19 @@ impl<B: BufferTrait> EditorState<B> {
         }
         let mine = directory.clone();
         self.with_current_buffer_mut(|buf| buf.directory = Some(mine));
+        Ok(directory)
+    }
+
+    /// Makes PATH, read as a typed name is, the editor's working directory as
+    /// well as the current buffer's (or the scope's), and returns it: what
+    /// `(cd DIR t)` does. The buffers that go by the editor's, as `*scratch*`
+    /// at startup, follow; the others stay where they are.
+    pub(crate) fn change_editor_directory(&self, path: &str) -> Result<String, String> {
+        let directory = self.change_directory(path)?;
+        *self
+            .working_directory
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = directory.clone();
         Ok(directory)
     }
 

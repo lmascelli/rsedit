@@ -762,7 +762,7 @@ primitive!(write_file, args, env, ctx, {
         ctx.queue_recovery_cleanup(handle, copy, version, crate::editor::file_io::timeout(&env));
     }
     if new_name != current {
-        ctx.rename_buffer(&current, &new_name);
+        ctx.rename_buffer_running_hook(&current, &new_name, &env);
     }
     if let Some(mode) = mode {
         ctx.change_major_mode(&new_name, &mode, &env);

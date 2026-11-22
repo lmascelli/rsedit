@@ -3506,8 +3506,12 @@ nei dati del suo buffer, sta una `Presentation`: chi l'ha prodotta, da quale
 finestra e da quale buffer è stata chiesta, quale buffer ha preso il posto e
 in quale finestra si vede. `prepare_results_buffer` sceglie il buffer di
 un'esecuzione nuova: con `results-reuse-buffer`, la lista più recente dello
-stesso produttore e dello stesso modo, fermando il lavoro che vi scriveva;
-altrimenti un buffer nuovo. `display_results` la mostra nella finestra con il
+stesso produttore e dello stesso modo, fermando il lavoro che vi scriveva,
+purché si chiami come la radice del nome chiesto (`named_after`: la radice o
+la radice con `<N>`); altrimenti un buffer nuovo. Così `*app-compile*` e
+`*lib-compile*`, entrambe di `compile` in `compilation-mode`, non si rubano
+il buffer: `shell-command-start` prende il nome come quarto argomento, e
+`compile` lo passa e lo tiene per `g`. `display_results` la mostra nella finestra con il
 focus, se `results-display-location` è `same-window`, o in una striscia in
 basso, riusando quella che mostra una lista nello stesso modo: occur e grep,
 due produttori le cui liste sono in `occur-mode`, si passano la striscia,
@@ -6093,7 +6097,7 @@ margine, ed è larga quanto la finestra, margine compreso.
 `" %*%i %b   %m%n %s%!  L%l C%c   %p "`): `%b` nome del buffer, `%i` lo stato
 dell'I/O del file, `%f` file (o
 nome), `%m` modo, `%n` le etichette dei modi minori accesi, ognuna dopo uno
-spazio (@modi-minori), `%s` lo stato che il modo tiene nel buffer (`mode-line-state`, come
+spazio (@modi-minori), `%d` la directory del buffer (@directory-di-lavoro), `%s` lo stato che il modo tiene nel buffer (`mode-line-state`, come
 il `NORMAL` di vim), `%l` riga (da 1), `%c` colonna (da 0), `%p` posizione
 (`All`, `Top`, `Bot` o percentuale), `%!` il conteggio delle segnalazioni,
 che la composizione le passa già scritto (@segnalazioni-schermo), `%*` `**` se
@@ -6102,6 +6106,15 @@ le cui righe di testo `expand_mode_line` riceve, come in Emacs; altrimenti
 dice dove è il punto. Una sequenza `%` che non conosce
 resta com'è scritta, e un formato che non è una stringa ricade su quello
 predefinito.
+
+`%d` non sta nel formato predefinito: chi la vuole la mette in
+`mode-line-format`. Poiché `ui/` non nomina `editor/`, la composizione riceve
+in `ComposeSettings` un `ModeLineDirectory` già pronto --- la directory
+dell'editor, la home e lo stile letto da `mode-line-directory-style` --- e
+`ModeLineDirectory::of` decide come `directory_of`: quella propria del
+buffer, la cartella del file, quella dell'editor. Lo stile `abbreviated`,
+predefinito, scrive la home come `~`; `full` il percorso com'è; un numero N
+le ultime N directory dopo `…/`, contate dopo la `~`.
 
 == Il renderer della TUI <tui>
 
@@ -7030,7 +7043,9 @@ dei test ha la sua.
   dal buffer d'origine, e il completamento del codice `f` trova così la
   directory di chi ha chiesto.
 - `cd`, con `change_directory`: solo il buffer corrente, o la directory di
-  ambito dentro una chiamata.
+  ambito dentro una chiamata. `(cd DIR t)`, o `C-u M-x cd`, passa per
+  `change_editor_directory`, che sposta anche la directory dell'editor:
+  la seguono `*scratch*` e i buffer senza file né directory propria.
 - `set-buffer-directory`, usata da dired per la directory elencata, da
   eshell per quella della shell (OSC 7), e da `project` per i buffer che un
   progetto rivendica (@mod-project).
@@ -9505,20 +9520,38 @@ sotto la chiave `project-root` dei suoi dati e, se non ha file, gliela dà
 come directory. Un buffer rivendicato appartiene a quel progetto dovunque
 vada la sua directory, e `project-root` senza argomento risponde con quella
 radice: la shell di `C-x p e`, `*NOME-eshell*`, dopo un `cd /tmp` resta del
-progetto. Su `buffer-created-hook`, `project--claim-new-buffer` rivendica un
-buffer nuovo senza file quando il suo nome risponde a una delle regole di
-`project-buffer-name-rules`, espressioni regolari in cui `%p` è il nome del
-progetto in cui il buffer nasce, trovato dalla directory ereditata.
+progetto; l'uscita di `C-x p c`, `*NOME-compile*`, è rivendicata allo stesso
+modo da `project--compile-at`.
+
+La rivendicazione per nome è di `project-claim-mode`, un interruttore del
+modulo spento all'avvio. Acceso, mette `project--claim-by-name` su
+`buffer-created-hook` e su `after-rename-buffer-hook`, che il nucleo esegue
+dopo `rename-buffer` e dopo un `write-file` che cambia nome al buffer; spento,
+li toglie, e `project-buffer-p` smette di leggere le regole. La funzione
+rivendica un buffer senza file, non ancora rivendicato, quando il suo nome
+risponde a una delle regole di `project-buffer-name-rules`, espressioni
+regolari in cui `%p` è il nome del progetto in cui il buffer si trova,
+trovato dalla directory ereditata.
 
 + *Trovati, non registrati.* Una lista dei buffer di ogni progetto andrebbe
   aggiornata a ogni creazione, chiusura, rinomina, `cd` e `write-file`;
   derivata dalla directory, è giusta per costruzione, e costa una risalita
   ricordata per buffer quando la si chiede.
-+ *Le regole sui nomi agiscono alla nascita.* Rivendicare un buffer alla
-  creazione gli dà la radice come directory prima che qualcuno lo usi;
++ *Le regole sui nomi agiscono alla nascita e alla rinomina.* Rivendicare un
+  buffer allora gli dà la radice come directory prima che qualcuno lo usi;
   una regola letta a ogni domanda lo darebbe al progetto senza spostarlo.
-  `project-buffer-p` le legge comunque, perché un buffer che ha quel nome
-  resti del progetto anche se è nato altrove.
+  Con il modo acceso `project-buffer-p` le legge comunque, perché un buffer
+  che ha quel nome resti del progetto anche se è nato altrove.
++ *Prima il nome, poi il disco.* I buffer nascono di continuo --- un
+  minibuffer a ogni prompt, liste, aiuti --- e cercare la radice per
+  ognuno costerebbe una risalita, fino a `locate-dominating-file-timeout`
+  su un disco lento. `project--could-be-named-p` prova le regole con `%p`
+  fatto `.+`: solo un nome che potrebbe essere di un progetto fa cercare la
+  radice. Prima ancora sono scartati i ruoli `prompt` e `completion` e i
+  nomi di `project-buffer-ignore`.
++ *Un modo del modulo, non dell'editor.* Il nucleo dà soltanto i due hook;
+  che cosa farne lo decide `project`, e chi non vuole che i nomi spostino i
+  buffer non accende nulla.
 + *`C-x p k` chiede una volta.* Un `y-or-n` sull'insieme, poi un solo
   `yes-or-no` per quelli con modifiche non salvate, e
   `kill-buffer-without-saving` per ciò che è stato confermato:

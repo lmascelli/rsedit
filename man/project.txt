@@ -12,6 +12,7 @@ SYNOPSIS
     (project-eshell)
     (project-dired)
     (project-kill-buffers)
+    (project-claim-mode &optional ARG)
     (project-declare-root DIRECTORY)
     (project-forget)
     (project-root &optional DIRECTORY)
@@ -21,6 +22,7 @@ SYNOPSIS
     (project-buffer-p BUFFER &optional ROOT)
     (project-claim-buffer ROOT &optional BUFFER)
     (project-eshell-buffer-name &optional ROOT)
+    (project-compile-buffer-name &optional ROOT)
     project-markers
     project-roots
     project-buffer-name-rules
@@ -105,16 +107,30 @@ THE BUFFERS OF A PROJECT
     goes to *NAME-eshell*, NAME being the last directory of the root,
     and starts a shell there at the root when none runs; after a cd in
     it to /tmp it is still the project's, and C-x p f from it still finds
-    the files of the project.
+    the files of the project. Its build is another: C-x p c runs in
+    *NAME-compile*, so the builds of two projects keep their own output.
+    `project-claim-buffer' claims any buffer by hand.
 
-    The others are those `project-buffer-name-rules' names: regular
-    expressions in which %p stands for the project's name. A buffer made
-    with no file from a buffer of a project, with a name one of them
-    matches, is claimed by that project and has its root as directory,
-    wherever in the tree it was made from. Out of the box the one rule
-    claims every buffer whose name starts with *NAME-, so *rsedit-notes*
-    made from any file of rsedit starts at its root. A buffer made in
-    another way is claimed with `project-claim-buffer'.
+CLAIMING BUFFERS BY NAME
+    M-x project-claim-mode, off when the editor starts, lets the projects
+    claim buffers by their names as well. While it is on, a buffer with
+    no file, made or renamed (M-x rename-buffer) in a buffer of a project,
+    whose name one of `project-buffer-name-rules' matches, is claimed by
+    that project and has its root as directory, wherever in the tree it
+    was made from. The rules are regular expressions in which %p stands
+    for the project's name. Out of the box the one rule claims every
+    buffer whose name starts with *NAME-, so *rsedit-notes* made from any
+    file of rsedit starts at its root. Turned on in init.lisp:
+
+        (project-claim-mode 1)
+
+    It costs nothing to the buffers whose names no rule could match,
+    whatever the project: the name is looked at first, with %p standing
+    for any name, and only a name that could be a project's makes the
+    root be looked for on the disk. The editor's own buffers and the
+    prompts are passed over before that. With the mode off, the rules are
+    not read at all, and a buffer made in a project keeps the directory
+    of the buffer it was made from.
 
     C-x p b asks for one of the other buffers of the project, by any part
     of its name. C-x p k asks once, with y or n, and kills them all;
@@ -135,10 +151,11 @@ WORKING AT THE ROOT
     file under the root, as M-s g does under the working directory; the
     `searching' page has the list and M-g n.
 
-    C-x p c asks for a command and runs it at the root as C-c c would, and
-    C-x p ! asks for a shell command and runs it there as M-! would. The
-    output keeps the root as its directory, so g in a build's output
-    builds there again, and the places a build names are read from the
+    C-x p c asks for a command and runs it at the root as C-c c would, in
+    the project's own output, *NAME-compile*, and C-x p ! asks for a
+    shell command and runs it there as M-! would. The output keeps the
+    root as its directory, so g in a build's output builds there again,
+    in the same buffer, and the places a build names are read from the
     root. The `compile' and `shell' pages have the output.
 
     project-compile-command runs a command it is given rather than one it
@@ -150,15 +167,11 @@ WORKING AT THE ROOT
     what you asked for last, in any project.
 
 EXAMPLES
-    Let a project claim its notes buffers as well, by another name:
+    Claim buffers by name, those named *notes: NAME* as well:
 
+        (project-claim-mode 1)
         (setq project-buffer-name-rules
               '("^\\*%p-" "^\\*notes: %p\\*$"))
-
-    Claim nothing by name: new buffers keep the directory they were made
-    in, and only the shell of C-x p e is claimed:
-
-        (setq project-buffer-name-rules nil)
 
     Make a directory with a WORKSPACE file a root, before the others:
 
@@ -216,6 +229,7 @@ KEYS
     C-x p e                 project-eshell
     C-x p d                 project-dired
     C-x p k                 project-kill-buffers
+    M-x project-claim-mode  claiming buffers by name, on or off
 
 SEE ALSO
     files, dired, searching, compile, shell, session

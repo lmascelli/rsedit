@@ -458,6 +458,10 @@ pub fn create_global_env<B: BufferTrait>()
         MODE_LINE_FORMAT.into(),
         ELispExp::string(DEFAULT_MODE_LINE_FORMAT.to_string()),
     );
+    env.set_variable(
+        MODE_LINE_DIRECTORY_STYLE.into(),
+        ELispExp::symbol("abbreviated".into()),
+    );
 
     // How many columns a Tab is worth, indenting and drawn.
     env.set_variable(
@@ -489,6 +493,8 @@ pub fn create_global_env<B: BufferTrait>()
     // No buffer has been closed yet.
     env.set_variable(CLOSED_BUFFER_NAME.into(), ELispExp::nil());
     env.set_variable(CLOSED_BUFFER_FILE.into(), ELispExp::nil());
+    // No buffer has been renamed yet.
+    env.set_variable(RENAMED_BUFFER_OLD_NAME.into(), ELispExp::nil());
 
     // How far point may leave a window before its line is centred.
     env.set_variable(

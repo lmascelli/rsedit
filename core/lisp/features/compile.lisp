@@ -321,14 +321,22 @@ names none."
   "Show NAME using the shared results policy, preserving focus."
   (results-display name compilation-window-height nil))
 
-(defcommand compile (command) ("sCompile command: ")
+(defcommand compile (command &optional buffer) ("sCompile command: ")
   "Run COMMAND, showing its output as it comes; `next-error' walks the places
-it names, and they replace the findings of `compile'."
-  (let ((name (shell-command-start command 'compilation-mode 'compile)))
+it names, and they replace the findings of `compile'. BUFFER names the
+output, *Shell Output* unless given; a build is shown again in the buffer of
+the same name, as `project-compile' shows each project's in *NAME-compile*.
+Return the name of the output, or nil when the command could not start.
+
+Example:
+  (compile \"make -k\" \"*app-compile*\")"
+  (let ((name (shell-command-start command 'compilation-mode 'compile buffer)))
     (if (null name)
         nil
         (progn
           (setq compilation--buffer name)
+          ;; The name asked for, which g asks for again.
+          (buffer-put 'compilation-buffer-name buffer name)
           ;; A build starts over: what the last one said goes.
           (finding-clear 'compile)
           (compilation--watch)
@@ -337,13 +345,14 @@ it names, and they replace the findings of `compile'."
           ;; what has arrived by then.
           (results-put command name nil name)
           (buffer-put 'results-refresh 'compilation--rebuild name)
-          (compilation--show name)))))
+          (compilation--show name)
+          name))))
 
 (defcommand compilation-recompile () nil
   "Run this output's command again."
   (let ((command (compilation--command-here)))
     (if command
-        (compile command)
+        (compile command (buffer-get 'compilation-buffer-name))
         (message "This buffer does not say what command it ran"))))
 
 (defun compile-buffer-file (program)

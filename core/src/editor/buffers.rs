@@ -168,6 +168,32 @@ impl<B: BufferTrait> EditorState<B> {
         true
     }
 
+    /// Renames the buffer OLD to NEW as [`Self::rename_buffer`] does, and then
+    /// runs `after-rename-buffer-hook` with NEW current and
+    /// `renamed-buffer-old-name` holding OLD, put back afterwards. False, and
+    /// no hook, when the rename is refused.
+    pub(crate) fn rename_buffer_running_hook(
+        &self,
+        old: &str,
+        new: &str,
+        env: &Arc<Env<EditorState<B>>>,
+    ) -> bool {
+        if !self.rename_buffer(old, new) {
+            return false;
+        }
+        let before = env
+            .get_variable(RENAMED_BUFFER_OLD_NAME)
+            .unwrap_or_else(ELispExp::nil);
+        crate::feature::minibuffer::setq(
+            env,
+            RENAMED_BUFFER_OLD_NAME,
+            ELispExp::string(old.to_string()),
+        );
+        self.run_buffer_hook(new, "after-rename-buffer-hook", env);
+        crate::feature::minibuffer::setq(env, RENAMED_BUFFER_OLD_NAME, before);
+        true
+    }
+
     /// Shows the buffer NAME in the focused window, and makes it current;
     /// false, with a line in the log, when there is no such buffer. For
     /// `switch-to-buffer`, and for the minibuffer's cleanup.

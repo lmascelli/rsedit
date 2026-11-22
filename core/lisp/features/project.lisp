@@ -4,8 +4,10 @@
 ;;; of `project-markers' or declared by hand; C-x p finds a file, searches,
 ;;; builds and runs a command there, and C-x p p goes to a project known from
 ;;; an earlier run. It knows its buffers -- its files, what was started in
-;;; it, its shell, and those named by `project-buffer-name-rules' -- and C-x p
-;;; b, e, k and d work on them. User manual: the `project' page.
+;;; it, its shell and its build -- and C-x p b, e, k and d work on them;
+;;; `project-claim-mode', off unless turned on, also gives a project the
+;;; buffers `project-buffer-name-rules' names. User manual: the `project'
+;;; page.
 ;;; Design: `doc/architettura-editor.typ, <mod-project>`.
 
 (require 'commands)
@@ -36,12 +38,16 @@ repository's .git wins over a nearer Cargo.toml.")
 every marker.")
 
 (defvar project-buffer-name-rules '("^\\*%p-")
-  "Regular expressions naming the buffers a project claims, in which %p
-stands for the project's name, the last directory of its root. A buffer made
-with no file from a buffer of a project, whose name one of them matches,
-belongs to that project and has its root as directory, wherever it was made
-from: by default every buffer whose name starts with *NAME-, as the
-project's shell, *NAME-eshell*.")
+  "Regular expressions naming the buffers a project claims while
+`project-claim-mode' is on, in which %p stands for the project's name, the
+last directory of its root. A buffer with no file, made or renamed in a
+buffer of a project, whose name one of them matches, belongs to that project
+and has its root as directory, wherever it was made from: by default every
+buffer whose name starts with *NAME-, as *NAME-notes*.")
+
+(defvar project-claim-mode nil
+  "Whether the projects claim the buffers `project-buffer-name-rules' names,
+as they are made or renamed. Off unless `project-claim-mode' turns it on.")
 
 (defvar project-buffer-ignore
   '("^ " "^\\*Minibuffer\\*$" "^\\*Completions\\*$" "^\\*scratch\\*$"
@@ -236,7 +242,7 @@ Example:
           ((project--ignored-p buffer) nil)
           ((buffer-get 'project-root buffer)
            (equal (buffer-get 'project-root buffer) root))
-          ((project--named-by-rule-p buffer root) t)
+          ((and project-claim-mode (project--named-by-rule-p buffer root)) t)
           (t (equal (project--buffer-root buffer) root)))))
 
 (defun project-buffers (&optional root)
@@ -268,19 +274,68 @@ Example:
                            (lambda () (set-buffer-directory root))))
     root))
 
-(defun project--claim-new-buffer ()
-  "Run when a buffer is made: claim the buffer just made, with no file, for
-the project it was made in, when one of `project-buffer-name-rules' names
-it."
+;; Claiming by name. The question is first asked of the name alone, each %p
+;; standing for any name: only a buffer whose name could be a project's makes
+;; the disk be asked where it is, so the prompts, the lists and the help
+;; buffers, made at every turn, cost a few regular expressions and nothing
+;; else.
+
+(defun project--could-be-named-p (buffer)
+  "Whether a rule of `project-buffer-name-rules' could give BUFFER to some
+project, whatever its name."
+  (catch 'found
+    (dolist (rule project-buffer-name-rules)
+      (if (string-match-p (project--rule-any rule) buffer)
+          (throw 'found t)))
+    nil))
+
+(defun project--rule-any (rule)
+  "RULE with each %p made a pattern any project's name matches."
+  (let ((answer "")
+        (at 0))
+    (while (< at (length rule))
+      (if (and (< (+ at 1) (length rule))
+               (string= (substring rule at (+ at 2)) "%p"))
+          (progn (setq answer (concat answer ".+"))
+                 (setq at (+ at 2)))
+          (progn (setq answer (concat answer (substring rule at (+ at 1))))
+                 (setq at (+ at 1)))))
+    answer))
+
+(defun project--claim-by-name ()
+  "Claim the current buffer, which has no file, for the project it is in,
+when one of `project-buffer-name-rules' names it. Run when a buffer is made
+or renamed, while `project-claim-mode' is on."
   (let ((buffer (current-buffer)))
     (when (and project-buffer-name-rules
                (null (buffer-file-name))
-               (not (project--ignored-p buffer)))
+               (null (buffer-get 'project-root))
+               (not (project--ignored-p buffer))
+               (project--could-be-named-p buffer))
       (let ((root (project-root)))
         (when (and (stringp root) (project--named-by-rule-p buffer root))
           (project-claim-buffer root buffer))))))
 
-(add-hook nil "buffer-created-hook" 'project--claim-new-buffer)
+(defcommand project-claim-mode (&optional arg) ("P")
+  "Turn on, or off, the claiming of buffers by name: while it is on, a buffer
+with no file made or renamed in a project, whose name one of
+`project-buffer-name-rules' matches, belongs to that project and starts at
+its root. With no argument the other way from how it is, with a positive one
+on, with zero or a negative one off. Off when the editor starts.
+
+Example:
+  (project-claim-mode 1)"
+  (let ((on (cond ((null arg) (not project-claim-mode))
+                  ((and (numberp arg) (<= arg 0)) nil)
+                  (t t))))
+    (setq project-claim-mode on)
+    (if on
+        (progn (add-hook nil "buffer-created-hook" 'project--claim-by-name)
+               (add-hook nil "after-rename-buffer-hook" 'project--claim-by-name))
+        (progn (remove-hook nil "buffer-created-hook" 'project--claim-by-name)
+               (remove-hook nil "after-rename-buffer-hook" 'project--claim-by-name)))
+    (message "project-claim-mode %s" (if on "on" "off"))
+    on))
 
 (defun project--other-buffers (root)
   "The buffers of ROOT but the current one, best first."
@@ -320,8 +375,24 @@ and switch to it."
 
 (defun project-eshell-buffer-name (&optional root)
   "Return the name of the shell buffer of the project at ROOT, the current one
-by default: *NAME-eshell*, which `project-buffer-name-rules' claims."
+by default: *NAME-eshell*."
   (format "*%s-eshell*" (project-name root)))
+
+(defun project-compile-buffer-name (&optional root)
+  "Return the name of the build output of the project at ROOT, the current one
+by default: *NAME-compile*."
+  (format "*%s-compile*" (project-name root)))
+
+(defun project--compile-at (root command)
+  "Run COMMAND at ROOT, as `compile' does, into ROOT's own output, which the
+project claims."
+  (with-directory root
+                  (lambda ()
+                    (let ((output (compile command
+                                           (project-compile-buffer-name root))))
+                      (if (stringp output)
+                          (project-claim-buffer root output))
+                      output))))
 
 (defcommand project-eshell () nil
   "Switch to the shell of the current project, *NAME-eshell*, starting one at
@@ -464,11 +535,12 @@ current project's root, as `grep' does."
 
 (defcommand project-compile () nil
   "Ask for a command and run it at the current project's root, as `compile'
-does: its output keeps the root, so g runs it there again."
+does, into the project's own output, *NAME-compile*: it keeps the root, so g
+runs it there again, and the build of another project goes elsewhere."
   (let ((root (project--current)))
     (if root
         (project--ask-and-run root "Compile project" "project-compile"
-                              'compile))))
+                              (lambda (command) (project--compile-at root command))))))
 
 (defcommand project-shell-command () nil
   "Ask for a shell command and run it at the current project's root, as
@@ -487,7 +559,7 @@ Example:
   (project-compile-command \"cargo test\")"
   (let ((root (project--current)))
     (if root
-        (progn (with-directory root (lambda () (compile command)))
+        (progn (project--compile-at root command)
                t)
         nil)))
 

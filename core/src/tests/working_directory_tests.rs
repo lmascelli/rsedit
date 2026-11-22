@@ -324,6 +324,35 @@ mod tests {
     }
 
     #[test]
+    fn cd_with_global_moves_the_editor_s_directory_too() {
+        let sandbox = Sandbox::new("cd-global");
+        sandbox.file("a.txt", "");
+        let elsewhere = Sandbox::new("cd-global-elsewhere");
+        let (ctx, env) = editor();
+        let a = string(run(
+            &format!(r#"(find-file "{}")"#, sandbox.path("a.txt")),
+            &env,
+            &ctx,
+        ));
+        run(r#"(switch-to-buffer "*scratch*")"#, &env, &ctx);
+        run(r#"(buffer-create "*own*")"#, &env, &ctx);
+        let own = ctx.directory_of("*own*");
+
+        let answer = run(&format!(r#"(cd "{}" t)"#, elsewhere.root()), &env, &ctx);
+
+        assert_eq!(string(answer), elsewhere.root());
+        assert_eq!(ctx.working_directory(), elsewhere.root());
+        assert_eq!(ctx.directory_of("*scratch*"), elsewhere.root());
+        // A buffer with a directory or a file of its own stays.
+        assert_eq!(ctx.directory_of("*own*"), own);
+        assert_eq!(ctx.directory_of(&a), sandbox.root());
+        assert!(ctx.get_echo_message().contains("editor-wide"));
+        // A plain cd moves the buffer, not the editor.
+        run(&format!(r#"(cd "{}")"#, sandbox.root()), &env, &ctx);
+        assert_eq!(ctx.working_directory(), elsewhere.root());
+    }
+
+    #[test]
     fn a_buffer_made_with_no_file_starts_where_it_was_made_from() {
         let started = Sandbox::new("made-started");
         let project = Sandbox::new("made-project");

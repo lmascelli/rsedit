@@ -51,7 +51,7 @@ SYNOPSIS
     (copy-file FROM TO &optional RECURSIVE)
 
     (working-directory)
-    (cd DIRECTORY)
+    (cd DIRECTORY &optional GLOBAL)
     (set-buffer-directory DIRECTORY)
     (buffer-directory &optional BUFFER)
     (pwd)
@@ -470,6 +470,13 @@ THE WORKING DIRECTORY
     buffer it holds until the buffer visits another file.
     `set-buffer-directory' gives the current buffer one as cd does, and
     nil takes it back to its file's folder.
+
+    C-u M-x cd, or (cd DIRECTORY t), moves the editor's directory as well:
+    the one *scratch* and every buffer with neither a file nor a directory
+    of its own go by. The buffers that have one stay where they are.
+
+    The status line can show each buffer's directory: %d in
+    `mode-line-format', as the `configuration' page says.
 
     A buffer of a project is no exception: its directory is its file's
     folder, and the C-x p commands are the ones that work at the root.

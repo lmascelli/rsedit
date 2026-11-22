@@ -5,7 +5,7 @@ SYNOPSIS
     (shell-command COMMAND)
     (shell-command-on-region)
     (shell-command-kill)
-    (shell-command-start COMMAND &optional MODE PRODUCER)
+    (shell-command-start COMMAND &optional MODE PRODUCER BUFFER)
     (shell-command-to-string COMMAND)
     (shell-command-running-p)
     (shell-quote-argument ARGUMENT)
@@ -30,7 +30,10 @@ DESCRIPTION
 
 THE OUTPUT
     Each command has a buffer of its own: *Shell Output*, and then
-    *Shell Output*<2> for one started while the first is still there. Its
+    *Shell Output*<2> for one started while the first is still there, or
+    BUFFER and BUFFER<2> when `shell-command-start' is given a name: a
+    build reusing its buffer takes only one of the same name, so that
+    *app-compile* and *lib-compile* each keep their own. Its
     first line is the command, after a $, and its last says how it ended:
 
         --- exited 0 ---        it worked

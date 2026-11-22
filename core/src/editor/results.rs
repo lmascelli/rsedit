@@ -85,7 +85,9 @@ impl<B: BufferTrait> EditorState<B> {
     /// Returns the buffer a run of PRODUCER writes into, emptied, read-only,
     /// in MODE: the newest listing of the same producer and mode when
     /// `results-reuse-buffer` says so, stopping the work that wrote into it,
-    /// and otherwise a new buffer named after STEM, of role view. PROTECTED, the buffer the
+    /// and otherwise a new buffer named after STEM, of role view. Only a
+    /// buffer named STEM, or STEM<N> as [`Self::free_name_for_work`] names
+    /// them, is used again: two projects' builds keep their own. PROTECTED, the buffer the
     /// run reads, is never the one taken. `None` when the buffer could not
     /// be had.
     pub(crate) fn prepare_results_buffer(
@@ -102,7 +104,7 @@ impl<B: BufferTrait> EditorState<B> {
             self.buffer_names()
                 .into_iter()
                 .filter_map(|name| {
-                    if protected == Some(name.as_str()) {
+                    if protected == Some(name.as_str()) || !named_after(&name, stem) {
                         return None;
                     }
 
@@ -346,5 +348,17 @@ impl<B: BufferTrait> EditorState<B> {
             .or_else(|| self.most_recent_buffer(&buffer));
 
         previous.is_some_and(|name| self.switch_to_buffer(&name))
+    }
+}
+
+/// Whether NAME is STEM, or STEM<N> as a name taken already makes it.
+fn named_after(name: &str, stem: &str) -> bool {
+    match name.strip_prefix(stem) {
+        Some("") => true,
+        Some(rest) => rest
+            .strip_prefix('<')
+            .and_then(|rest| rest.strip_suffix('>'))
+            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())),
+        None => false,
     }
 }

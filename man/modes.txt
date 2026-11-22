@@ -430,6 +430,10 @@ HOOKS
         after-set-visited-file-name-hook
                                 C-x C-w has written the buffer to a file
                                 it was not visiting
+        after-rename-buffer-hook
+                                a buffer has a new name: M-x rename-buffer,
+                                or C-x C-w; renamed-buffer-old-name says
+                                the old one
         after-close-hook        a buffer has been closed; closed-buffer-name
                                 and closed-buffer-file say which
         minor-mode-hook         a minor mode has just been turned on, or

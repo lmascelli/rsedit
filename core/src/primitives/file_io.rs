@@ -270,7 +270,7 @@ fn start_save<B: BufferTrait>(
                     });
                     let all = super::files::mark_written(state, &name, save.version, Some(stamp));
                     if all && let Ok(copy) = recovery { state.queue_recovery_cleanup(handle.clone(), copy, save.version, file_io::timeout(env)); }
-                    if new_name != name { state.rename_buffer(&name, &new_name); }
+                    if new_name != name { state.rename_buffer_running_hook(&name, &new_name, env); }
                     if changed_path {
                         if let Some(mode) = state.auto_mode_for(&save.path) { state.change_major_mode(&new_name, &mode, env); }
                         state.record_visit(&save.path, env);

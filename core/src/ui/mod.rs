@@ -29,6 +29,7 @@ pub use echo_area::echo_rows;
 pub use faces::{Color, Face, NAMED_COLORS, Style, Theme};
 pub use fill_column::FillColumnGuide;
 pub use findings::{BufferFindings, FindingMark, FindingMarks, finding_message_at};
+pub use mode_line::{DirectoryStyle, ModeLineDirectory};
 // For the tests, which try a registry of their own.
 #[cfg(test)]
 pub(crate) use faces::Registry as FaceRegistry;

@@ -158,19 +158,20 @@ impl ShellCommand {
     }
 }
 
-pub const SHELL_COMMAND_START_DOC: &str = "(shell-command-start COMMAND &optional MODE PRODUCER): Run \
+pub const SHELL_COMMAND_START_DOC: &str = "(shell-command-start COMMAND &optional MODE PRODUCER BUFFER): Run \
          COMMAND, a string, with the shell in the background, and return at once the name of the \
          buffer its output goes into. It runs in `working-directory', which the buffer keeps as \
          its own. The buffer is read-only and in major mode MODE, \
          `shell-output-mode' unless given; its first line is the command, and its last says how \
-         it ended, as --- exited 0 ---. Each call has a buffer of its own; with PRODUCER, a \
-         symbol such as compile, the newest buffer that PRODUCER filled in MODE is emptied and \
-         used again when `results-reuse-buffer' is set, and the command still writing into it \
-         is stopped. `stop-worker' with the buffer's name stops the command, and so does \
+         it ended, as --- exited 0 ---. Each call has a buffer of its own, named BUFFER, \
+         *Shell Output* by default; with PRODUCER, a symbol such as compile, the newest of that \
+         name PRODUCER filled in MODE is used again when `results-reuse-buffer' is set: the \
+         `shell' page has the rules. `stop-worker' with the buffer's name stops the command, and so does \
          closing the buffer. Return nil, saying why, when the shell cannot be started.\n\n\
          Example:\n\
          (shell-command-start \"git status --short\")\n\
-         (shell-command-start \"cargo build\" 'compilation-mode)";
+         (shell-command-start \"cargo build\" 'compilation-mode)\n\
+         (shell-command-start \"make\" 'compilation-mode 'compile \"*app-compile*\")";
 
 primitive!(shell_command_start, args, env, ctx, {
     let Some(ELispExp::String(command)) = args.first() else {
@@ -182,6 +183,17 @@ primitive!(shell_command_start, args, env, ctx, {
     let mode = args::optional_name(args.get(1), "Symbol naming a mode")?
         .unwrap_or_else(|| "shell-output-mode".to_string());
     let producer = args::optional_name(args.get(2), "Symbol naming a producer")?;
+    let stem = match args.get(3) {
+        None => OUTPUT_BUFFER.to_string(),
+        Some(exp) if exp.is_nil() => OUTPUT_BUFFER.to_string(),
+        Some(ELispExp::String(name)) if !name.is_empty() => name.to_string(),
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String naming a buffer, or nil".into(),
+                got: other.clone(),
+            });
+        }
+    };
     // Asked before the output buffer is made, which may become current: where
     // the command runs is where it was asked for.
     let directory = ctx.default_directory();
@@ -201,9 +213,9 @@ primitive!(shell_command_start, args, env, ctx, {
     ctx.remember_child_process(&process);
 
     let name = if let Some(producer) = producer {
-        ctx.prepare_results_buffer(&producer, OUTPUT_BUFFER, &mode, None, &env)
+        ctx.prepare_results_buffer(&producer, &stem, &mode, None, &env)
     } else {
-        let name = ctx.free_name_for_work(OUTPUT_BUFFER);
+        let name = ctx.free_name_for_work(&stem);
 
         // Output to read, as a listing is, whether or not it is one.
         ctx.new_buffer_as(

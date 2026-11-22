@@ -55,6 +55,7 @@ pub const SETTINGS: &[Setting] = &[
         doc: "What the status line at the bottom of each window shows: this text, with each \
               escape replaced.\n\n\
               \x20 %b  the buffer's name     %f  the file's path, or the buffer's name\n\
+              \x20 %d  the buffer's directory, as `mode-line-directory-style' writes it\n\
               \x20 %m  the major mode        %s  the mode's own state, as vim-mode's NORMAL\n\
               \x20 %n  the minor modes on, each after a space, as \" Fill\"\n\
               \x20 %l  the line, from 1      %c  the column, from 0\n\
@@ -67,6 +68,16 @@ pub const SETTINGS: &[Setting] = &[
               default.\n\n\
               Example:\n\
               \x20 (setq mode-line-format \" %b  L%l C%c \")",
+    },
+    Setting {
+        name: MODE_LINE_DIRECTORY_STYLE,
+        doc: "How `%d' in `mode-line-format' writes the buffer's directory: 'abbreviated, the \
+              default, for the whole path with the home directory as ~; 'full for the whole \
+              path as it is; a number N for its last N directories only, after .../ when some \
+              are left out. The status line shows no directory unless the format has %d.\n\n\
+              Example:\n\
+              \x20 (setq mode-line-directory-style 2)\n\
+              \x20 (setq mode-line-format \" %*%i %b  %d   %m%n %s%!  L%l C%c   %p \")",
     },
     Setting {
         name: DISPLAY_LINE_NUMBERS_TYPE,
@@ -101,6 +112,14 @@ pub const SETTINGS: &[Setting] = &[
               otherwise. Set by the editor: setting it changes nothing.\n\n\
               Example:\n\
               \x20 (message \"closed %s\" closed-buffer-name)",
+    },
+    Setting {
+        name: RENAMED_BUFFER_OLD_NAME,
+        doc: "The name the buffer had before it was renamed, while `after-rename-buffer-hook' \
+              runs with the buffer current under its new name; nil otherwise. Set by the \
+              editor: setting it changes nothing.\n\n\
+              Example:\n\
+              \x20 (message \"%s is now %s\" renamed-buffer-old-name (current-buffer))",
     },
     Setting {
         name: CLOSED_BUFFER_FILE,
@@ -528,6 +547,9 @@ pub const COMMAND_ARG_COMPLETION_FUNCTION: &str = "*command-arg-completion-funct
 /// The name of the Lisp variable holding the mode-line format.
 pub const MODE_LINE_FORMAT: &str = "mode-line-format";
 
+/// The name of the Lisp variable saying how `%d` writes a directory.
+pub const MODE_LINE_DIRECTORY_STYLE: &str = "mode-line-directory-style";
+
 /// What a window's status line says when nothing sets [`MODE_LINE_FORMAT`].
 pub const DEFAULT_MODE_LINE_FORMAT: &str = " %*%i %b   %m%n %s%!  L%l C%c   %p ";
 
@@ -586,6 +608,10 @@ pub const THIS_COMMAND: &str = "this-command";
 /// The name of the Lisp variable holding the name of the buffer whose
 /// `after-close-hook` is running.
 pub const CLOSED_BUFFER_NAME: &str = "closed-buffer-name";
+
+/// The name of the Lisp variable holding the name a buffer had before it was
+/// renamed, while its `after-rename-buffer-hook` runs.
+pub const RENAMED_BUFFER_OLD_NAME: &str = "renamed-buffer-old-name";
 
 /// The name of the Lisp variable holding the file of the buffer whose
 /// `after-close-hook` is running, or nil.
@@ -659,6 +685,19 @@ pub(crate) fn tab_widths<B: BufferTrait>(
         })
         .collect();
     crate::ui::layout::TabWidths { default, by_mode }
+}
+
+/// Returns how `%d` writes a directory, as `mode-line-directory-style` says:
+/// `full`, a number of directories, or else the path with `~` for home.
+pub(super) fn mode_line_directory_style<B: BufferTrait>(
+    env: &Arc<Env<EditorState<B>>>,
+) -> crate::ui::DirectoryStyle {
+    use crate::ui::DirectoryStyle;
+    match env.get_variable(MODE_LINE_DIRECTORY_STYLE) {
+        Some(ELispExp::Symbol(name)) if &*name == "full" => DirectoryStyle::Full,
+        Some(ELispExp::Number(n)) if n.is_finite() && n >= 1.0 => DirectoryStyle::Last(n as usize),
+        _ => DirectoryStyle::Abbreviated,
+    }
 }
 
 /// Returns the format of the status line, as Lisp defines it now.
