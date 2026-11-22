@@ -262,7 +262,12 @@ fn start_save<B: BufferTrait>(
                         }
                     };
                     let changed_path = save.source.as_deref() != Some(save.path.as_str());
-                    state.with_buffer_mut(&name, |buf| { buf.file_path = Some(save.path.clone()); buf.forget_data(ERROR); });
+                    state.with_buffer_mut(&name, |buf| {
+                        buf.file_path = Some(save.path.clone());
+                        buf.forget_data(ERROR);
+                        // Another file: its buffer follows that file's folder.
+                        if changed_path { buf.directory = None; }
+                    });
                     let all = super::files::mark_written(state, &name, save.version, Some(stamp));
                     if all && let Ok(copy) = recovery { state.queue_recovery_cleanup(handle.clone(), copy, save.version, file_io::timeout(env)); }
                     if new_name != name { state.rename_buffer(&name, &new_name); }

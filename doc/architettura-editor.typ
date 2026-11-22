@@ -7009,26 +7009,59 @@ file nascosti solo dopo un punto: lo usa il completamento del codice `f`, in
 
 === La directory di lavoro <directory-di-lavoro>
 
-L'editor ha una directory di lavoro sua, in `EditorState` (`editor/directory.rs`),
-che parte da quella del processo e che `cd` sposta. La directory del processo
-non cambia mai: un comando già partito resta dove è partito, i thread in
-background non la vedono muoversi, e ogni `EditorState` dei test ha la sua.
+Ogni buffer ha una directory, come il `default-directory` di Emacs, e non
+c'è una directory di lavoro globale che si sposta: la directory in cui si
+legge un nome relativo è sempre quella del buffer corrente. `directory_of`
+(`editor/directory.rs`) è l'unico punto che la decide, in quest'ordine: la
+directory propria del buffer, `Buffer::directory`, quando ne ha una; la
+cartella del file che visita; la directory dell'editor. Quest'ultima, in
+`EditorState`, è quella del processo all'avvio e non si sposta più: la segue
+solo un buffer senza file né directory propria, come `*scratch*` all'avvio.
+La directory del processo non cambia mai: un comando già partito resta dove è
+partito, i thread in background non la vedono muoversi, e ogni `EditorState`
+dei test ha la sua.
 
-Un buffer può avere una directory propria, `Buffer::directory`; `None` segue
-quella dell'editor. `directory_of` sceglie tra le due, ed è l'unico punto che lo
-fa: un buffer che segue la directory del suo file, come in Emacs, è una modifica
-lì e in ciò che imposta `Buffer::directory`, non nei chiamanti.
+`Buffer::directory` la impostano:
+
+- `new_buffer_as`, per ogni buffer creato senza file: la `default_directory`
+  del momento, cioè quella del buffer da cui lo si crea, o la directory di
+  ambito dentro `with-directory`. Un prompt, una lista, `*notes*` creati da
+  un file leggono i nomi accanto al file. Il minibuffer si crea a ogni prompt
+  dal buffer d'origine, e il completamento del codice `f` trova così la
+  directory di chi ha chiesto.
+- `cd`, con `change_directory`: solo il buffer corrente, o la directory di
+  ambito dentro una chiamata.
+- `set-buffer-directory`, usata da dired per la directory elencata, da
+  eshell per quella della shell (OSC 7), e da `project` per i buffer che un
+  progetto rivendica (@mod-project).
+- `shell-command-start`, per il buffer dell'output (@comandi-shell): il
+  comando parte nella directory del buffer corrente, e il suo output la
+  tiene.
+
+Un buffer di file non ha di solito una directory propria: segue il file, e
+quando ne visita un altro --- `write-file`, sincrono o asincrono --- quella
+propria, data da un `cd`, si toglie, sicché torna a seguire il file nuovo.
+
++ *Per buffer, non globale.* Una directory globale che `cd` sposta, o che un
+  hook sposta a ogni cambio di buffer, cambia sotto i piedi di chi lavora:
+  bisogna chiedersi spesso dove si è. Derivata dal buffer, la risposta si
+  vede nel nome del file o nel tipo del buffer. Scartato: un modo minore di
+  progetto che sposta la directory dell'editor a ogni cambio di buffer, che
+  ha bisogno di un hook nuovo nel nucleo e resta uno stato da tenere
+  allineato.
++ *La cartella del file, anche nei progetti.* `M-!`, `compile`, `grep` e un
+  `C-x C-f` relativo partono accanto al file anche dentro un progetto; i
+  comandi `C-x p` sono quelli che lavorano alla radice. Così la directory è
+  quella che si legge nel percorso del file.
+
 `default_directory` è la directory del buffer corrente, quella in cui
 `expand_path` legge un nome relativo e il completamento del codice `f` cerca i
-candidati; `working-directory` la restituisce al Lisp, e `pwd` la scrive
+candidati; `working-directory` la restituisce al Lisp, `buffer-directory` dà
+quella di un buffer qualsiasi senza la directory di ambito, e `pwd` la scrive
 nell'area messaggi. `cd` legge il suo argomento come ogni nome scritto, quindi
 `cd ..` sale di un livello, e rifiuta ciò che non è una directory senza cambiare
-nulla.
-
-Oggi `Buffer::directory` la imposta solo `shell-command-start`, per il buffer
-dell'output (@comandi-shell): ogni comando di shell parte nella directory del
-buffer corrente, e il suo output la tiene. La visita di una lista di risultati
-legge i suoi percorsi nella directory della lista (@risultati).
+nulla. La visita di una lista di risultati legge i suoi percorsi nella
+directory della lista (@risultati).
 
 Una chiamata può avere una directory sua, per quanto dura: `with-directory`
 mette in `SCOPED_DIRECTORY`, un `thread_local` di `editor/directory.rs`, la
@@ -7038,7 +7071,7 @@ si annidano. `default_directory` guarda prima lì, poi il buffer corrente, poi
 l'editor: la directory di ambito vince anche su quella propria di un buffer, e
 resta se la funzione cambia buffer. `directory_of(nome)` non la guarda, perché
 risponde per un buffer preciso, come la visita di una lista. `cd` dentro una
-chiamata sposta la directory di ambito, e la directory dell'editor resta.
+chiamata sposta la directory di ambito, e quella del buffer resta.
 
 Ciò che legge `default_directory` all'avvio --- `shell-command-start`, e quindi
 `compile`, la ricerca nei file, che si porta la radice già assoluta ---
@@ -9409,7 +9442,9 @@ va quando il prompt si chiude. Oggi il comando è uno, `string-rectangle`.
 Un progetto è una directory radice e ciò che sta sotto. Il modulo trova la
 radice del file del buffer corrente, ricorda i progetti in cui si è lavorato e
 lega a `C-x p` i comandi che lavorano lì: `project-find-file`, `project-grep`,
-`project-compile`, `project-shell-command` e `project-switch`. È tutto in
+`project-compile`, `project-shell-command`, `project-switch`, e quelli sui
+buffer del progetto: `project-switch-to-buffer`, `project-eshell`,
+`project-dired`, `project-kill-buffers`. È tutto in
 Lisp, sopra tre mattoni del nucleo che non sanno nulla di progetti: la
 risalita ai marcatori (@risalita), la directory per una chiamata
 (@directory-di-lavoro) e i valori tenuti nella sessione (@memoria); il quarto,
@@ -9459,6 +9494,35 @@ per primo.
 + *Nessun progetto corrente.* La radice si trova di nuovo a ogni comando,
   dal buffer in cui si è, e le risposte ricordate della risalita la rendono
   economica: non c'è uno stato da tenere allineato con il buffer.
+
+I buffer di un progetto non sono una lista tenuta dal modulo: `project-buffers`
+li trova quando serve, con `project-buffer-p` su ogni buffer. Un buffer
+appartiene al progetto della sua directory (@directory-di-lavoro) --- per un
+file, quello del file --- salvo i buffer dell'editor che
+`project-buffer-ignore` nomina e quelli di ruolo `prompt` o `completion`. Un
+buffer può essere rivendicato: `project-claim-buffer` gli mette la radice
+sotto la chiave `project-root` dei suoi dati e, se non ha file, gliela dà
+come directory. Un buffer rivendicato appartiene a quel progetto dovunque
+vada la sua directory, e `project-root` senza argomento risponde con quella
+radice: la shell di `C-x p e`, `*NOME-eshell*`, dopo un `cd /tmp` resta del
+progetto. Su `buffer-created-hook`, `project--claim-new-buffer` rivendica un
+buffer nuovo senza file quando il suo nome risponde a una delle regole di
+`project-buffer-name-rules`, espressioni regolari in cui `%p` è il nome del
+progetto in cui il buffer nasce, trovato dalla directory ereditata.
+
++ *Trovati, non registrati.* Una lista dei buffer di ogni progetto andrebbe
+  aggiornata a ogni creazione, chiusura, rinomina, `cd` e `write-file`;
+  derivata dalla directory, è giusta per costruzione, e costa una risalita
+  ricordata per buffer quando la si chiede.
++ *Le regole sui nomi agiscono alla nascita.* Rivendicare un buffer alla
+  creazione gli dà la radice come directory prima che qualcuno lo usi;
+  una regola letta a ogni domanda lo darebbe al progetto senza spostarlo.
+  `project-buffer-p` le legge comunque, perché un buffer che ha quel nome
+  resti del progetto anche se è nato altrove.
++ *`C-x p k` chiede una volta.* Un `y-or-n` sull'insieme, poi un solo
+  `yes-or-no` per quelli con modifiche non salvate, e
+  `kill-buffer-without-saving` per ciò che è stato confermato:
+  `close-buffer` chiederebbe di nuovo per ognuno.
 
 === `recent-files` <mod-recent-files>
 

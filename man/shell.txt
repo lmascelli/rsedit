@@ -22,8 +22,9 @@ DESCRIPTION
 
     The command goes to the shell as it is written, /bin/sh -c on Unix and
     cmd /C on Windows, so pipes, redirection and quoting mean what they
-    mean at a prompt. It runs in the working directory, which M-x cd
-    moves (see the files page); one already running stays where it
+    mean at a prompt. It runs in the working directory, the current
+    buffer's: next to the file you are editing, or where M-x cd moved
+    that buffer (see the files page); one already running stays where it
     started. Its output keeps that directory as its own: a relative name
     the command printed, or typed while in its buffer, is read there.
 

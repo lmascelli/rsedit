@@ -93,7 +93,7 @@ mod tests {
     }
 
     #[test]
-    fn cd_moves_the_editor_and_leaves_the_process_alone() {
+    fn cd_moves_the_current_buffer_and_leaves_the_process_alone() {
         let sandbox = Sandbox::new("moves");
         let (ctx, env) = editor();
         let before = process_directory();
@@ -119,9 +119,9 @@ mod tests {
         let (ctx, env) = editor_in(&sandbox);
 
         run(r#"(cd "inner")"#, &env, &ctx);
-        assert_eq!(ctx.working_directory(), sandbox.path("inner"));
+        assert_eq!(ctx.default_directory(), sandbox.path("inner"));
         run(r#"(cd "..")"#, &env, &ctx);
-        assert_eq!(ctx.working_directory(), sandbox.root());
+        assert_eq!(ctx.default_directory(), sandbox.root());
     }
 
     #[test]
@@ -129,14 +129,14 @@ mod tests {
         let sandbox = Sandbox::new("refused");
         sandbox.file("plain", "");
         let (ctx, env) = editor();
-        let before = ctx.working_directory();
+        let before = ctx.default_directory();
 
         for target in [sandbox.path("plain"), sandbox.path("missing")] {
             assert_eq!(
                 run(&format!(r#"(cd "{target}")"#), &env, &ctx),
                 LispExp::nil()
             );
-            assert_eq!(ctx.working_directory(), before);
+            assert_eq!(ctx.default_directory(), before);
             assert_eq!(
                 ctx.get_echo_message(),
                 format!("{target} is not a directory")
@@ -268,11 +268,134 @@ mod tests {
             string(run(r#"(expand-file-name "x")"#, &env, &ctx)),
             own.path("x")
         );
-        // `cd` moves the editor's, which the buffer does not follow.
+        // `cd` in another buffer moves that one's alone.
         let elsewhere = Sandbox::new("elsewhere");
+        run(r#"(switch-to-buffer "*scratch*")"#, &env, &ctx);
         run(&format!(r#"(cd "{}")"#, elsewhere.root()), &env, &ctx);
-        assert_eq!(ctx.working_directory(), elsewhere.root());
+        assert_eq!(ctx.directory_of("*scratch*"), elsewhere.root());
         assert_eq!(ctx.directory_of("*output*"), own.root());
+    }
+
+    // ---------------- every buffer has its own, as in Emacs ----------------
+
+    #[test]
+    fn a_file_s_buffer_reads_names_in_the_file_s_folder() {
+        let started = Sandbox::new("folder-started");
+        let project = Sandbox::new("folder-project");
+        std::fs::create_dir(project.path("src")).expect("making a directory");
+        std::fs::write(project.path("src/main.rs"), "fn main() {}").expect("writing");
+        let (ctx, env) = editor_in(&started);
+
+        let name = string(run(
+            &format!(r#"(find-file "{}")"#, project.path("src/main.rs")),
+            &env,
+            &ctx,
+        ));
+        assert_eq!(ctx.get_current_buffer_name(), name);
+        assert_eq!(
+            string(run("(working-directory)", &env, &ctx)),
+            project.path("src")
+        );
+        assert_eq!(
+            string(run(r#"(expand-file-name "lib.rs")"#, &env, &ctx)),
+            project.path("src/lib.rs")
+        );
+        // The buffer it was opened from stays where it was.
+        assert_eq!(ctx.directory_of("*scratch*"), started.root());
+    }
+
+    #[test]
+    fn cd_moves_the_current_buffer_alone() {
+        let sandbox = Sandbox::new("cd-alone");
+        sandbox.file("a.txt", "").file("b.txt", "");
+        let elsewhere = Sandbox::new("cd-alone-elsewhere");
+        let (ctx, env) = editor_in(&sandbox);
+        let a = string(run(r#"(find-file "a.txt")"#, &env, &ctx));
+        let b = string(run(r#"(find-file "b.txt")"#, &env, &ctx));
+
+        run(&format!(r#"(cd "{}")"#, elsewhere.root()), &env, &ctx);
+
+        assert_eq!(ctx.directory_of(&b), elsewhere.root());
+        assert_eq!(ctx.directory_of(&a), sandbox.root());
+        assert_eq!(ctx.directory_of("*scratch*"), sandbox.root());
+        // nil gives it back to its file's folder.
+        run("(set-buffer-directory nil)", &env, &ctx);
+        assert_eq!(ctx.directory_of(&b), sandbox.root());
+    }
+
+    #[test]
+    fn a_buffer_made_with_no_file_starts_where_it_was_made_from() {
+        let started = Sandbox::new("made-started");
+        let project = Sandbox::new("made-project");
+        project.file("notes.txt", "");
+        let (ctx, env) = editor_in(&started);
+        run(
+            &format!(r#"(find-file "{}")"#, project.path("notes.txt")),
+            &env,
+            &ctx,
+        );
+
+        run(r#"(buffer-create "*made-here*")"#, &env, &ctx);
+
+        assert_eq!(ctx.directory_of("*made-here*"), project.root());
+        // It keeps it: a cd in the file's buffer does not move it.
+        run(&format!(r#"(cd "{}")"#, started.root()), &env, &ctx);
+        assert_eq!(ctx.directory_of("*made-here*"), project.root());
+    }
+
+    #[test]
+    fn a_buffer_written_to_another_folder_follows_it() {
+        let first = Sandbox::new("written-first");
+        let second = Sandbox::new("written-second");
+        first.file("a.txt", "text");
+        let (ctx, env) = editor_in(&first);
+        run(r#"(find-file "a.txt")"#, &env, &ctx);
+        // A cd of its own, which visiting another file takes back.
+        run(
+            &format!(r#"(cd "{}")"#, std::env::temp_dir().display()),
+            &env,
+            &ctx,
+        );
+
+        run(
+            &format!(r#"(write-file "{}")"#, second.path("a.txt")),
+            &env,
+            &ctx,
+        );
+
+        assert_eq!(ctx.default_directory(), second.root());
+    }
+
+    #[test]
+    fn buffer_directory_answers_for_any_buffer_and_ignores_the_call_s() {
+        let sandbox = Sandbox::new("buffer-directory");
+        sandbox.file("a.txt", "");
+        let inside = Sandbox::new("buffer-directory-inside");
+        let (ctx, env) = editor_in(&inside);
+        let name = string(run(
+            &format!(r#"(find-file "{}")"#, sandbox.path("a.txt")),
+            &env,
+            &ctx,
+        ));
+        run(r#"(switch-to-buffer "*scratch*")"#, &env, &ctx);
+
+        assert_eq!(
+            string(run(&format!("(buffer-directory {name:?})"), &env, &ctx)),
+            sandbox.root()
+        );
+        assert_eq!(string(run("(buffer-directory)", &env, &ctx)), inside.root());
+        assert_eq!(
+            string(run(
+                &within(&sandbox.root(), "(buffer-directory)"),
+                &env,
+                &ctx
+            )),
+            inside.root()
+        );
+        assert_eq!(
+            run(r#"(buffer-directory "*no-such*")"#, &env, &ctx),
+            LispExp::nil()
+        );
     }
 
     // ---------------- a call with a directory of its own ----------------
@@ -304,7 +427,7 @@ mod tests {
             )),
             inside.root()
         );
-        assert_eq!(ctx.working_directory(), editor_wide.root());
+        assert_eq!(ctx.directory_of("*scratch*"), editor_wide.root());
         assert_eq!(ctx.directory_of("*scratch*"), editor_wide.root());
         assert_eq!(
             string(run("(working-directory)", &env, &ctx)),
@@ -421,7 +544,7 @@ mod tests {
             )),
             outer.path("inner")
         );
-        assert_eq!(ctx.working_directory(), editor_wide.root());
+        assert_eq!(ctx.directory_of("*scratch*"), editor_wide.root());
     }
 
     #[test]
@@ -450,7 +573,7 @@ mod tests {
 
         assert_eq!(string(run("stepped", &env, &ctx)), inside.root());
         assert_eq!(string(run("told", &env, &ctx)), inside.root());
-        assert_eq!(ctx.working_directory(), editor_wide.root());
+        assert_eq!(ctx.directory_of("*scratch*"), editor_wide.root());
     }
 
     #[test]

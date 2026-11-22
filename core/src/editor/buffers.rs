@@ -74,6 +74,10 @@ impl<B: BufferTrait> EditorState<B> {
             }
         } else {
             let mut new_buf = Buffer::new(name).with_role(role);
+            // As in Emacs, a buffer with no file starts in the directory of
+            // the one it was made from: a listing, a prompt or an output made
+            // from a file's buffer reads names next to that file.
+            new_buf.directory = Some(self.default_directory());
             if let Some(mode_name) = start_mode {
                 new_buf.current_mode = mode_name;
             }

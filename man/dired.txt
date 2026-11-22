@@ -35,7 +35,8 @@ DESCRIPTION
     line, where keys open, delete, rename, copy and run commands on files:
     the ones you have marked, or the one the cursor is on. C-x C-f on a
     directory does the same. C-x C-r finds a file by name anywhere
-    under the directory the editor was started in.
+    under the working directory: from a file's buffer, its folder; C-x p
+    f finds one anywhere in the project.
 
 THE LISTING
         /home/me/project/:

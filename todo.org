@@ -5,20 +5,16 @@
 
 --------------------------------------------------
 * Fixes todo
-- [ ] echo area should be able to expand to write multilines output
 - [ ] pasting some text should place the mark where the paste happens
-- [ ] i don't feel that the cwd system is coherent. i have to check
-      often in which directory the working directory is. Maybe switching
-      completely to the emacs approch for single buffers and keeping
-      the project directory when working in a project is a better
-      behaviour. Project shoul somehow keep track of its buffers (also)
-      an eshell one and custom ones (with naming match rules) and
-      switch the working directory when a switch to buffer or create
-      buffer hook is called. Ask for alternative.
 - [ ] Better integration for builtin modules. The modules are ok to be
       completely separated but one of them (maybe the project system)
       should be able to orchestrate them when used to make the work
-      feel smooth.
+      feel smooth. For example, opening eshell while in a project
+      should open it in the project root directory, the same for grep
+      in a project that should start from the root. This goal is ok
+      to be achieved using designated keymap like those starting with
+      C-x p but this means that the project module should require the
+      modules for which it defines the keymaps
 
 --------------------------------------------------
 * Macro todo

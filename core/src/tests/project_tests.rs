@@ -7,6 +7,7 @@
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
     use crate::editor::{EditorState, create_global_env};
+    use crate::input::{KeyCode, KeyEvent, KeyModifiers};
     use risp::{Env, LispExp, Parser, eval};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -31,6 +32,8 @@ mod tests {
             include_str!("../../lisp/features/occur.lisp"),
             include_str!("../../lisp/features/shell.lisp"),
             include_str!("../../lisp/features/compile.lisp"),
+            include_str!("../../lisp/features/completion-at-point.lisp"),
+            include_str!("../../lisp/features/eshell.lisp"),
             include_str!("../../lisp/features/project.lisp"),
         ] {
             run(source, &env, &ctx);
@@ -441,7 +444,7 @@ mod tests {
             .expect("the list");
         assert!(listing.contains("top.txt:1: a needle at the top"), "{listing}");
         assert!(listing.contains("deep.txt:1: a needle below"), "{listing}");
-        assert_eq!(bare(&ctx.working_directory()), bare(&sandbox.path("sub/here")));
+        assert_eq!(bare(&ctx.directory_of("*scratch*")), bare(&sandbox.path("sub/here")));
     }
 
     #[cfg(unix)]
@@ -456,7 +459,7 @@ mod tests {
         let output = string(run("compilation--buffer", &env, &ctx));
         settle(&ctx);
         assert_eq!(bare(&ctx.directory_of(&output)), bare(&sandbox.root("")));
-        assert_eq!(bare(&ctx.working_directory()), bare(&sandbox.path("src")));
+        assert_eq!(bare(&ctx.directory_of("*scratch*")), bare(&sandbox.path("src")));
     }
 
     #[cfg(unix)]
@@ -505,5 +508,238 @@ mod tests {
             sandbox.root("tool")
         );
         assert_eq!(offered(&sandbox.root("tool"), &env, &ctx), vec!["README"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // The buffers of a project
+    // -----------------------------------------------------------------------
+
+    /// Opens RELATIVE under SANDBOX and returns its buffer's name.
+    fn visit(sandbox: &Sandbox, relative: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> String {
+        string(run(
+            &format!("(find-file {:?})", sandbox.path(relative)),
+            env,
+            ctx,
+        ))
+    }
+
+    fn press(ch: char, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
+        ctx.handle_key_event(
+            KeyEvent {
+                code: KeyCode::Char(ch),
+                modifiers: KeyModifiers::default(),
+            },
+            env,
+        );
+    }
+
+    #[test]
+    fn a_project_s_buffers_are_those_whose_file_or_directory_is_in_it() {
+        let sandbox = Sandbox::new("buffers");
+        sandbox
+            .dir("app/.git")
+            .file("app/src/main.rs", "")
+            .file("app/README", "")
+            .file("other/notes.txt", "");
+        let (ctx, env) = editor();
+        let outside = visit(&sandbox, "other/notes.txt", &env, &ctx);
+        let readme = visit(&sandbox, "app/README", &env, &ctx);
+        let main = visit(&sandbox, "app/src/main.rs", &env, &ctx);
+        // Made from main.rs, with no file: it starts in src/, in the project.
+        run(r#"(buffer-create "*made-in-src*")"#, &env, &ctx);
+        // A listing of the root.
+        run(&format!("(dired {:?})", sandbox.path("app")), &env, &ctx);
+
+        let mut found = strings(&run(
+            &format!("(project-buffers {:?})", sandbox.root("app")),
+            &env,
+            &ctx,
+        ));
+        found.sort();
+        let mut expected = vec![
+            readme,
+            main,
+            "*made-in-src*".to_string(),
+            "*dired*".to_string(),
+        ];
+        expected.sort();
+        assert_eq!(found, expected);
+        assert_eq!(
+            run(
+                &format!("(project-buffer-p {outside:?} {:?})", sandbox.root("app")),
+                &env,
+                &ctx
+            ),
+            LispExp::nil()
+        );
+        // The editor's own buffers belong to no project.
+        assert_eq!(
+            run(
+                &format!("(project-buffer-p \"*scratch*\" {:?})", sandbox.root("app")),
+                &env,
+                &ctx
+            ),
+            LispExp::nil()
+        );
+    }
+
+    #[test]
+    fn a_buffer_named_by_a_rule_is_claimed_at_the_root_and_stays_claimed() {
+        let sandbox = Sandbox::new("claimed");
+        sandbox.dir("app/.git").file("app/src/main.rs", "");
+        let elsewhere = Sandbox::new("claimed-elsewhere");
+        let (ctx, env) = editor();
+        visit(&sandbox, "app/src/main.rs", &env, &ctx);
+        let name = format!("*{}-notes*", "app");
+
+        run(&format!("(buffer-create {name:?})"), &env, &ctx);
+
+        assert_eq!(bare(&ctx.directory_of(&name)), bare(&sandbox.root("app")));
+        // A cd elsewhere does not take it out of the project.
+        run(
+            &format!(
+                "(with-current-buffer {name:?} (lambda () (cd {:?})))",
+                elsewhere.path("")
+            ),
+            &env,
+            &ctx,
+        );
+        assert_eq!(bare(&ctx.directory_of(&name)), bare(&elsewhere.path("")));
+        assert_eq!(
+            run(
+                &format!("(project-buffer-p {name:?} {:?})", sandbox.root("app")),
+                &env,
+                &ctx
+            ),
+            LispExp::t()
+        );
+        assert_eq!(
+            string(run(
+                &format!("(with-current-buffer {name:?} (lambda () (project-root)))"),
+                &env,
+                &ctx
+            )),
+            sandbox.root("app")
+        );
+    }
+
+    #[test]
+    fn with_no_rules_a_new_buffer_keeps_the_directory_it_was_made_in() {
+        let sandbox = Sandbox::new("no-rules");
+        sandbox.dir("app/.git").file("app/src/main.rs", "");
+        let (ctx, env) = editor();
+        run("(setq project-buffer-name-rules nil)", &env, &ctx);
+        visit(&sandbox, "app/src/main.rs", &env, &ctx);
+
+        run(r#"(buffer-create "*app-notes*")"#, &env, &ctx);
+
+        assert_eq!(ctx.directory_of("*app-notes*"), sandbox.path("app/src"));
+        assert_eq!(
+            run(r#"(buffer-get 'project-root "*app-notes*")"#, &env, &ctx),
+            LispExp::nil()
+        );
+    }
+
+    #[test]
+    fn project_switch_to_buffer_offers_the_project_s_other_buffers() {
+        let sandbox = Sandbox::new("switch-buffer");
+        sandbox
+            .dir("app/.git")
+            .file("app/a.txt", "")
+            .file("app/b.txt", "")
+            .file("other/c.txt", "");
+        let (ctx, env) = editor();
+        visit(&sandbox, "other/c.txt", &env, &ctx);
+        let a = visit(&sandbox, "app/a.txt", &env, &ctx);
+        let b = visit(&sandbox, "app/b.txt", &env, &ctx);
+
+        run("(project-switch-to-buffer)", &env, &ctx);
+        assert_eq!(
+            strings(&run(
+                "(project-switch-to-buffer--candidates \"\")",
+                &env,
+                &ctx
+            )),
+            vec![a.clone()]
+        );
+        answer(&a, &env, &ctx);
+        assert_eq!(ctx.get_current_buffer_name(), a);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn project_kill_buffers_kills_the_project_s_and_leaves_the_others() {
+        let sandbox = Sandbox::new("kill");
+        sandbox
+            .dir("app/.git")
+            .file("app/a.txt", "")
+            .file("app/b.txt", "")
+            .file("other/c.txt", "");
+        let (ctx, env) = editor();
+        let c = visit(&sandbox, "other/c.txt", &env, &ctx);
+        let a = visit(&sandbox, "app/a.txt", &env, &ctx);
+        let b = visit(&sandbox, "app/b.txt", &env, &ctx);
+
+        run("(project-kill-buffers)", &env, &ctx);
+        press('y', &env, &ctx);
+
+        let all = strings(&run("(all-buffer-names)", &env, &ctx));
+        assert!(!all.contains(&a) && !all.contains(&b), "{all:?}");
+        assert!(all.contains(&c), "{all:?}");
+        assert!(ctx.get_echo_message().starts_with("Killed 2 buffers"));
+    }
+
+    #[test]
+    fn project_dired_lists_the_root() {
+        let sandbox = Sandbox::new("dired");
+        sandbox.dir("app/.git").file("app/src/main.rs", "");
+        let (ctx, env) = editor();
+        visit(&sandbox, "app/src/main.rs", &env, &ctx);
+
+        run("(project-dired)", &env, &ctx);
+
+        assert_eq!(ctx.get_current_buffer_name(), "*dired*");
+        assert_eq!(
+            bare(&ctx.directory_of("*dired*")),
+            bare(&sandbox.root("app"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_eshell_starts_the_project_s_shell_at_the_root() {
+        let sandbox = Sandbox::new("eshell");
+        sandbox.dir("app/.git").file("app/src/main.rs", "");
+        let (ctx, env) = editor();
+        run("(setq eshell-history-save nil)", &env, &ctx);
+        visit(&sandbox, "app/src/main.rs", &env, &ctx);
+
+        run("(project-eshell)", &env, &ctx);
+
+        assert_eq!(ctx.get_current_buffer_name(), "*app-eshell*");
+        assert_eq!(
+            bare(&ctx.directory_of("*app-eshell*")),
+            bare(&sandbox.root("app"))
+        );
+        assert_eq!(
+            string(run(
+                r#"(buffer-get 'project-root "*app-eshell*")"#,
+                &env,
+                &ctx
+            )),
+            sandbox.root("app")
+        );
+        // Asked again, it goes back to the same shell.
+        visit(&sandbox, "app/src/main.rs", &env, &ctx);
+        run("(project-eshell)", &env, &ctx);
+        assert_eq!(ctx.get_current_buffer_name(), "*app-eshell*");
+        assert_eq!(
+            strings(&run("(all-buffer-names)", &env, &ctx))
+                .iter()
+                .filter(|name| name.contains("eshell"))
+                .count(),
+            1
+        );
+        run(r#"(kill-buffer-without-saving "*app-eshell*")"#, &env, &ctx);
     }
 }

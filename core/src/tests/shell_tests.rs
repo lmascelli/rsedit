@@ -844,7 +844,7 @@ mod tests {
         cd(&elsewhere.root(), &env, &ctx);
 
         assert_eq!(ctx.directory_of(&name), here.root());
-        assert_eq!(ctx.working_directory(), elsewhere.root());
+        assert_eq!(ctx.directory_of("*scratch*"), elsewhere.root());
     }
 
     #[cfg(unix)]
@@ -872,7 +872,7 @@ mod tests {
             text_of(&ctx, &name)
         );
         assert_eq!(ctx.directory_of(&name), inside.root());
-        assert_eq!(ctx.working_directory(), editor_wide.root());
+        assert_eq!(ctx.directory_of("*scratch*"), editor_wide.root());
     }
 
     #[cfg(unix)]

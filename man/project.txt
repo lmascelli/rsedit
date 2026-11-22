@@ -8,12 +8,23 @@ SYNOPSIS
     (project-compile-command COMMAND)
     (project-shell-command)
     (project-switch)
+    (project-switch-to-buffer)
+    (project-eshell)
+    (project-dired)
+    (project-kill-buffers)
     (project-declare-root DIRECTORY)
     (project-forget)
     (project-root &optional DIRECTORY)
     (project-known-projects)
+    (project-name &optional ROOT)
+    (project-buffers &optional ROOT)
+    (project-buffer-p BUFFER &optional ROOT)
+    (project-claim-buffer ROOT &optional BUFFER)
+    (project-eshell-buffer-name &optional ROOT)
     project-markers
     project-roots
+    project-buffer-name-rules
+    project-buffer-ignore
 
 DESCRIPTION
     A project is a directory and everything under it: a repository, a
@@ -26,10 +37,14 @@ DESCRIPTION
         C-x p c         build at the root
         C-x p !         run a shell command at the root
         C-x p p         go to another project you have worked in
+        C-x p b         go to another buffer of the project
+        C-x p e         go to the project's shell, started at the root
+        C-x p d         list the root, as dired does
+        C-x p k         kill every buffer of the project
 
-    Nothing moves: the working directory, and the directory of every
-    buffer, stay what they were. The `files' page says what a working
-    directory is.
+    Nothing moves: the directory of every buffer stays what it was, a
+    file's buffer in its file's folder. The `files' page says what the
+    directory of a buffer is.
 
 WHERE THE ROOT IS
     The root is found by looking upwards from the file of the current
@@ -77,6 +92,36 @@ THE PROJECTS KNOWN
     M-x project-forget takes a project out of the list, and
     `project-known-projects' returns it.
 
+THE BUFFERS OF A PROJECT
+    A buffer belongs to the project its directory is in: a file's buffer
+    to the project of its file, a dired listing to the one it lists, the
+    output of C-x p c or C-x p ! to the root it ran at, a buffer made
+    from a file of the project to that file's project. The editor's own
+    buffers -- *scratch*, *log*, *Help*, a prompt -- belong to none:
+    `project-buffer-ignore' names them.
+
+    A buffer can also be claimed by a project, and then belongs to it
+    wherever its directory goes. The project's shell is one: C-x p e
+    goes to *NAME-eshell*, NAME being the last directory of the root,
+    and starts a shell there at the root when none runs; after a cd in
+    it to /tmp it is still the project's, and C-x p f from it still finds
+    the files of the project.
+
+    The others are those `project-buffer-name-rules' names: regular
+    expressions in which %p stands for the project's name. A buffer made
+    with no file from a buffer of a project, with a name one of them
+    matches, is claimed by that project and has its root as directory,
+    wherever in the tree it was made from. Out of the box the one rule
+    claims every buffer whose name starts with *NAME-, so *rsedit-notes*
+    made from any file of rsedit starts at its root. A buffer made in
+    another way is claimed with `project-claim-buffer'.
+
+    C-x p b asks for one of the other buffers of the project, by any part
+    of its name. C-x p k asks once, with y or n, and kills them all;
+    those with unsaved changes are asked about once more, together, and a
+    no keeps them. `project-buffers' returns their names, and
+    `project-buffer-p' says whether one is of a project.
+
 FINDING A FILE
     C-x p f asks for a file, with the paths relative to the root to choose
     from. It leaves out what C-x C-r leaves out: the directories of
@@ -105,6 +150,16 @@ WORKING AT THE ROOT
     what you asked for last, in any project.
 
 EXAMPLES
+    Let a project claim its notes buffers as well, by another name:
+
+        (setq project-buffer-name-rules
+              '("^\\*%p-" "^\\*notes: %p\\*$"))
+
+    Claim nothing by name: new buffers keep the directory they were made
+    in, and only the shell of C-x p e is claimed:
+
+        (setq project-buffer-name-rules nil)
+
     Make a directory with a WORKSPACE file a root, before the others:
 
         (setq project-markers (cons "WORKSPACE" project-markers))
@@ -145,7 +200,11 @@ LIMITS
 
     The root is found again, from the disk's remembered answers, each time
     a command runs: it follows the buffer you are in, and there is no
-    current project apart from it.
+    current project apart from it. C-x p b and C-x p k find the project
+    of each buffer the same way.
+
+    A buffer belongs to one project: in a repository holding a declared
+    root, a file under that root is of the inner project only.
 
 KEYS
     C-x p f                 project-find-file
@@ -153,6 +212,10 @@ KEYS
     C-x p c                 project-compile
     C-x p !                 project-shell-command
     C-x p p                 project-switch
+    C-x p b                 project-switch-to-buffer
+    C-x p e                 project-eshell
+    C-x p d                 project-dired
+    C-x p k                 project-kill-buffers
 
 SEE ALSO
     files, dired, searching, compile, shell, session

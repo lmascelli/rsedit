@@ -53,6 +53,7 @@ SYNOPSIS
     (working-directory)
     (cd DIRECTORY)
     (set-buffer-directory DIRECTORY)
+    (buffer-directory &optional BUFFER)
     (pwd)
     (with-directory DIRECTORY FUNCTION)
     (expand-file-name PATH &optional DIRECTORY)
@@ -445,17 +446,35 @@ AN INDEX OF A TREE
     call walks from the start.
 
 THE WORKING DIRECTORY
-    A relative path, typed at C-x C-f or given to a function, is read in
-    the working directory: the directory the editor was started in, until
-    M-x cd moves it. Shell commands and builds start in it, and M-x grep
-    searches under it. M-x pwd says which it is, and `working-directory'
-    returns it.
+    Every buffer has a directory, as in Emacs, and a relative path typed
+    at C-x C-f or given to a function is read in the current buffer's:
+    the working directory. Shell commands and builds start in it, and M-x
+    grep searches under it. M-x pwd says which it is, `working-directory'
+    returns it, and `buffer-directory' returns any buffer's.
 
-    A buffer can have a directory of its own, which relative paths and
-    shell commands use there instead: a dired listing has the directory it
-    lists, and the output of a command the directory it ran in.
-    `set-buffer-directory' gives the current buffer one, and nil takes it
-    away.
+    Which directory a buffer has follows from what it is, so it never
+    changes behind your back:
+
+        a file's buffer     the folder of its file; written to another
+                            folder, with C-x C-w, it follows the file
+        a dired listing     the directory it lists
+        a command's output  the directory the command ran in
+        a shell             the directory the shell is in
+        any other buffer    the directory of the buffer it was made from,
+                            as a prompt, a list or *notes* made from a file
+        *scratch*           the directory the editor was started in
+
+    M-x cd moves the current buffer's directory and no other: the other
+    buffers, and those made from them, stay where they are, and the
+    buffers made from this one from then on start there. In a file's
+    buffer it holds until the buffer visits another file.
+    `set-buffer-directory' gives the current buffer one as cd does, and
+    nil takes it back to its file's folder.
+
+    A buffer of a project is no exception: its directory is its file's
+    folder, and the C-x p commands are the ones that work at the root.
+    The `project' page has them, and the buffers that take the root as
+    their directory.
 
     Moving it changes nothing that has started already: a command still
     running stays where it began, and the output of a command or a build

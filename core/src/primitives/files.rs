@@ -750,7 +750,13 @@ primitive!(write_file, args, env, ctx, {
         ctx.with_current_buffer(|buf| buf.file_path.as_deref() != Some(path.as_str()));
     // Whether the buffer is still what was written: an edit that came in
     // during the write keeps it modified, and its recovery copy with it.
-    ctx.with_current_buffer_mut(|buf| buf.file_path = Some(path.clone()));
+    ctx.with_current_buffer_mut(|buf| {
+        buf.file_path = Some(path.clone());
+        // A buffer that visits another file follows that file's folder.
+        if visited_file_changed {
+            buf.directory = None;
+        }
+    });
     let all_of_it = mark_written(ctx, &current, version, stamp);
     if all_of_it && let Ok(copy) = recovery {
         ctx.queue_recovery_cleanup(handle, copy, version, crate::editor::file_io::timeout(&env));

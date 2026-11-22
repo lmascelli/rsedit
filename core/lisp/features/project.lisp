@@ -3,7 +3,9 @@
 ;;; A project is a root directory, found above the current file by the names
 ;;; of `project-markers' or declared by hand; C-x p finds a file, searches,
 ;;; builds and runs a command there, and C-x p p goes to a project known from
-;;; an earlier run. User manual: the `project' page.
+;;; an earlier run. It knows its buffers -- its files, what was started in
+;;; it, its shell, and those named by `project-buffer-name-rules' -- and C-x p
+;;; b, e, k and d work on them. User manual: the `project' page.
 ;;; Design: `doc/architettura-editor.typ, <mod-project>`.
 
 (require 'commands)
@@ -12,6 +14,7 @@
 (require 'occur)
 (require 'shell)
 (require 'compile)
+(require 'eshell)
 
 ;; ---------------------------------------------------------------------------
 ;; Settings
@@ -31,6 +34,21 @@ repository's .git wins over a nearer Cargo.toml.")
   "Directories that are project roots whatever they hold, as
 `project-declare-root' declares them. The nearest above a directory wins over
 every marker.")
+
+(defvar project-buffer-name-rules '("^\\*%p-")
+  "Regular expressions naming the buffers a project claims, in which %p
+stands for the project's name, the last directory of its root. A buffer made
+with no file from a buffer of a project, whose name one of them matches,
+belongs to that project and has its root as directory, wherever it was made
+from: by default every buffer whose name starts with *NAME-, as the
+project's shell, *NAME-eshell*.")
+
+(defvar project-buffer-ignore
+  '("^ " "^\\*Minibuffer\\*$" "^\\*Completions\\*$" "^\\*scratch\\*$"
+    "^\\*log\\*$" "^\\*Help\\*$" "^\\*Manual\\*$" "^\\*Buffer List\\*$"
+    "^\\*Themes\\*$")
+  "Regular expressions naming buffers that belong to no project, whatever
+their directory: the editor's own, shared by every project.")
 
 ;; ---------------------------------------------------------------------------
 ;; Finding the root
@@ -76,13 +94,16 @@ when none is found, or timeout while the disk has not answered."
 nearest root declared in `project-roots' or with `project-declare-root', or
 else the one `project-markers' finds. nil when there is none, and the symbol
 timeout when the disk has not answered yet. DIRECTORY is by default the
-current buffer's file, or the working directory.
+current buffer's: the project the buffer was claimed by, when it was, as the
+project's shell is wherever it has gone; else its file, or its directory.
 
 Example:
   (project-root \"~/src/app/src/main.rs\")"
-  (let ((start (project--start directory)))
-    (or (project--declared-above start)
-        (project--marked-above start))))
+  (let ((claimed (and (null directory) (buffer-get 'project-root))))
+    (or claimed
+        (let ((start (project--start directory)))
+          (or (project--declared-above start)
+              (project--marked-above start))))))
 
 ;; ---------------------------------------------------------------------------
 ;; The projects known
@@ -131,6 +152,241 @@ there is none."
 (defun project--abbreviate (root)
   "ROOT as a prompt shows it: its last directory's name."
   (file-name-nondirectory (directory-file-name root)))
+
+;; ---------------------------------------------------------------------------
+;; The buffers of a project
+;; ---------------------------------------------------------------------------
+;;
+;; A buffer belongs to the project its directory is in, as in Emacs: a file's
+;; buffer to its file's, a listing or an output to the one it was made in. A
+;; buffer claimed by a project -- its shell, one named by a rule -- keeps
+;; `project-root' and belongs to it wherever its directory goes.
+
+(defun project--quote (text)
+  "TEXT with every character a regular expression gives a meaning to escaped."
+  (let ((answer ""))
+    (dotimes (i (length text))
+      (let ((c (substring text i (+ i 1))))
+        (setq answer (concat answer
+                             (if (member c '("\\" "." "+" "*" "?" "(" ")" "["
+                                             "]" "{" "}" "^" "$" "|"))
+                                 "\\" "")
+                             c))))
+    answer))
+
+(defun project-name (&optional root)
+  "Return the name of the project at ROOT, the current one by default: the
+last directory of its root. nil outside a project.
+
+Example:
+  (project-name \"~/src/rsedit/\")   ; => \"rsedit\""
+  (let ((root (or root (project-root))))
+    (if (stringp root) (project--abbreviate root) nil)))
+
+(defun project--rule (rule name)
+  "RULE, a pattern of `project-buffer-name-rules', with each %p made NAME."
+  (let ((answer "")
+        (at 0))
+    (while (< at (length rule))
+      (if (and (< (+ at 1) (length rule))
+               (string= (substring rule at (+ at 2)) "%p"))
+          (progn (setq answer (concat answer (project--quote name)))
+                 (setq at (+ at 2)))
+          (progn (setq answer (concat answer (substring rule at (+ at 1))))
+                 (setq at (+ at 1)))))
+    answer))
+
+(defun project--named-by-rule-p (buffer root)
+  "Whether one of `project-buffer-name-rules' gives BUFFER to ROOT."
+  (let ((name (project--abbreviate root)))
+    (catch 'found
+      (dolist (rule project-buffer-name-rules)
+        (if (string-match-p (project--rule rule name) buffer)
+            (throw 'found t)))
+      nil)))
+
+(defun project--ignored-p (buffer)
+  "Whether BUFFER belongs to no project: an editor's own, or a prompt's."
+  (or (memq (buffer-role buffer) '(prompt completion))
+      (catch 'found
+        (dolist (pattern project-buffer-ignore)
+          (if (string-match-p pattern buffer) (throw 'found t)))
+        nil)))
+
+(defun project--buffer-root (buffer)
+  "The root of the project BUFFER belongs to, or nil: the one that claimed
+it, or else the one of its file or its directory."
+  (or (buffer-get 'project-root buffer)
+      (let ((root (project-root (or (buffer-file-name buffer)
+                                    (file-name-as-directory
+                                     (buffer-directory buffer))))))
+        (if (stringp root) root nil))))
+
+(defun project-buffer-p (buffer &optional root)
+  "Return t when the buffer BUFFER belongs to the project at ROOT, the
+current one by default: claimed by it, named by one of
+`project-buffer-name-rules', or with its file or its directory in it, and not
+named by `project-buffer-ignore'.
+
+Example:
+  (project-buffer-p \"*rsedit-eshell*\")"
+  (let ((root (or root (project-root))))
+    (cond ((not (stringp root)) nil)
+          ((not (member buffer (all-buffer-names))) nil)
+          ((project--ignored-p buffer) nil)
+          ((buffer-get 'project-root buffer)
+           (equal (buffer-get 'project-root buffer) root))
+          ((project--named-by-rule-p buffer root) t)
+          (t (equal (project--buffer-root buffer) root)))))
+
+(defun project-buffers (&optional root)
+  "Return the names of the buffers of the project at ROOT, the current one by
+default, as `project-buffer-p' decides; nil outside a project.
+
+Example:
+  (length (project-buffers))"
+  (let ((root (or root (project-root)))
+        (found nil))
+    (when (stringp root)
+      (dolist (buffer (all-buffer-names))
+        (if (project-buffer-p buffer root)
+            (setq found (cons buffer found)))))
+    (reverse found)))
+
+(defun project-claim-buffer (root &optional buffer)
+  "Make BUFFER, the current one by default, a buffer of the project at ROOT
+wherever its directory goes, and give it ROOT as directory when it has no
+file. Return ROOT.
+
+Example:
+  (project-claim-buffer (project-root) \"*notes*\")"
+  (let ((root (project--directory root))
+        (buffer (or buffer (current-buffer))))
+    (buffer-put 'project-root root buffer)
+    (unless (buffer-file-name buffer)
+      (with-current-buffer buffer
+                           (lambda () (set-buffer-directory root))))
+    root))
+
+(defun project--claim-new-buffer ()
+  "Run when a buffer is made: claim the buffer just made, with no file, for
+the project it was made in, when one of `project-buffer-name-rules' names
+it."
+  (let ((buffer (current-buffer)))
+    (when (and project-buffer-name-rules
+               (null (buffer-file-name))
+               (not (project--ignored-p buffer)))
+      (let ((root (project-root)))
+        (when (and (stringp root) (project--named-by-rule-p buffer root))
+          (project-claim-buffer root buffer))))))
+
+(add-hook nil "buffer-created-hook" 'project--claim-new-buffer)
+
+(defun project--other-buffers (root)
+  "The buffers of ROOT but the current one, best first."
+  (let ((here (current-buffer))
+        (found nil))
+    (dolist (buffer (project-buffers root))
+      (unless (equal buffer here)
+        (setq found (cons buffer found))))
+    (reverse found)))
+
+;; The buffers the open buffer prompt offers, found when it opened: while it
+;; is open the prompt is the current buffer.
+(setq project--offered-buffers nil)
+
+(defun project-switch-to-buffer--candidates (input)
+  "The buffers of the prompt's project that match INPUT, best first."
+  (fuzzy-filter input project--offered-buffers))
+
+(defcommand project-switch-to-buffer () nil
+  "Ask for one of the buffers of the current project, by any part of its name,
+and switch to it."
+  (let ((root (project--current)))
+    (when root
+      (setq project--offered-buffers (project--other-buffers root))
+      (if (null project--offered-buffers)
+          (message "No other buffer in %s" (project--abbreviate root))
+          (progn
+            (minibuffer-read (format "Switch to buffer in %s:"
+                                     (project--abbreviate root))
+                             (lambda (buffer)
+                               (cond ((string= buffer "") nil)
+                                     ((member buffer (all-buffer-names))
+                                      (switch-to-buffer buffer))
+                                     (t (message "No buffer %s" buffer))))
+                             'project-switch-to-buffer--candidates
+                             nil nil "project-switch-to-buffer"))))))
+
+(defun project-eshell-buffer-name (&optional root)
+  "Return the name of the shell buffer of the project at ROOT, the current one
+by default: *NAME-eshell*, which `project-buffer-name-rules' claims."
+  (format "*%s-eshell*" (project-name root)))
+
+(defcommand project-eshell () nil
+  "Switch to the shell of the current project, *NAME-eshell*, starting one at
+the root when none is running. The shell stays a buffer of the project after a
+cd in it elsewhere."
+  (let ((root (project--current)))
+    (when root
+      (let ((buffer (project-eshell-buffer-name root)))
+        (if (eshell-process buffer)
+            (switch-to-buffer buffer)
+            (with-directory root
+                            (lambda ()
+                              (unless (member buffer (all-buffer-names))
+                                (buffer-create buffer :mode 'eshell-mode
+                                               :role 'editing))
+                              (project-claim-buffer root buffer)
+                              (eshell--open nil buffer))))))))
+
+(defcommand project-dired () nil
+  "List the root of the current project, as `dired' does."
+  (let ((root (project--current)))
+    (if root (dired root))))
+
+(defun project--kill (buffers)
+  "Kill BUFFERS, asked about already, saying how many."
+  (let ((count 0))
+    (dolist (buffer buffers)
+      (when (member buffer (all-buffer-names))
+        (kill-buffer-without-saving buffer)
+        (setq count (+ count 1))))
+    (message "Killed %s buffers" count)))
+
+(defcommand project-kill-buffers () nil
+  "Kill every buffer of the current project, after asking; the buffers with
+unsaved changes are asked about once more, all together."
+  (let ((root (project--current)))
+    (when root
+      (let ((buffers (project-buffers root)))
+        (if (null buffers)
+            (message "No buffers in %s" (project--abbreviate root))
+            (y-or-n
+             (format "Kill %s buffers of %s?" (length buffers)
+                     (project--abbreviate root))
+             (lambda ()
+               (let ((modified nil))
+                 (dolist (buffer buffers)
+                   (if (and (buffer-file-name buffer) (buffer-modified-p buffer))
+                       (setq modified (cons buffer modified))))
+                 (if (null modified)
+                     (project--kill buffers)
+                     (yes-or-no
+                      (format "%s of them have unsaved changes. Kill those too?"
+                              (length modified))
+                      (lambda () (project--kill buffers))
+                      (lambda ()
+                        (project--kill
+                         (project--without-all modified buffers)))))))))))))
+
+(defun project--without-all (items list)
+  "LIST without the elements in ITEMS."
+  (let ((kept nil))
+    (dolist (element list)
+      (unless (member element items)
+        (setq kept (cons element kept))))
+    (reverse kept)))
 
 ;; ---------------------------------------------------------------------------
 ;; Finding a file
@@ -294,6 +550,10 @@ and no longer a root if it was declared with `project-declare-root'."
 (define-key nil "C-x p c" 'project-compile)
 (define-key nil "C-x p !" 'project-shell-command)
 (define-key nil "C-x p p" 'project-switch)
+(define-key nil "C-x p b" 'project-switch-to-buffer)
+(define-key nil "C-x p e" 'project-eshell)
+(define-key nil "C-x p d" 'project-dired)
+(define-key nil "C-x p k" 'project-kill-buffers)
 
 (log "project loaded")
 (provide 'project)

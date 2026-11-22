@@ -180,8 +180,8 @@ fn path_string<B: BufferTrait>(
 }
 
 pub const WORKING_DIRECTORY_DOC: &str = "(working-directory): Return the directory a relative \
-         file name is read in: the one `with-directory' gives the call running, or else the current \
-         buffer's own, or else the editor's working directory, which `cd' changes.\n\n\
+         file name is read in, as Emacs' default-directory: the one `with-directory' gives the \
+         call running, or else the current buffer's, which `buffer-directory' returns.\n\n\
          Example:\n\
          (expand-file-name \"notes.txt\" (working-directory))";
 
@@ -198,8 +198,9 @@ primitive!(working_directory, args, _env, ctx, {
 pub const SET_BUFFER_DIRECTORY_DOC: &str = "(set-buffer-directory DIRECTORY): Give the current \
          buffer DIRECTORY as a directory of its own, read in the working directory, and return \
          it: relative file names are read in it there, and shell commands started from it run \
-         in it, as in a dired listing. nil takes it away, and the buffer goes by the editor's \
-         working directory again. A DIRECTORY that is not one is refused.\n\n\
+         in it, as in a dired listing. nil takes it away, and the buffer goes by its file's \
+         folder again, or by the editor's starting directory when it has no file. A DIRECTORY \
+         that is not one is refused.\n\n\
          Example:\n\
          (set-buffer-directory \"~/src\")";
 
@@ -226,10 +227,11 @@ primitive!(set_buffer_directory, args, _env, ctx, {
 });
 
 pub const CD_DOC: &str = "(cd DIRECTORY): Make DIRECTORY, read in the working directory, the \
-         editor's working directory, and return it; nil, and a message, when it is not a \
-         directory. Relative file names are read in it from then on, and shell commands start in \
-         it; one already running stays where it started. Inside `with-directory' it moves that \
-         call's directory instead, until the call returns.\n\n\
+         current buffer's directory, and return it; nil, and a message, when it is not a \
+         directory. Relative file names are read in it from then on in this buffer, shell \
+         commands start in it, and buffers made from this one start there too; no other buffer \
+         moves, and a command already running stays where it started. Inside `with-directory' it \
+         moves that call's directory instead, until the call returns.\n\n\
          Example:\n\
          (cd \"~/src/rsedit\")";
 
@@ -240,7 +242,7 @@ primitive!(cd, args, _env, ctx, {
             got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         });
     };
-    match ctx.set_working_directory(path) {
+    match ctx.change_directory(path) {
         Ok(directory) => {
             ctx.set_echo_message(&format!("Directory {directory}"));
             Ok(ELispExp::string(directory))
@@ -272,6 +274,32 @@ primitive!(with_directory, args, env, ctx, {
     risp::call_callable(&args[1], &[], env.clone(), ctx)
 });
 
+pub const BUFFER_DIRECTORY_DOC: &str = "(buffer-directory &optional BUFFER): Return the \
+         directory relative file names are read in in BUFFER, the current one by default: its \
+         own, which `cd' and `set-buffer-directory' give it, or else the folder of the file it \
+         visits, or else the editor's starting directory. Unlike `working-directory', the \
+         directory `with-directory' gives a call does not count. nil when there is no BUFFER.\n\n\
+         Example:\n\
+         (buffer-directory \"*eshell*\")";
+
+primitive!(buffer_directory, args, _env, ctx, {
+    let name = match args.first() {
+        None => ctx.get_current_buffer_name(),
+        Some(exp) if exp.is_nil() => ctx.get_current_buffer_name(),
+        Some(ELispExp::String(name)) => name.to_string(),
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String naming a buffer, or nil".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    if !ctx.has_buffer(&name) {
+        return Ok(ELispExp::nil());
+    }
+    Ok(ELispExp::string(ctx.directory_of(&name)))
+});
+
 pub const PWD_DOC: &str = "(pwd): Say in the echo area which directory relative file names are \
          read in, the value of `working-directory', and return it.";
 
@@ -297,6 +325,7 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         SET_BUFFER_DIRECTORY_DOC,
     );
     into.command("pwd", pwd, &[], PWD_DOC);
+    into.function("buffer-directory", buffer_directory, BUFFER_DIRECTORY_DOC);
     into.function("with-directory", with_directory, WITH_DIRECTORY_DOC);
     into.function("list-dir", list_dir, LIST_DIR_DOC);
     into.function("match-list", match_list, MATCH_LIST_DOC);
