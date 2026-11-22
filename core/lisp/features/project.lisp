@@ -1,13 +1,15 @@
 ;;; project --- the directory a file belongs to, and commands that work there.
 ;;;
 ;;; A project is a root directory, found above the current file by the names
-;;; of `project-markers' or declared by hand; C-x p finds a file, searches,
-;;; builds and runs a command there, and C-x p p goes to a project known from
-;;; an earlier run. It knows its buffers -- its files, what was started in
-;;; it, its shell and its build -- and C-x p b, e, k and d work on them;
-;;; `project-claim-mode', off unless turned on, also gives a project the
-;;; buffers `project-buffer-name-rules' names. User manual: the `project'
-;;; page.
+;;; of `project-markers' or declared by hand; C-x p finds a file, a recent
+;;; file, searches, lists the findings, builds and runs a command there, and
+;;; C-x p p goes to a project known from an earlier run and runs one of them
+;;; in it, chosen with a key. It knows its buffers -- its files, what was
+;;; started in it, its shell and its build -- and C-x p b, e, k and d work on
+;;; them; `project-claim-mode', off unless turned on, also gives a project the
+;;; buffers `project-buffer-name-rules' names. The modules it drives are
+;;; required here, so that C-x p works whichever of them init.lisp loads.
+;;; User manual: the `project' page.
 ;;; Design: `doc/architettura-editor.typ, <mod-project>`.
 
 (require 'commands)
@@ -17,6 +19,7 @@
 (require 'shell)
 (require 'compile)
 (require 'eshell)
+(require 'findings)
 
 ;; ---------------------------------------------------------------------------
 ;; Settings
@@ -44,6 +47,22 @@ last directory of its root. A buffer with no file, made or renamed in a
 buffer of a project, whose name one of them matches, belongs to that project
 and has its root as directory, wherever it was made from: by default every
 buffer whose name starts with *NAME-, as *NAME-notes*.")
+
+(defvar project-switch-commands
+  '(("f" project-find-file "find file")
+    ("g" project-grep "grep")
+    ("d" project-dired "dired")
+    ("e" project-eshell "eshell")
+    ("b" project-switch-to-buffer "buffer")
+    ("r" project-find-recent-file "recent file")
+    ("c" project-compile "compile")
+    ("!" project-shell-command "shell command")
+    ("l" project-findings "findings")
+    ("k" project-kill-buffers "kill buffers"))
+  "What C-x p p does in the project chosen: a list of (KEY COMMAND LABEL),
+offered all together in the echo area, KEY running COMMAND as if the project
+were the current one, or a command to run there without asking, as
+'project-find-file. C-g and Escape do nothing.")
 
 (defvar project-claim-mode nil
   "Whether the projects claim the buffers `project-buffer-name-rules' names,
@@ -105,11 +124,36 @@ project's shell is wherever it has gone; else its file, or its directory.
 
 Example:
   (project-root \"~/src/app/src/main.rs\")"
-  (let ((claimed (and (null directory) (buffer-get 'project-root))))
+  (let ((claimed (and (null directory)
+                      (or project--forced-root (buffer-get 'project-root)))))
     (or claimed
         (let ((start (project--start directory)))
           (or (project--declared-above start)
               (project--marked-above start))))))
+
+;; The root `project-with-root' makes the current project's while it runs a
+;; function, nil the rest of the time.
+(setq project--forced-root nil)
+
+(defun project-with-root (root function)
+  "Call FUNCTION with no arguments as if the project at ROOT were the current
+one, whatever the current buffer: `project-root' with no argument answers
+ROOT, and ROOT is the directory, as `with-directory' makes it. Return what
+FUNCTION returns. A prompt FUNCTION opens is answered after it has returned:
+the C-x p commands keep ROOT for their answer, other commands do not.
+
+Example:
+  (project-with-root \"~/src/app/\" 'project-dired)"
+  (let ((root (project--directory root))
+        (previous project--forced-root))
+    (setq project--forced-root root)
+    (unwind-protect
+        (with-directory root
+                        (lambda ()
+                          (if (and (symbolp function) (commandp function))
+                              (call-interactively function)
+                              (funcall function))))
+      (setq project--forced-root previous))))
 
 ;; ---------------------------------------------------------------------------
 ;; The projects known
@@ -563,6 +607,57 @@ Example:
                t)
         nil)))
 
+(defcommand project-grep-regexp () nil
+  "Ask for a regular expression and list every line matching it in the files
+under the current project's root, as `grep-regexp' does."
+  (let ((root (project--current)))
+    (if root
+        (project--ask-and-run root "Search project for regexp"
+                              "project-grep-regexp" 'grep-regexp))))
+
+(defcommand project-findings () nil
+  "List the findings about the files under the current project's root, as
+`findings-list-under' does, named from the root, for M-g n to walk."
+  (let ((root (project--current)))
+    (if root
+        (with-directory root (lambda () (findings-list-under root))))))
+
+;; ---------------------------------------------------------------------------
+;; A recent file of the project
+;; ---------------------------------------------------------------------------
+
+;; The recent files the open prompt offers, relative to its root, found when
+;; it opened.
+(setq project--offered-recent nil)
+
+(defun project-find-recent-file--candidates (input)
+  "The recent files of the prompt's project that match INPUT, best first."
+  (fuzzy-filter input project--offered-recent))
+
+(defun project--recent-files (root)
+  "The files of `recent-files' under ROOT, newest first, relative to it."
+  (let ((found nil))
+    (dolist (path (recent-files))
+      (if (string-prefix-p root path)
+          (setq found (cons (substring path (length root)) found))))
+    (reverse found)))
+
+(defcommand project-find-recent-file () nil
+  "Ask for one of the recent files under the current project's root, by any
+part of its path relative to the root, and open it."
+  (let ((root (project--current)))
+    (when root
+      (setq project--offered-recent (project--recent-files root))
+      (if (null project--offered-recent)
+          (message "No recent files in %s" (project--abbreviate root))
+          (minibuffer-read (format "Recent file in %s:"
+                                   (project--abbreviate root))
+                           (lambda (path)
+                             (unless (string= path "")
+                               (find-file-async (expand-file-name path root))))
+                           'project-find-recent-file--candidates
+                           nil nil "project-find-recent-file")))))
+
 ;; ---------------------------------------------------------------------------
 ;; Going to another project, declaring one, forgetting one
 ;; ---------------------------------------------------------------------------
@@ -571,9 +666,48 @@ Example:
   "The projects known that match INPUT, best first."
   (fuzzy-filter input (project-known-projects)))
 
+;; The project C-x p p asks a key about, while it asks.
+(setq project--switch-root nil)
+
+(defun project--switch-offer (root)
+  "The echo area's line while C-x p p asks what to do in ROOT."
+  (let ((line (format "%s:" (project--abbreviate root))))
+    (dolist (entry project-switch-commands)
+      (setq line (concat line " " (car entry) " " (nth 2 entry))))
+    (concat line "  (C-g to cancel)")))
+
+(defun project--switch-answer (key)
+  "Run, in the project C-x p p asks about, the command of
+`project-switch-commands' KEY names; nothing for nil."
+  (clear-transient-keymap)
+  (let ((root project--switch-root)
+        (entry (assoc key project-switch-commands)))
+    (setq project--switch-root nil)
+    (if (and root entry)
+        (project-with-root root (nth 1 entry))
+        (message "Quit"))))
+
+(defun project--switch-to (root)
+  "Do in ROOT what `project-switch-commands' says: run its command, or ask
+for a key."
+  (project--remember root)
+  (if (and project-switch-commands (symbolp project-switch-commands))
+      (project-with-root root project-switch-commands)
+      (progn
+        (setq project--switch-root root)
+        (set-transient-keymap
+         (append (mapcar (lambda (entry)
+                           (cons (car entry)
+                                 (list 'project--switch-answer (car entry))))
+                         project-switch-commands)
+                 (list (cons "C-g" '(project--switch-answer nil))
+                       (cons "<esc>" '(project--switch-answer nil))))
+         (project--switch-offer root)))))
+
 (defcommand project-switch () nil
-  "Ask for one of the projects known, or any directory, and find a file in
-it as `project-find-file' does."
+  "Ask for one of the projects known, or any directory, then for a key of
+`project-switch-commands', and run its command there, as if the project were
+the current one: f finds a file, g searches, e goes to its shell."
   (if (null (project-known-projects))
       (message "No projects known yet: a C-x p command in one makes it known")
       (minibuffer-read "Switch to project:"
@@ -581,7 +715,7 @@ it as `project-find-file' does."
                          (unless (string= answer "")
                            (let ((root (project--directory answer)))
                              (if (file-directory-p root)
-                                 (project--find-file-in (project--remember root))
+                                 (project--switch-to root)
                                  (message "%s is not a directory" root)))))
                        'project--known-candidates
                        nil nil "project-switch")))
@@ -619,6 +753,9 @@ and no longer a root if it was declared with `project-declare-root'."
 
 (define-key nil "C-x p f" 'project-find-file)
 (define-key nil "C-x p g" 'project-grep)
+(define-key nil "C-x p G" 'project-grep-regexp)
+(define-key nil "C-x p r" 'project-find-recent-file)
+(define-key nil "C-x p l" 'project-findings)
 (define-key nil "C-x p c" 'project-compile)
 (define-key nil "C-x p !" 'project-shell-command)
 (define-key nil "C-x p p" 'project-switch)

@@ -4,6 +4,9 @@ NAME
 SYNOPSIS
     (project-find-file)
     (project-grep)
+    (project-grep-regexp)
+    (project-find-recent-file)
+    (project-findings)
     (project-compile)
     (project-compile-command COMMAND)
     (project-shell-command)
@@ -23,10 +26,12 @@ SYNOPSIS
     (project-claim-buffer ROOT &optional BUFFER)
     (project-eshell-buffer-name &optional ROOT)
     (project-compile-buffer-name &optional ROOT)
+    (project-with-root ROOT FUNCTION)
     project-markers
     project-roots
     project-buffer-name-rules
     project-buffer-ignore
+    project-switch-commands
 
 DESCRIPTION
     A project is a directory and everything under it: a repository, a
@@ -35,10 +40,13 @@ DESCRIPTION
     wherever in the tree the file is, as if you had gone to the root first:
 
         C-x p f         open a file of the project, by any part of its path
+        C-x p r         open a file of the project you opened recently
         C-x p g         search every file of the project for a text
+        C-x p G         search every file of the project for a regexp
+        C-x p l         list the findings about the files of the project
         C-x p c         build at the root
         C-x p !         run a shell command at the root
-        C-x p p         go to another project you have worked in
+        C-x p p         go to another project, and do one of these there
         C-x p b         go to another buffer of the project
         C-x p e         go to the project's shell, started at the root
         C-x p d         list the root, as dired does
@@ -47,6 +55,12 @@ DESCRIPTION
     Nothing moves: the directory of every buffer stays what it was, a
     file's buffer in its file's folder. The `files' page says what the
     directory of a buffer is.
+
+    The modules these keys drive -- dired, grep, the build, M-!, the
+    shell, the findings -- are loaded with the project's, so C-x p works
+    whichever of them your init.lisp loads. Their own keys still work as
+    they did, from the directory of the buffer you are in: M-s g searches
+    from there, C-x p g from the root.
 
 WHERE THE ROOT IS
     The root is found by looking upwards from the file of the current
@@ -89,10 +103,22 @@ THE PROJECTS KNOWN
     A project is known once a C-x p command has run in it, or once it has
     been declared. The list is kept in the session, the newest first, so a
     project you worked on yesterday is still offered today: C-x p p asks
-    for one, completing by any part of its path, and opens a file there as
-    C-x p f does. A directory that is not in the list can be typed too.
-    M-x project-forget takes a project out of the list, and
-    `project-known-projects' returns it.
+    for one, completing by any part of its path. A directory that is not
+    in the list can be typed too. M-x project-forget takes a project out
+    of the list, and `project-known-projects' returns it.
+
+    Once the project is chosen, the echo area offers what to do there,
+    one key each:
+
+        rsedit: f find file g grep d dired e eshell b buffer ...
+
+    and the key runs that C-x p command as if you were in the project:
+    f is C-x p f, e goes to its shell, d lists its root. C-g or Escape
+    does nothing, and any other key is not an answer. The keys are those
+    of `project-switch-commands', a list of (KEY COMMAND LABEL); set it to
+    a single command to run that one without asking:
+
+        (setq project-switch-commands 'project-find-file)
 
 THE BUFFERS OF A PROJECT
     A buffer belongs to the project its directory is in: a file's buffer
@@ -146,10 +172,20 @@ FINDING A FILE
     list is the index of the tree (see the `files' page): the prompt opens
     at once, and Tab offers more while the tree is still being walked.
 
+    C-x p r asks for one of the files M-g r would offer, those under the
+    root only, newest first and written from the root: the `session' page
+    has the recent files.
+
 WORKING AT THE ROOT
     C-x p g asks for a text and lists the lines that contain it, in every
-    file under the root, as M-s g does under the working directory; the
+    file under the root, as M-s g does under the working directory; C-x p
+    G asks for a regular expression instead, as M-x grep-regexp does. The
     `searching' page has the list and M-g n.
+
+    C-x p l lists the findings -- what the compilers, the linters and the
+    language servers said -- about every file under the root, as M-x
+    findings-list-under would for the root, the files named from it; M-g
+    n walks them. The `findings' page has the list.
 
     C-x p c asks for a command and runs it at the root as C-c c would, in
     the project's own output, *NAME-compile*, and C-x p ! asks for a
@@ -163,8 +199,21 @@ WORKING AT THE ROOT
     returns nil. The Build, Test and Run entries of the menus of the
     languages call it, as Rust's Build runs cargo build: the `menus' page.
 
-    Each of the three keeps its own history: C-p at the prompt gives back
-    what you asked for last, in any project.
+    Each of these prompts keeps its own history: C-p at the prompt gives
+    back what you asked for last, in any project.
+
+DOING SOMETHING IN ANOTHER PROJECT
+    `project-with-root' calls a function as if the project at a root were
+    the current one, wherever you are: `project-root' answers that root,
+    and it is the directory the function runs in. It is how C-x p p runs
+    its commands, and works the same way for one of yours:
+
+        (project-with-root "~/src/app/" 'project-eshell)
+
+    A prompt opened inside is answered after the function has returned:
+    the C-x p commands keep the root for the answer, as C-x p g searches
+    there, but a command of another module that asks first, as M-s g
+    does, runs its answer in the directory of the buffer you are in.
 
 EXAMPLES
     Claim buffers by name, those named *notes: NAME* as well:
@@ -172,6 +221,14 @@ EXAMPLES
         (project-claim-mode 1)
         (setq project-buffer-name-rules
               '("^\\*%p-" "^\\*notes: %p\\*$"))
+
+    Offer only three things to do in the project C-x p p chooses, and
+    go straight to its shell with s:
+
+        (setq project-switch-commands
+              '(("f" project-find-file "find file")
+                ("g" project-grep "grep")
+                ("s" project-eshell "shell")))
 
     Make a directory with a WORKSPACE file a root, before the others:
 
@@ -222,6 +279,9 @@ LIMITS
 KEYS
     C-x p f                 project-find-file
     C-x p g                 project-grep
+    C-x p G                 project-grep-regexp
+    C-x p r                 project-find-recent-file
+    C-x p l                 project-findings
     C-x p c                 project-compile
     C-x p !                 project-shell-command
     C-x p p                 project-switch
@@ -232,4 +292,4 @@ KEYS
     M-x project-claim-mode  claiming buffers by name, on or off
 
 SEE ALSO
-    files, dired, searching, compile, shell, session
+    files, dired, searching, findings, compile, shell, eshell, session

@@ -9456,10 +9456,12 @@ va quando il prompt si chiude. Oggi il comando è uno, `string-rectangle`.
 
 Un progetto è una directory radice e ciò che sta sotto. Il modulo trova la
 radice del file del buffer corrente, ricorda i progetti in cui si è lavorato e
-lega a `C-x p` i comandi che lavorano lì: `project-find-file`, `project-grep`,
-`project-compile`, `project-shell-command`, `project-switch`, e quelli sui
-buffer del progetto: `project-switch-to-buffer`, `project-eshell`,
-`project-dired`, `project-kill-buffers`. È tutto in
+lega a `C-x p` i comandi che lavorano lì: `project-find-file`,
+`project-find-recent-file`, `project-grep`, `project-grep-regexp`,
+`project-findings`, `project-compile`, `project-shell-command`,
+`project-switch`, e quelli sui buffer del progetto:
+`project-switch-to-buffer`, `project-eshell`, `project-dired`,
+`project-kill-buffers`. È tutto in
 Lisp, sopra tre mattoni del nucleo che non sanno nulla di progetti: la
 risalita ai marcatori (@risalita), la directory per una chiamata
 (@directory-di-lavoro) e i valori tenuti nella sessione (@memoria); il quarto,
@@ -9505,10 +9507,42 @@ per primo.
 + *Noto per uso, non per apertura.* Un progetto diventa noto quando un
   comando `C-x p` vi gira o quando lo si dichiara. Cercare la radice a ogni
   `find-file` costerebbe una risalita per file aperto, anche fuori da ogni
-  progetto. `project-switch` apre `project-find-file` nella radice scelta.
+  progetto. `project-switch` fa noto il progetto scelto prima di chiedere
+  che cosa farvi.
 + *Nessun progetto corrente.* La radice si trova di nuovo a ogni comando,
   dal buffer in cui si è, e le risposte ricordate della risalita la rendono
   economica: non c'è uno stato da tenere allineato con il buffer.
+
+Il modulo è anche il punto in cui gli altri si incontrano: richiede `dired`,
+`occur`, `shell`, `compile`, `eshell` e `findings`, e ogni comando `C-x p` è
+un comando di uno di loro chiamato alla radice. Gli altri moduli non sanno
+nulla di progetti; `lsp` chiede la radice di un file a `lsp-root-function`,
+che vale `project-root` ma è una variabile, e non richiede il modulo.
+
++ *L'orchestrazione sta in `project`, i moduli restano separati.* `C-x p`
+  richiede ciò che lega, e i tasti funzionano qualunque modulo carichi
+  `init.lisp`. Scartato: far chiedere `project-root` a `grep`, `compile` o
+  `eshell` stessi, che legherebbe ogni modulo a `project` e cambierebbe ciò
+  che fanno i loro tasti dentro un progetto: `M-s g` cerca dalla directory
+  del buffer, `C-x p g` dalla radice.
++ *`project-with-root` forza la radice per la durata di una chiamata.* Lo
+  scope è lessicale (il manuale dell'interprete, «Lo scope è lessicale»): un
+  `let` non cambierebbe ciò che `project-root` legge. La radice sta in
+  `project--forced-root`, impostata con `setq` e rimessa com'era da
+  `unwind-protect` anche se la funzione fallisce; `project-root` senza
+  argomento la guarda prima della radice rivendicata del buffer. Vale solo
+  finché la chiamata non torna: i comandi `C-x p` catturano la radice nelle
+  callback dei loro prompt, gli altri no, e per questo `C-x p p` offre
+  soltanto comandi `C-x p`. La funzione gira anche dentro `with-directory`,
+  così ciò che parte senza chiedere parte alla radice.
++ *`C-x p p` chiede un tasto con una mappa transitoria.* Scelto il
+  progetto, `set-transient-keymap` mette su una domanda (@domande) con un
+  tasto per ogni voce di `project-switch-commands` e `C-g` ed Escape per
+  uscire: viene prima di ogni altra mappa, e un tasto che non è una risposta
+  non fa nulla. Scartati: `read-key-sequence`, che attraversa le mappe del
+  buffer e nel modo normale di Vim aspetterebbe il resto di `g` o `d`, che
+  lì sono prefissi; un prompt con il completamento, che vuole il nome e
+  Invio. Una voce che è un solo comando lo esegue senza chiedere.
 
 I buffer di un progetto non sono una lista tenuta dal modulo: `project-buffers`
 li trova quando serve, con `project-buffer-p` su ogni buffer. Un buffer

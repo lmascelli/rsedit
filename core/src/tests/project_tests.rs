@@ -34,6 +34,7 @@ mod tests {
             include_str!("../../lisp/features/compile.lisp"),
             include_str!("../../lisp/features/completion-at-point.lisp"),
             include_str!("../../lisp/features/eshell.lisp"),
+            include_str!("../../lisp/features/findings.lisp"),
             include_str!("../../lisp/features/project.lisp"),
         ] {
             run(source, &env, &ctx);
@@ -502,12 +503,205 @@ mod tests {
             vec![sandbox.root("tool")]
         );
         answer(&sandbox.root("tool"), &env, &ctx);
+        // A key is asked for, every command offered on one line.
+        assert!(!ctx.minibuffer_is_open());
+        assert!(ctx.transient_keymap_active(), "a key should be asked for");
+        let offer = ctx.transient_message();
+        assert!(offer.starts_with("tool:"), "{offer}");
+        assert!(offer.contains("f find file") && offer.contains("e eshell"), "{offer}");
+        press('f', &env, &ctx);
+        assert!(!ctx.transient_keymap_active());
         assert!(ctx.minibuffer_is_open(), "the file prompt should be open");
         assert_eq!(
             string(run("project--find-root", &env, &ctx)),
             sandbox.root("tool")
         );
         assert_eq!(offered(&sandbox.root("tool"), &env, &ctx), vec!["README"]);
+    }
+
+    /// Declares SANDBOX's RELATIVE a root, opens C-x p p and chooses it.
+    fn switch_to(sandbox: &Sandbox, relative: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
+        run(
+            &format!("(project-declare-root {:?})", sandbox.path(relative)),
+            env,
+            ctx,
+        );
+        run("(project-switch)", env, ctx);
+        answer(&sandbox.root(relative), env, ctx);
+    }
+
+    #[test]
+    fn project_switch_runs_the_command_of_the_key_in_the_project_chosen() {
+        let sandbox = Sandbox::new("switch-key");
+        sandbox.file("tool/README", "").dir("elsewhere");
+        let (ctx, env) = editor();
+        run(&format!("(cd {:?})", sandbox.path("elsewhere")), &env, &ctx);
+        switch_to(&sandbox, "tool", &env, &ctx);
+        press('d', &env, &ctx);
+        // The root is listed, though the buffer C-x p p ran in is elsewhere.
+        assert_eq!(
+            bare(&ctx.directory_of(&ctx.get_current_buffer_name())),
+            bare(&sandbox.path("tool"))
+        );
+        // And nothing is left forced once the command has run.
+        assert_eq!(run("project--forced-root", &env, &ctx), LispExp::nil());
+    }
+
+    #[test]
+    fn project_switch_is_cancelled_by_c_g_and_no_other_key_runs_anything() {
+        let sandbox = Sandbox::new("switch-quit");
+        sandbox.file("tool/README", "");
+        let (ctx, env) = editor();
+        let before = ctx.get_current_buffer_name();
+        switch_to(&sandbox, "tool", &env, &ctx);
+        // A key no entry names: the question stays up.
+        press('z', &env, &ctx);
+        assert!(ctx.transient_keymap_active());
+        ctx.handle_key_event(
+            KeyEvent {
+                code: KeyCode::Char('g'),
+                modifiers: KeyModifiers {
+                    ctrl: true,
+                    ..KeyModifiers::default()
+                },
+            },
+            &env,
+        );
+        assert!(!ctx.transient_keymap_active());
+        assert!(!ctx.minibuffer_is_open());
+        assert_eq!(ctx.get_current_buffer_name(), before);
+        assert_eq!(run("project--switch-root", &env, &ctx), LispExp::nil());
+    }
+
+    #[test]
+    fn project_switch_commands_may_be_one_command_run_without_asking() {
+        let sandbox = Sandbox::new("switch-one");
+        sandbox.file("tool/README", "");
+        let (ctx, env) = editor();
+        run("(setq project-switch-commands 'project-find-file)", &env, &ctx);
+        switch_to(&sandbox, "tool", &env, &ctx);
+        assert!(!ctx.transient_keymap_active());
+        assert!(ctx.minibuffer_is_open(), "the file prompt should be open");
+        assert_eq!(
+            string(run("project--find-root", &env, &ctx)),
+            sandbox.root("tool")
+        );
+    }
+
+    #[test]
+    fn project_with_root_makes_root_the_current_project_while_it_runs() {
+        let sandbox = Sandbox::new("with-root");
+        sandbox.dir("app/.git").dir("other");
+        let (ctx, env) = editor();
+        run(&format!("(cd {:?})", sandbox.path("other")), &env, &ctx);
+        let outside = run("(project-root)", &env, &ctx);
+        run(
+            &format!(
+                "(setq seen (project-with-root {:?} (lambda () (list (project-root) (working-directory)))))",
+                sandbox.path("app")
+            ),
+            &env,
+            &ctx,
+        );
+        assert_eq!(string(run("(car seen)", &env, &ctx)), sandbox.root("app"));
+        assert_eq!(
+            bare(&string(run("(nth 1 seen)", &env, &ctx))),
+            bare(&sandbox.path("app"))
+        );
+        assert_eq!(run("(project-root)", &env, &ctx), outside);
+        // A failure inside gives the current project back too.
+        run(
+            &format!(
+                "(condition-case nil (project-with-root {:?} (lambda () (error \"boom\"))) (error nil))",
+                sandbox.path("app")
+            ),
+            &env,
+            &ctx,
+        );
+        assert_eq!(run("project--forced-root", &env, &ctx), LispExp::nil());
+        assert_eq!(run("(project-root)", &env, &ctx), outside);
+    }
+
+    #[test]
+    fn project_find_recent_file_offers_the_recent_files_under_the_root() {
+        let sandbox = Sandbox::new("recent");
+        sandbox
+            .dir("app/.git")
+            .file("app/src/main.rs", "")
+            .file("app/README", "")
+            .file("other/notes.txt", "");
+        let (ctx, env) = editor();
+        run("(clear-recent-files)", &env, &ctx);
+        visit(&sandbox, "other/notes.txt", &env, &ctx);
+        visit(&sandbox, "app/README", &env, &ctx);
+        visit(&sandbox, "app/src/main.rs", &env, &ctx);
+        run("(project-find-recent-file)", &env, &ctx);
+        assert!(ctx.minibuffer_is_open(), "the prompt should be open");
+        let separator = std::path::MAIN_SEPARATOR;
+        assert_eq!(
+            strings(&run("project--offered-recent", &env, &ctx)),
+            vec![format!("src{separator}main.rs"), "README".to_string()]
+        );
+    }
+
+    #[test]
+    fn project_find_recent_file_with_none_under_the_root_says_so() {
+        let sandbox = Sandbox::new("recent-none");
+        sandbox.dir("app/.git").file("app/README", "").file("other/notes.txt", "");
+        let (ctx, env) = editor();
+        run("(clear-recent-files)", &env, &ctx);
+        visit(&sandbox, "other/notes.txt", &env, &ctx);
+        run("(switch-to-buffer \"*scratch*\")", &env, &ctx);
+        run(&format!("(cd {:?})", sandbox.path("app")), &env, &ctx);
+        run("(project-find-recent-file)", &env, &ctx);
+        assert!(!ctx.minibuffer_is_open());
+        assert_eq!(ctx.get_echo_message(), "No recent files in app");
+    }
+
+    #[test]
+    fn project_findings_lists_those_under_the_root_named_from_it() {
+        let sandbox = Sandbox::new("findings");
+        sandbox.dir(".git").dir("sub/here");
+        let (ctx, env) = editor();
+        run(&format!("(cd {:?})", sandbox.path("sub/here")), &env, &ctx);
+        run("(project-findings)", &env, &ctx);
+        assert_eq!(
+            run("(car (buffer-get 'findings-what \"*Findings*\"))", &env, &ctx),
+            run("'under", &env, &ctx)
+        );
+        let under = run("(cdr (buffer-get 'findings-what \"*Findings*\"))", &env, &ctx);
+        assert_eq!(bare(&string(under)), bare(&sandbox.path("")));
+        let base = run("(buffer-get 'findings-directory \"*Findings*\")", &env, &ctx);
+        assert_eq!(bare(&string(base)), bare(&sandbox.path("")));
+    }
+
+    #[test]
+    fn project_grep_regexp_searches_under_the_root() {
+        let sandbox = Sandbox::new("grep-regexp");
+        sandbox
+            .dir(".git")
+            .file("top.txt", "a neeedle at the top\n")
+            .file("sub/deep.txt", "nothing here\n")
+            .dir("sub/here");
+        let (ctx, env) = editor();
+        run(&format!("(cd {:?})", sandbox.path("sub/here")), &env, &ctx);
+        run("(project-grep-regexp)", &env, &ctx);
+        answer("ne+dle", &env, &ctx);
+        let buffer = ctx.get_current_buffer_name();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let state = run(&format!("(results-state {buffer:?})"), &env, &ctx);
+            if state.iter().nth(3).is_some_and(|done| !done.is_nil()) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "the search did not finish");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let listing = ctx
+            .with_buffer(&buffer, |buf| buf.text.to_string())
+            .expect("the list");
+        assert!(listing.contains("top.txt:1: a neeedle at the top"), "{listing}");
+        assert!(!listing.contains("deep.txt"), "{listing}");
     }
 
     // -----------------------------------------------------------------------
