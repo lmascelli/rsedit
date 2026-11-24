@@ -354,7 +354,12 @@ buffer has the same text; :timed, it is dropped after `lsp-request-timeout';
                    "definition" (make-map "linkSupport" t)
                    "references" (make-map)
                    "completion" (make-map "completionItem"
-                                          (make-map "snippetSupport" 'false))
+                                          (make-map "snippetSupport" 'false)
+                                          "completionItemKind"
+                                          (make-map "valueSet"
+                                                    (vector 1 2 3 4 5 6 7 8 9 10 11 12 13
+                                                            14 15 16 17 18 19 20 21 22 23
+                                                            24 25)))
                    "codeAction"
                    (make-map "codeActionLiteralSupport"
                              (make-map "codeActionKind"
@@ -1393,6 +1398,19 @@ list of them or a CompletionList."
           ((stringp (map-elt item "insertText")) (map-elt item "insertText"))
           (t (map-elt item "label")))))
 
+(defvar lsp--completion-kinds
+  '("text" "method" "function" "constructor" "field" "variable" "class"
+    "interface" "module" "property" "unit" "value" "enum" "keyword" "snippet"
+    "color" "file" "reference" "folder" "enum member" "constant" "struct"
+    "event" "operator" "type parameter")
+  "The names of the CompletionItemKinds, from 1 on.")
+
+(defun lsp--completion-kind (item)
+  "The name of the kind of the CompletionItem ITEM, nil when it has none
+known."
+  (let ((kind (map-elt item "kind")))
+    (if (and (numberp kind) (> kind 0)) (nth (- kind 1) lsp--completion-kinds))))
+
 (defun lsp--completion-span (server items)
   "(START END) of the text ITEMS, SERVER's completions at point, take the
 place of: the range of the first that has one, else the symbol at point."
@@ -1407,17 +1425,24 @@ place of: the range of the first that has one, else the symbol at point."
         (or (bounds-of-thing-at-point 'symbol) (list (point) (point))))))
 
 (defun lsp--completions (server items)
-  "(TEXT . EXTRA) for each text ITEMS, SERVER's completions, put in place, the
-first item of each kept; EXTRA is what `lsp--replacements' gives for its
-additionalTextEdits, nil when it has none."
+  "(TEXT KIND . EXTRA) for each text ITEMS, SERVER's completions, put in place,
+the first item of each kept; KIND is what `lsp--completion-kind' gives for it,
+EXTRA what `lsp--replacements' gives for its additionalTextEdits, nil when it
+has none."
   (let ((entries nil))
     (dolist (item items)
       (let ((text (lsp--completion-text item))
             (edits (lsp--list (map-elt item "additionalTextEdits"))))
         (unless (or (not (stringp text)) (assoc text entries))
-          (setq entries (cons (cons text (if edits (lsp--replacements server edits)))
+          (setq entries (cons (cons text (cons (lsp--completion-kind item)
+                                               (if edits (lsp--replacements server edits))))
                               entries)))))
     (reverse entries)))
+
+(defun lsp--candidate (entry)
+  "The candidate offered for ENTRY, a (TEXT KIND . EXTRA): TEXT, described by
+KIND when it has one."
+  (if (nth 1 entry) (cons (car entry) (nth 1 entry)) (car entry)))
 
 (defun lsp--complete-extra (server extra span size buffer)
   "nil, after making in BUFFER EXTRA, the (START END TEXT) a chosen completion
@@ -1448,9 +1473,13 @@ BUFFER, while point is still there."
           (message "No completions here")
           (let ((span (lsp--completion-span server (lsp--items result)))
                 (size (point-max)))
-            (completion-offer (car span) (nth 1 span) (mapcar 'car entries)
+            (completion-offer (car span) (nth 1 span) (mapcar 'lsp--candidate entries)
                               (lambda (chosen)
-                                (lsp--complete-extra server (cdr (assoc chosen entries))
+                                (lsp--complete-extra server
+                                                     (cdr (cdr (assoc (if (consp chosen)
+                                                                          (car chosen)
+                                                                          chosen)
+                                                                      entries)))
                                                      span size buffer)))))))
   nil)
 
