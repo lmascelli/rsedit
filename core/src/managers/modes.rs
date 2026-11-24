@@ -79,6 +79,9 @@ pub struct Modes<B: BufferTrait> {
     /// global half of `MajorMode::completion_functions`, and the same
     /// relationship `global_keymap` has to `MajorMode::keymaps`.
     global_completions: Vec<ELispExp<B>>,
+    /// The priority each completion source has been given: the higher are
+    /// asked first, and a source never given one has 0.
+    completion_priorities: Vec<(ELispExp<B>, f64)>,
     /// Which file names get which major mode, in the order they were
     /// declared: patterns overlap, and the first declared wins.
     auto_modes: Vec<(regex::Regex, String)>,
@@ -107,6 +110,7 @@ impl<B: BufferTrait> Modes<B> {
             registry: HashMap::new(),
             global_keymap,
             global_completions: Vec::new(),
+            completion_priorities: Vec::new(),
             auto_modes: Vec::new(),
             transient: None,
             repeat_keys: HashMap::new(),
@@ -485,8 +489,8 @@ impl<B: BufferTrait> Modes<B> {
     // ------------------------------------------------------------------
 
     /// Returns MODE's completion sources, then the global ones unless MODE
-    /// asks for its own alone, copied out: each is about to be called, and is
-    /// arbitrary Lisp.
+    /// asks for its own alone, from the highest priority down, copied out:
+    /// each is about to be called, and is arbitrary Lisp.
     pub fn completion_sources(&self, mode: &str) -> Vec<ELispExp<B>> {
         let (mut sources, global) = self
             .registry
@@ -496,7 +500,34 @@ impl<B: BufferTrait> Modes<B> {
         if global {
             sources.extend(self.global_completions.iter().cloned());
         }
+        // Stable, so that sources of one priority keep the order of their
+        // lists, the mode's before the global ones.
+        sources.sort_by(|a, b| {
+            self.completion_priority(b)
+                .total_cmp(&self.completion_priority(a))
+        });
         sources
+    }
+
+    /// Returns the priority FUNCTION has as a completion source: the one it
+    /// was last given, or 0.
+    pub fn completion_priority(&self, function: &ELispExp<B>) -> f64 {
+        self.completion_priorities
+            .iter()
+            .find(|(source, _)| source == function)
+            .map_or(0.0, |(_, priority)| *priority)
+    }
+
+    /// Gives FUNCTION PRIORITY as a completion source, in every list it is in.
+    pub fn set_completion_priority(&mut self, function: ELispExp<B>, priority: f64) {
+        match self
+            .completion_priorities
+            .iter_mut()
+            .find(|(source, _)| *source == function)
+        {
+            Some(entry) => entry.1 = priority,
+            None => self.completion_priorities.push((function, priority)),
+        }
     }
 
     /// Returns one list on its own: MODE's, or the global one for `None`;

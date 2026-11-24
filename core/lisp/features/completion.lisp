@@ -243,19 +243,38 @@ What `*completion-read-function*' names."
                   (setq *completion--index* 0)
                   (completion--draw))))))))
 
-(defun completion-reconsider ()
+(defun completion-reconsider (&optional items)
   "Ask for the candidates again and redraw the strip, when one is open,
 keeping the selection. What `completion-invalidate' reaches, through
-`*completion-invalidated-function*'."
+`*completion-invalidated-function*', and `completion-at-point' too, with
+ITEMS, the candidates it has found so far, while it still asks its sources."
   ;; Unlike `completion--refresh', nothing was typed: the list grew.
   (if *completion--window*
-      (let ((text (completion--current-text)))
+      (let ((text (completion--current-text))
+            (selected (if *completion--items*
+                          (completion-value
+                           (nth *completion--index* *completion--items*))
+                          nil)))
+        ;; ITEMS are a buffer's: a prompt's strip asks its own again.
+        (if (and items *completion--anchor*)
+            (setq *completion--all-items* items))
         (completion--narrow text)
         (setq *completion--pattern* text)
-        ;; A rebuild, not an append: the selection may be out of range.
-        (if (>= *completion--index* (length *completion--items*))
-            (setq *completion--index* 0))
+        ;; A rebuild, not an append: the one selected may have moved, or gone,
+        ;; and then the first is.
+        (setq *completion--index*
+              (completion--position selected *completion--items*))
         (completion--draw))))
+
+(defun completion--position (value items)
+  "Where the candidate VALUE is in ITEMS, or 0 when it is not there."
+  (let ((index 0)
+        (found nil))
+    (dolist (item items)
+      (if (and (null found) (equal (completion-value item) value))
+          (setq found index))
+      (setq index (+ index 1)))
+    (if found found 0)))
 
 (defun completion-next ()
   "Select the next candidate, wrapping round at the end."

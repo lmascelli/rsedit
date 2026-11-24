@@ -228,8 +228,9 @@ impl<B: BufferTrait> EditorState<B> {
     // Completion sources: one list per mode, and one for every mode
     // ------------------------------------------------------------------
 
-    /// Returns every completion source to try in MODE, the mode's own before
-    /// the global ones: in a Lisp buffer the interpreter's names are the good
+    /// Returns every completion source to try in MODE, from the highest
+    /// priority down, and of one priority the mode's own before the global
+    /// ones: in a Lisp buffer the interpreter's names are the good
     /// answer and the words of other buffers the fallback, and only the mode
     /// can say so.
     ///
@@ -246,6 +247,18 @@ impl<B: BufferTrait> EditorState<B> {
         function: ELispExp<B>,
     ) -> bool {
         self.modes_mut(|modes| modes.add_completion(mode, function))
+    }
+
+    /// Gives FUNCTION PRIORITY as a completion source: a buffer's sources are
+    /// asked from the highest priority down.
+    pub(crate) fn set_completion_priority(&self, function: ELispExp<B>, priority: f64) {
+        self.modes_mut(|modes| modes.set_completion_priority(function, priority))
+    }
+
+    /// Returns the priority FUNCTION has as a completion source, 0 when it was
+    /// never given one.
+    pub(crate) fn completion_priority(&self, function: &ELispExp<B>) -> f64 {
+        self.modes(|modes| modes.completion_priority(function))
     }
 
     /// Replaces MODE's sources, or the global ones, with FUNCTIONS: how a

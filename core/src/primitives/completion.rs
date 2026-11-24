@@ -4,10 +4,15 @@
 //!
 //! Design: `doc/architettura-editor.typ, <completamento>`.
 use super::*;
-use crate::editor::{COMPLETION_FILTER_FUNCTION, COMPLETION_READ_FUNCTION};
+use crate::editor::{
+    COMPLETION_AT_POINT_WAIT, COMPLETION_FILTER_FUNCTION, COMPLETION_INVALIDATED_FUNCTION,
+    COMPLETION_READ_FUNCTION, DEFAULT_COMPLETION_AT_POINT_WAIT, DirectoryScope, scoped_directory,
+};
 use crate::primitives::edits::{delete_range, edited, insert_text};
+use crate::work::{Job, JobError, Spec, Step, StepContext, WorkId};
 use risp::call_callable;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// Where the text being completed begins, while a presenter is handed the
 /// candidates, and only for that long. A presenter reads it once, as it
@@ -22,6 +27,19 @@ const START_VAR: &str = "*completion-at-point-start*";
 /// given a function to call. Bound at the root: the choice comes keystrokes
 /// later, after the command that offered and its caller have returned.
 const REGION_VAR: &str = "*completion-at-point-region*";
+
+/// The job that asks the sources left over, by its name, and the topic that
+/// wakes it to ask the next.
+const JOB_NAME: &str = "completion-at-point";
+const ASKED_TOPIC: &str = "completion-at-point-asked";
+
+/// What the job calls between commands to ask the next source.
+const CONTINUE: &str = "completion-at-point--continue";
+
+/// A completion whose sources are still being asked, as [`Pending`] writes
+/// it: `(BUFFER LENGTH SOURCES REGION CANDIDATES PRESENTED)`. Bound at the
+/// root, as REGION_VAR is, and nil when nothing is left to ask.
+const PENDING_VAR: &str = "*completion-at-point-pending*";
 
 /// Returns the text ITEM, a candidate, completes to: the string or symbol
 /// itself, or the VALUE of a `(VALUE . DESCRIPTION)` pair.
@@ -110,19 +128,30 @@ fn common_prefix(values: &[String]) -> String {
 // Declaring sources
 // ---------------------------------------------------------------------------
 
-pub const ADD_COMPLETION_FUNCTION_DOC: &str = "(add-completion-function MODE FUNCTION): Add \
-         FUNCTION to the completion sources of the major mode MODE, after the ones it has, or to \
-         those of every buffer when MODE is nil. Return t, or nil when MODE is unknown. FUNCTION \
+pub const ADD_COMPLETION_FUNCTION_DOC: &str = "(add-completion-function MODE FUNCTION &optional \
+         PRIORITY): Add FUNCTION to the completion sources of the major mode MODE, after the ones \
+         it has, or to those of every buffer when MODE is nil, and give it PRIORITY when that is \
+         given, as `set-completion-priority' does. Return t, or nil when MODE is unknown. FUNCTION \
          takes no arguments and returns nil, or (START END CANDIDATES): the positions of the text \
-         it would replace, and a list of strings or (VALUE . DESCRIPTION) pairs. A mode's sources \
-         are asked before the global ones.\n\n\
+         it would replace, and a list of strings or (VALUE . DESCRIPTION) pairs. Sources are \
+         asked from the highest priority down, and of one priority a mode's before the global \
+         ones.\n\n\
          Example:\n\
          (add-completion-function 'manpage-mode 'capf-manpage-names)";
 
 primitive!(add_completion_function, args, _env, ctx, {
-    exact_arity(args, 2)?;
+    if !(2..=3).contains(&args.len()) {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: if args.len() < 2 { 2 } else { 3 },
+            got: args.len(),
+        });
+    }
     let mode = args::optional_name(args.first(), "Symbol, String or nil")?;
+    let priority = args.get(2).map(priority).transpose()?;
     if ctx.add_completion_function(mode.as_deref(), args[1].clone()) {
+        if let Some(priority) = priority {
+            ctx.set_completion_priority(args[1].clone(), priority);
+        }
         Ok(ELispExp::t())
     } else {
         ctx.log_diagnostic(&format!("Mode {} does not exist", mode.unwrap_or_default()));
@@ -168,6 +197,41 @@ primitive!(completion_functions, args, _env, ctx, {
         Some(list) => Ok(ELispExp::proper_list(list)),
         None => Ok(ELispExp::nil()),
     }
+});
+
+/// Reads a source's priority: any number but an infinite one.
+fn priority<B: BufferTrait>(exp: &ELispExp<B>) -> Result<f64, EvalError<EditorState<B>>> {
+    match exp {
+        ELispExp::Number(n) if n.is_finite() => Ok(*n),
+        other => Err(EvalError::WrongArgumentType {
+            expected: "Number".into(),
+            got: other.clone(),
+        }),
+    }
+}
+
+pub const SET_COMPLETION_PRIORITY_DOC: &str = "(set-completion-priority FUNCTION PRIORITY): Give \
+         FUNCTION, a completion source, PRIORITY, a number, in every list of sources it is or \
+         will be in, and return PRIORITY. `completion-at-point' asks the sources from the highest \
+         priority down, and those of one priority in the order of their lists; a source never \
+         given one has 0.\n\n\
+         Example:\n\
+         (set-completion-priority 'capf-buffer-words -100)";
+
+primitive!(set_completion_priority, args, _env, ctx, {
+    exact_arity(args, 2)?;
+    ctx.set_completion_priority(args[0].clone(), priority(&args[1])?);
+    Ok(args[1].clone())
+});
+
+pub const COMPLETION_PRIORITY_DOC: &str = "(completion-priority FUNCTION): Return the priority of \
+         FUNCTION as a completion source: the one it was last given, or 0.\n\n\
+         Example:\n\
+         (completion-priority 'capf-symbols)";
+
+primitive!(completion_priority, args, _env, ctx, {
+    exact_arity(args, 1)?;
+    Ok(ELispExp::number(ctx.completion_priority(&args[0])))
 });
 
 fn current_mode<B: BufferTrait>(ctx: &EditorState<B>) -> String {
@@ -297,41 +361,77 @@ primitive!(bounds_of_thing_at_point, args, _env, ctx, {
 // ---------------------------------------------------------------------------
 
 pub const COMPLETION_AT_POINT_DOC: &str = "(completion-at-point): Complete the text at point. The \
-         sources of the buffer's mode are asked, then the global ones unless the mode's are its \
-         only ones: the first to answer decides which text is completed, and later ones \
-         claiming the same text add their candidates. They are matched against what is typed by `*completion-filter-function*', or \
+         sources of the buffer's mode are asked, and the global ones unless the mode's are its \
+         only ones, from the highest priority down: the first to answer decides which text is \
+         completed, and later ones claiming the same text add their candidates. Those still to \
+         be asked after a moment are left to a job, which asks one between each command and the \
+         next and adds what it answers to the candidates on show, which can be chosen \
+         meanwhile. They are matched against what is typed by `*completion-filter-function*', or \
          from the start when it is nil. One candidate is put in; several go to \
          `*completion-read-function*', or, when it is nil, as much as they all begin with is put \
          in and their number shown. C-M-i.";
 
 primitive!(completion_at_point, _args, env, ctx, {
     // A new completion, so whatever the last one left for a late answer to
-    // fill in no longer describes anything anybody is choosing for.
+    // fill in no longer describes anything anybody is choosing for, nor what
+    // it still had to ask.
     env.set_root_variable(REGION_VAR.into(), ELispExp::nil());
+    env.set_root_variable(PENDING_VAR.into(), ELispExp::nil());
     let mode = current_mode(ctx);
-    let sources = ctx.completion_sources(&mode);
+    let mut sources = ctx.completion_sources(&mode).into_iter();
 
     let mut region: Option<(usize, usize)> = None;
     let mut candidates: Vec<ELispExp<B>> = Vec::new();
 
-    for source in sources {
-        let answer = call_callable(&source, &[], env.clone(), ctx)?;
-        if answer.is_nil() {
-            continue;
+    // As many as answer within `completion-at-point-wait', which is most of
+    // the time all of them, and then complete as if there were no job; the
+    // rest are left to one, so that a slow source does not keep the keys.
+    let wait = Duration::from_secs_f64(
+        env.number_at_least(COMPLETION_AT_POINT_WAIT, 0.0)
+            .unwrap_or(DEFAULT_COMPLETION_AT_POINT_WAIT)
+            .min(1e9)
+            / 1000.0,
+    );
+    let began = Instant::now();
+    for source in sources.by_ref() {
+        ask(&source, &mut region, &mut candidates, &env, ctx)?;
+        if began.elapsed() >= wait {
+            break;
         }
-        // A malformed answer costs that source, not the command. A completion
-        // list is configuration in the same way a grammar is: one broken entry
-        // should not be the difference between completing and not.
-        match parse_answer(&answer) {
-            Err(why) => ctx.log_diagnostic(&format!("Completion source {source:?}: {why}")),
-            Ok((start, end, items)) => match region {
-                None => {
-                    region = Some((start, end));
-                    candidates.extend(items);
-                }
-                Some(claimed) if claimed == (start, end) => candidates.extend(items),
-                Some(_) => {}
-            },
+    }
+    let rest: Vec<ELispExp<B>> = sources.collect();
+    if !rest.is_empty() {
+        let job = Asking {
+            directory: scoped_directory(),
+            id: None,
+        };
+        if ctx
+            .work()
+            .submit(Spec::new(JOB_NAME).on(ASKED_TOPIC), Box::new(job))
+            .is_some()
+        {
+            let mut pending = Pending {
+                buffer: ctx.get_current_buffer_name(),
+                length: ctx.with_current_buffer(|buf| buf.text.len()),
+                sources: rest,
+                region,
+                candidates,
+                presented: false,
+            };
+            if let Err(error) = pending.show(&env, ctx) {
+                ctx.work().cancel_named(JOB_NAME);
+                return Err(error);
+            }
+            pending.write(&env);
+            if !pending.presented {
+                ctx.set_echo_message("Looking for completions...");
+            }
+            return Ok(ELispExp::t());
+        }
+        // No job can be started: asked here, as if they had all answered at
+        // once.
+        for source in rest {
+            ask(&source, &mut region, &mut candidates, &env, ctx)?;
         }
     }
 
@@ -340,6 +440,219 @@ primitive!(completion_at_point, _args, env, ctx, {
         return Ok(ELispExp::nil());
     };
     offer(start, end, candidates, None, env.clone(), ctx)
+});
+
+/// Asks SOURCE what could go at point. The first answer makes its text
+/// REGION; an answer claiming that text adds its candidates to CANDIDATES,
+/// and one claiming other text is passed over.
+fn ask<B: BufferTrait>(
+    source: &ELispExp<B>,
+    region: &mut Option<(usize, usize)>,
+    candidates: &mut Vec<ELispExp<B>>,
+    env: &Arc<Env<EditorState<B>>>,
+    ctx: &EditorState<B>,
+) -> Result<(), EvalError<EditorState<B>>> {
+    let answer = call_callable(source, &[], env.clone(), ctx)?;
+    if answer.is_nil() {
+        return Ok(());
+    }
+    // A malformed answer costs that source, not the command. A completion
+    // list is configuration in the same way a grammar is: one broken entry
+    // should not be the difference between completing and not.
+    match parse_answer(&answer) {
+        Err(why) => ctx.log_diagnostic(&format!("Completion source {source:?}: {why}")),
+        Ok((start, end, items)) => match region {
+            None => {
+                *region = Some((start, end));
+                candidates.extend(items);
+            }
+            Some(claimed) if *claimed == (start, end) => candidates.extend(items),
+            Some(_) => {}
+        },
+    }
+    Ok(())
+}
+
+/// A completion whose sources the job is still asking, kept in PENDING_VAR
+/// between one and the next.
+struct Pending<B: BufferTrait> {
+    /// The buffer it completes in.
+    buffer: String,
+    /// How long that buffer was when REGION last held.
+    length: usize,
+    /// The sources still to ask, in the order to ask them.
+    sources: Vec<ELispExp<B>>,
+    region: Option<(usize, usize)>,
+    /// What the sources asked so far have offered for REGION.
+    candidates: Vec<ELispExp<B>>,
+    /// Whether the presenter has been handed them.
+    presented: bool,
+}
+
+impl<B: BufferTrait> Pending<B> {
+    /// Returns what PENDING_VAR holds, or `None` when nothing is left to ask.
+    fn read(env: &Arc<Env<EditorState<B>>>) -> Option<Self> {
+        let parts = args::list(&env.get_variable(PENDING_VAR)?);
+        let [buffer, length, sources, region, candidates, presented] = parts.as_slice() else {
+            return None;
+        };
+        let ELispExp::String(buffer) = buffer else {
+            return None;
+        };
+        let region = match args::list(region).as_slice() {
+            [start, end] => Some((position(start)?, position(end)?)),
+            _ => None,
+        };
+        Some(Self {
+            buffer: buffer.to_string(),
+            length: position(length)?,
+            sources: args::list(sources),
+            region,
+            candidates: args::list(candidates),
+            presented: presented.is_truthy(),
+        })
+    }
+
+    /// Keeps it in PENDING_VAR, for the job's next call.
+    fn write(&self, env: &Arc<Env<EditorState<B>>>) {
+        let region = match self.region {
+            Some((start, end)) => ELispExp::proper_list(vec![
+                ELispExp::number(start as f64),
+                ELispExp::number(end as f64),
+            ]),
+            None => ELispExp::nil(),
+        };
+        env.set_root_variable(
+            PENDING_VAR.into(),
+            ELispExp::proper_list(vec![
+                ELispExp::string(self.buffer.clone()),
+                ELispExp::number(self.length as f64),
+                ELispExp::proper_list(self.sources.clone()),
+                region,
+                ELispExp::proper_list(self.candidates.clone()),
+                ELispExp::boolean(self.presented),
+            ]),
+        );
+    }
+
+    /// Shows the candidates found so far, when there is a presenter and they
+    /// are a choice: handed to it the first time, as [`offer`] hands them,
+    /// and to `*completion-invalidated-function*` after that, so that the
+    /// list on screen grows and what is on it can still be chosen. One alone
+    /// is not shown, since a source still to be asked may make it a choice.
+    fn show(
+        &mut self,
+        env: &Arc<Env<EditorState<B>>>,
+        ctx: &EditorState<B>,
+    ) -> Result<(), EvalError<EditorState<B>>> {
+        let Some((start, end)) = self.region else {
+            return Ok(());
+        };
+        let (_, unique) = matching(start, end, self.candidates.clone(), env, ctx)?;
+        if self.presented {
+            if let Some(update) = env.get_variable(COMPLETION_INVALIDATED_FUNCTION)
+                && update.is_truthy()
+            {
+                call_callable(&update, &[ELispExp::proper_list(unique)], env.clone(), ctx)?;
+            }
+        } else if unique.len() > 1 {
+            self.presented = present(start, end, unique, None, env, ctx)?;
+        }
+        Ok(())
+    }
+}
+
+/// Forgets the sources left to ask, and stops the job that asks them.
+fn stop_asking<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>, ctx: &EditorState<B>) {
+    env.set_root_variable(PENDING_VAR.into(), ELispExp::nil());
+    ctx.work().cancel_named(JOB_NAME);
+}
+
+/// The job that has the sources `completion-at-point` left over asked. It
+/// asks nothing itself: a source is Lisp that reads the current buffer, which
+/// is the one the thread that runs commands has made current, so each step
+/// owes that thread a call to CONTINUE, which asks one, and waits until it
+/// has.
+struct Asking {
+    /// The directory the completion was started in, which each call runs in.
+    directory: Option<String>,
+    id: Option<WorkId>,
+}
+
+impl<B: BufferTrait> Job<EditorState<B>> for Asking {
+    fn step(&mut self, cx: &mut StepContext<'_, EditorState<B>>) -> Result<Step, JobError> {
+        let id = *self.id.get_or_insert(cx.id);
+        let _scope = DirectoryScope::enter(self.directory.clone());
+        cx.state
+            .owe_callback(JOB_NAME, id, ELispExp::symbol(CONTINUE.into()), Vec::new());
+        // Woken by CONTINUE once it has asked, rather than stepping again at
+        // once: one source each time that thread comes round, and the keys
+        // typed in between handled in between.
+        Ok(Step::Wait)
+    }
+}
+
+const COMPLETION_AT_POINT_CONTINUE_DOC: &str = "(completion-at-point--continue): Ask the next of \
+         the sources `completion-at-point' left to its job, and show what it adds; with the \
+         last, complete as `completion-at-point' does. Return t while sources are left. The job \
+         calls it between commands.";
+
+primitive!(completion_at_point_continue, _args, env, ctx, {
+    let Some(mut pending) = Pending::read(&env) else {
+        // A later completion, or the end of this one, has taken what was left.
+        ctx.work().cancel_named(JOB_NAME);
+        return Ok(ELispExp::nil());
+    };
+    let (length, point) = ctx.with_current_buffer(|buf| (buf.text.len(), buf.text.cursor_pos_1d()));
+    // Nobody is waiting for more once a candidate has been chosen, or point
+    // has gone to another buffer or back past the text being completed.
+    let chosen = pending.presented
+        && env
+            .get_variable(REGION_VAR)
+            .is_none_or(|region| region.is_nil());
+    let gone = ctx.get_current_buffer_name() != pending.buffer
+        || pending.region.is_some_and(|(start, _)| point < start);
+    if chosen || gone || pending.sources.is_empty() {
+        stop_asking(&env, ctx);
+        return Ok(ELispExp::nil());
+    }
+    // Carried forward over what was typed since, as REGION_VAR's end is.
+    if let Some((start, end)) = pending.region {
+        let end = (end + length).saturating_sub(pending.length).max(start);
+        pending.region = Some((start, end));
+    }
+    pending.length = length;
+    let source = pending.sources.remove(0);
+    // A source that fails costs itself and not the ones after it: there is no
+    // command left for the error to stop.
+    if let Err(error) = ask(
+        &source,
+        &mut pending.region,
+        &mut pending.candidates,
+        &env,
+        ctx,
+    ) {
+        ctx.log_diagnostic(&format!("Completion source {source:?}: {error:?}"));
+    }
+    if !pending.sources.is_empty() {
+        let shown = pending.show(&env, ctx);
+        pending.write(&env);
+        ctx.work().topic(ASKED_TOPIC).emit();
+        shown?;
+        return Ok(ELispExp::t());
+    }
+    stop_asking(&env, ctx);
+    if pending.presented {
+        pending.show(&env, ctx)?;
+        return Ok(ELispExp::nil());
+    }
+    match pending.region {
+        Some((start, end)) => {
+            offer(start, end, pending.candidates, None, env.clone(), ctx)?;
+        }
+        None => ctx.set_echo_message("No completion source has anything here"),
+    }
+    Ok(ELispExp::nil())
 });
 
 /// Offers CANDIDATES for START to END of the current buffer: matches them
@@ -354,6 +667,54 @@ fn offer<B: BufferTrait>(
     env: Arc<Env<EditorState<B>>>,
     ctx: &EditorState<B>,
 ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
+    let (pattern, unique) = matching(start, end, candidates, &env, ctx)?;
+    let values: Vec<String> = unique.iter().filter_map(candidate_value).collect();
+
+    match values.len() {
+        0 => {
+            ctx.set_echo_message(&format!("No completion for {pattern:?}"));
+            Ok(ELispExp::nil())
+        }
+        1 => {
+            if replace_region(ctx, start, end, &values[0]) {
+                if let Some(on_chosen) = on_chosen {
+                    call_callable(&on_chosen, &[unique[0].clone()], env.clone(), ctx)?;
+                }
+                Ok(ELispExp::t())
+            } else {
+                // Through the same reporter every refused edit goes through,
+                // so a read-only buffer says the one thing it always says.
+                Ok(edited(ctx, false))
+            }
+        }
+        count => {
+            if present(start, end, unique, on_chosen, &env, ctx)? {
+                return Ok(ELispExp::t());
+            }
+            // No presenter: fill in as far as the candidates agree, which is
+            // what makes this useful on its own rather than only as a back end
+            // for a module that may not be loaded.
+            let shared = common_prefix(&values);
+            if shared.chars().count() > pattern.chars().count()
+                && !replace_region(ctx, start, end, &shared)
+            {
+                return Ok(edited(ctx, false));
+            }
+            ctx.set_echo_message(&format!("{count} completions"));
+            Ok(ELispExp::nil())
+        }
+    }
+}
+
+/// Returns the text from START to END of the current buffer, and those of
+/// CANDIDATES that match it, each value once.
+fn matching<B: BufferTrait>(
+    start: usize,
+    end: usize,
+    candidates: Vec<ELispExp<B>>,
+    env: &Arc<Env<EditorState<B>>>,
+    ctx: &EditorState<B>,
+) -> Result<(String, Vec<ELispExp<B>>), EvalError<EditorState<B>>> {
     let pattern = text_between(ctx, start, end);
     let matching = match env.get_variable(COMPLETION_FILTER_FUNCTION) {
         Some(filter) if filter.is_truthy() => args::list(&call_callable(
@@ -382,69 +743,52 @@ fn offer<B: BufferTrait>(
             None => false,
         })
         .collect();
-    let values: Vec<String> = unique.iter().filter_map(candidate_value).collect();
+    Ok((pattern, unique))
+}
 
-    match values.len() {
-        0 => {
-            ctx.set_echo_message(&format!("No completion for {pattern:?}"));
-            Ok(ELispExp::nil())
-        }
-        1 => {
-            if replace_region(ctx, start, end, &values[0]) {
-                if let Some(on_chosen) = on_chosen {
-                    call_callable(&on_chosen, &[unique[0].clone()], env.clone(), ctx)?;
-                }
-                Ok(ELispExp::t())
-            } else {
-                // Through the same reporter every refused edit goes through,
-                // so a read-only buffer says the one thing it always says.
-                Ok(edited(ctx, false))
-            }
-        }
-        count => {
-            if let Some(present) = env.get_variable(COMPLETION_READ_FUNCTION)
-                && present.is_truthy()
-            {
-                let length = ctx.with_current_buffer(|buf| buf.text.len());
-                let mut recorded = vec![
-                    ELispExp::number(start as f64),
-                    ELispExp::number(end as f64),
-                    ELispExp::number(length as f64),
-                ];
-                if let Some(on_chosen) = on_chosen {
-                    recorded.push(on_chosen);
-                    recorded.push(ELispExp::proper_list(unique.clone()));
-                }
-                env.set_root_variable(REGION_VAR.into(), ELispExp::proper_list(recorded));
-                env.set_root_variable(START_VAR.into(), ELispExp::number(start as f64));
-                let presented = call_callable(
-                    &present,
-                    &[
-                        ELispExp::proper_list(unique),
-                        ELispExp::symbol("completion-at-point-choose".into()),
-                    ],
-                    env.clone(),
-                    ctx,
-                );
-                // Put back whether or not the presenter succeeded: see
-                // START_VAR for what it costs to leave it set.
-                env.set_root_variable(START_VAR.into(), ELispExp::nil());
-                presented?;
-                return Ok(ELispExp::t());
-            }
-            // No presenter: fill in as far as the candidates agree, which is
-            // what makes this useful on its own rather than only as a back end
-            // for a module that may not be loaded.
-            let shared = common_prefix(&values);
-            if shared.chars().count() > pattern.chars().count()
-                && !replace_region(ctx, start, end, &shared)
-            {
-                return Ok(edited(ctx, false));
-            }
-            ctx.set_echo_message(&format!("{count} completions"));
-            Ok(ELispExp::nil())
-        }
+/// Hands UNIQUE, the candidates for START to END, to
+/// `*completion-read-function*`, and returns whether there is one to hand
+/// them to. ON_CHOSEN is as for [`offer`].
+fn present<B: BufferTrait>(
+    start: usize,
+    end: usize,
+    unique: Vec<ELispExp<B>>,
+    on_chosen: Option<ELispExp<B>>,
+    env: &Arc<Env<EditorState<B>>>,
+    ctx: &EditorState<B>,
+) -> Result<bool, EvalError<EditorState<B>>> {
+    let Some(present) = env
+        .get_variable(COMPLETION_READ_FUNCTION)
+        .filter(ELispExp::is_truthy)
+    else {
+        return Ok(false);
+    };
+    let length = ctx.with_current_buffer(|buf| buf.text.len());
+    let mut recorded = vec![
+        ELispExp::number(start as f64),
+        ELispExp::number(end as f64),
+        ELispExp::number(length as f64),
+    ];
+    if let Some(on_chosen) = on_chosen {
+        recorded.push(on_chosen);
+        recorded.push(ELispExp::proper_list(unique.clone()));
     }
+    env.set_root_variable(REGION_VAR.into(), ELispExp::proper_list(recorded));
+    env.set_root_variable(START_VAR.into(), ELispExp::number(start as f64));
+    let presented = call_callable(
+        &present,
+        &[
+            ELispExp::proper_list(unique),
+            ELispExp::symbol("completion-at-point-choose".into()),
+        ],
+        env.clone(),
+        ctx,
+    );
+    // Put back whether or not the presenter succeeded: see
+    // START_VAR for what it costs to leave it set.
+    env.set_root_variable(START_VAR.into(), ELispExp::nil());
+    presented?;
+    Ok(true)
 }
 
 pub const COMPLETION_OFFER_DOC: &str = "(completion-offer START END CANDIDATES &optional \
@@ -481,6 +825,7 @@ primitive!(completion_offer, args, env, ctx, {
     // A new offer, as in `completion_at_point': whatever the last one left
     // describes nothing anybody is choosing for.
     env.set_root_variable(REGION_VAR.into(), ELispExp::nil());
+    env.set_root_variable(PENDING_VAR.into(), ELispExp::nil());
     offer(
         start,
         end,
@@ -556,6 +901,11 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     );
     into.function("completion-offer", completion_offer, COMPLETION_OFFER_DOC);
     into.function(
+        CONTINUE,
+        completion_at_point_continue,
+        COMPLETION_AT_POINT_CONTINUE_DOC,
+    );
+    into.function(
         "completion-at-point-choose",
         completion_at_point_choose,
         COMPLETION_AT_POINT_CHOOSE_DOC,
@@ -574,6 +924,16 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         "completion-functions",
         completion_functions,
         COMPLETION_FUNCTIONS_DOC,
+    );
+    into.function(
+        "set-completion-priority",
+        set_completion_priority,
+        SET_COMPLETION_PRIORITY_DOC,
+    );
+    into.function(
+        "completion-priority",
+        completion_priority,
+        COMPLETION_PRIORITY_DOC,
     );
     into.function("buffer-words", buffer_words, BUFFER_WORDS_DOC);
     into.function(

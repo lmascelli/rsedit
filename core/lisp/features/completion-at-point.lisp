@@ -111,7 +111,8 @@ or CANDIDATES is empty."
 ;; ---------------------------------------------------------------------------
 ;;
 ;; Most specific first: the first source to answer fixes the region, and of a
-;; name offered twice the first description stays.
+;; name offered twice the first description stays. Asked by priority, all
+;; below 0, so that a source given none, a mode's own above all, comes first.
 
 (set-completion-functions nil
                           '(capf-file-name
@@ -119,6 +120,12 @@ or CANDIDATES is empty."
                             capf-symbols
                             capf-buffer-names
                             capf-buffer-words))
+
+(set-completion-priority 'capf-file-name -10)
+(set-completion-priority 'capf-mode-keywords -20)
+(set-completion-priority 'capf-symbols -30)
+(set-completion-priority 'capf-buffer-names -40)
+(set-completion-priority 'capf-buffer-words -50)
 
 (log "End of the completion-at-point.lisp")
 (provide 'completion-at-point)

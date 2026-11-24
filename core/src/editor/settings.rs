@@ -354,8 +354,18 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         name: COMPLETION_INVALIDATED_FUNCTION,
         doc: "The function `completion-invalidate' calls, with no arguments, so that \
-              candidates on screen are shown again; nil for none. The completion module sets \
-              it.",
+              candidates on screen are shown again, and `completion-at-point' calls with the \
+              candidates found so far while it still asks its sources; nil for none. The \
+              completion module sets it.",
+    },
+    Setting {
+        name: COMPLETION_AT_POINT_WAIT,
+        doc: "How many milliseconds `completion-at-point' asks its sources itself before it \
+              leaves those still to be asked to a job, which asks one between each command and \
+              the next while the candidates found so far are on show; anything but a number \
+              from 0 up counts as 30.\n\n\
+              Example:\n\
+              \x20 (setq completion-at-point-wait 100)",
     },
     Setting {
         name: COMMAND_COMPLETION_FUNCTION,
@@ -532,6 +542,12 @@ pub const COMPLETION_FILTER_FUNCTION: &str = "*completion-filter-function*";
 /// The name of the Lisp variable naming the function told that completion
 /// candidates have changed.
 pub const COMPLETION_INVALIDATED_FUNCTION: &str = "*completion-invalidated-function*";
+
+/// The name of the Lisp variable holding how many milliseconds
+/// `completion-at-point` asks its sources itself, and how many it does when
+/// that is not a number from 0 up.
+pub const COMPLETION_AT_POINT_WAIT: &str = "completion-at-point-wait";
+pub const DEFAULT_COMPLETION_AT_POINT_WAIT: f64 = 30.0;
 
 /// The name of the Lisp variable holding how much one step of background work
 /// may evaluate.

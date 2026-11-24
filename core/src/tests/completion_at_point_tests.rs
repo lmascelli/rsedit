@@ -10,6 +10,7 @@ mod tests {
     use crate::editor::{EditorState, create_global_env};
     use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
+    use std::time::Duration;
 
     type Ctx = EditorState<GapBuffer>;
 
@@ -1489,6 +1490,152 @@ mod tests {
                 "capf-buffer-words",
             ],
             "the source that answers to anything must come last"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Priorities, and the sources left to the job
+    // -----------------------------------------------------------------------
+
+    /// Let the editor's work run and make the calls it owes, as the event
+    /// loop would, until no source is left to ask.
+    fn settle(ctx: &Ctx, env: &Arc<Env<Ctx>>) {
+        for _ in 0..100 {
+            ctx.work().run_for(ctx, Duration::from_secs(1));
+            ctx.run_owed_callbacks(env);
+            if run("*completion-at-point-pending*", env, ctx).is_nil() {
+                return;
+            }
+        }
+        panic!("the sources left over were never all asked");
+    }
+
+    /// Two sources, the first offering two candidates and the second one
+    /// more, a presenter and a way to hear that the list has grown, and no
+    /// wait: whatever follows the first source is left to the job.
+    fn left_to_the_job(text: &str, start: usize) -> (Ctx, Arc<Env<Ctx>>) {
+        let (ctx, env) = plain();
+        typed(&ctx, text);
+        let end = text.chars().count();
+        define_source(&env, &ctx, "capf-first", start, end, &["abcd", "abce"]);
+        define_source(&env, &ctx, "capf-later", start, end, &["abzz"]);
+        use_sources(&env, &ctx, &["capf-first", "capf-later"]);
+        run(
+            "(setq completion-at-point-wait 0)\
+             (setq *seen* nil) (setq *grown* nil)\
+             (defun present (items choose) (setq *seen* items))\
+             (defun grown (&optional items) (setq *grown* items))\
+             (setq *completion-read-function* 'present)\
+             (setq *completion-invalidated-function* 'grown)",
+            &env,
+            &ctx,
+        );
+        (ctx, env)
+    }
+
+    #[test]
+    fn sources_are_asked_from_the_highest_priority_down() {
+        let (ctx, env) = plain();
+        typed(&ctx, "ab");
+        define_source(&env, &ctx, "capf-low", 0, 2, &["abcd"]);
+        define_source(&env, &ctx, "capf-high", 1, 2, &["bx"]);
+        use_sources(&env, &ctx, &["capf-low"]);
+        run("(add-completion-function nil 'capf-high 5)", &env, &ctx);
+        assert_eq!(
+            run("(completion-priority 'capf-high)", &env, &ctx),
+            LispExp::number(5.0)
+        );
+        assert_eq!(
+            run("(completion-priority 'capf-low)", &env, &ctx),
+            LispExp::number(0.0)
+        );
+
+        run("(completion-at-point)", &env, &ctx);
+        assert_eq!(
+            contents(&ctx),
+            "abx",
+            "the source listed last but given the higher priority fixes the region"
+        );
+    }
+
+    #[test]
+    fn the_shipped_sources_come_after_one_given_no_priority() {
+        let (ctx, env) = with_sources();
+        for source in ["capf-file-name", "capf-buffer-words"] {
+            assert!(
+                run(
+                    &format!("(< (completion-priority '{source}) 0)"),
+                    &env,
+                    &ctx
+                )
+                .is_truthy(),
+                "{source} should be below a mode's own sources"
+            );
+        }
+        assert!(
+            run(
+                "(> (completion-priority 'capf-file-name) \
+                    (completion-priority 'capf-buffer-words))",
+                &env,
+                &ctx
+            )
+            .is_truthy()
+        );
+    }
+
+    #[test]
+    fn what_the_job_finds_is_added_to_what_is_on_show_and_can_be_chosen() {
+        let (ctx, env) = left_to_the_job("ab", 0);
+
+        assert_eq!(run("(completion-at-point)", &env, &ctx), LispExp::t());
+        assert_eq!(
+            strings(&run("*seen*", &env, &ctx)),
+            vec!["abcd", "abce"],
+            "what the first source offered is shown at once"
+        );
+        assert!(run("*grown*", &env, &ctx).is_nil());
+
+        settle(&ctx, &env);
+        assert_eq!(
+            strings(&run("*grown*", &env, &ctx)),
+            vec!["abcd", "abce", "abzz"]
+        );
+        run("(completion-at-point-choose \"abzz\")", &env, &ctx);
+        assert_eq!(contents(&ctx), "abzz");
+    }
+
+    #[test]
+    fn a_completion_left_to_the_job_ends_as_one_asked_at_once() {
+        let (ctx, env) = plain();
+        typed(&ctx, "ab");
+        run(
+            "(setq completion-at-point-wait 0) (defun capf-none () nil)",
+            &env,
+            &ctx,
+        );
+        define_source(&env, &ctx, "capf-one", 0, 2, &["abcd"]);
+        use_sources(&env, &ctx, &["capf-none", "capf-one"]);
+
+        run("(completion-at-point)", &env, &ctx);
+        assert_eq!(
+            contents(&ctx),
+            "ab",
+            "nothing is put in before the sources have answered"
+        );
+        settle(&ctx, &env);
+        assert_eq!(contents(&ctx), "abcd");
+    }
+
+    #[test]
+    fn the_job_stops_asking_once_point_has_left_the_text() {
+        let (ctx, env) = left_to_the_job(" ab", 1);
+        run("(completion-at-point)", &env, &ctx);
+        typing(&ctx, " ab", 0);
+
+        settle(&ctx, &env);
+        assert!(
+            run("*grown*", &env, &ctx).is_nil(),
+            "nobody is completing any more, so nothing is shown"
         );
     }
 }

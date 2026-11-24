@@ -521,6 +521,13 @@ pub fn create_global_env<B: BufferTrait>()
         ELispExp::string(DEFAULT_WINDOW_SEPARATOR.to_string()),
     );
 
+    // How long completion at point waits for its sources before it leaves
+    // the rest to a job.
+    env.set_variable(
+        COMPLETION_AT_POINT_WAIT.into(),
+        ELispExp::number(DEFAULT_COMPLETION_AT_POINT_WAIT),
+    );
+
     // How much one step of background work may evaluate.
     env.set_variable(
         WORKER_FUEL.into(),
