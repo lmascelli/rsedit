@@ -202,6 +202,15 @@ impl<B: BufferTrait> EditorState<B> {
             self.log_diagnostic(&format!("[LOG] buffer {} does not exist.", name));
             return false;
         }
+        if self.windows(|windows| {
+            windows
+                .root()
+                .window(windows.focused())
+                .is_some_and(|window| window.is_prompt() && window.buffer_name != name)
+        }) {
+            self.log_diagnostic("[LOG] the minibuffer's window cannot show another buffer.");
+            return false;
+        }
         self.show_in_focused_window(name);
         true
     }

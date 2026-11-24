@@ -5,16 +5,16 @@
 
 --------------------------------------------------
 * Fixes todo
-- [ ] pasting some text should place the mark where the paste happens
-- [ ] Better integration for builtin modules. The modules are ok to be
-      completely separated but one of them (maybe the project system)
-      should be able to orchestrate them when used to make the work
-      feel smooth. For example, opening eshell while in a project
-      should open it in the project root directory, the same for grep
-      in a project that should start from the root. This goal is ok
-      to be achieved using designated keymap like those starting with
-      C-x p but this means that the project module should require the
-      modules for which it defines the keymaps
+- [ ] it is possible to change the buffer of the minibuffer
+- [ ] building the completion list can block the editor. it should
+      be a background job that gradually fill it and update it
+      making the already inserted items be selectable. The order
+      of search should be determined by a priority assigned to
+      each cap function
+- [ ] lsp module should be able to specify what type of suggestion
+      is a completion candidate (i.e. variable, method, function ecc.)
+- [ ] lsp should provide also formatting option if available
+- [ ] A menu bar for options (like themes) and one for window management
 
 --------------------------------------------------
 * Macro todo
@@ -32,9 +32,29 @@
 - [ ] Altri linguaggi: Markdown, JSON, YAML, Zig, MATLAB.
 
 --------------------------------------------------
-PROMPT 0 — CONTRATTO COMUNE
 
-Lavora in locale su rsedit. Aggiorna prima la tua versione con il
-repository online. A fine fase riporta modifiche essenziali, test ed
-eventuali decisioni aperte ed allega in chat un patch file con cui
-possa applicare le modifiche. Non modificare il repository direttamente.
+[rsedit · modalità PATCH]
+
+Modifica: <<cosa deve cambiare e comportamento atteso>>
+Dove: <<file e simbolo, es. core/src/buffer.rs → fn delete_line>>
+Nome patch: <<nome-breve>>
+Verifica cargo: si test mirati
+
+Regole (tutte obbligatorie). $REPO = radice del repo, $SCRATCH = la tua scratchpad directory.
+1. NON toccare il checkout in $REPO: niente edit, commit, branch, push.
+   Lavora in un worktree temporaneo:
+   git -C $REPO worktree add -q --detach $SCRATCH/wt HEAD
+2. Contesto minimo: leggi solo i file in "Dove", e solo le parti necessarie
+   (Grep per trovare il simbolo, poi Read con offset/limit). Niente esplorazione
+   del repo, niente subagenti, niente piano. Se manca un'informazione, fermati e chiedimela.
+3. Modifiche con Edit, minime e nello stile del codice esistente. Nessun refactoring,
+   commento o riformattazione non richiesti.
+4. Se "Verifica cargo" è sì, nel worktree:
+   CARGO_TARGET_DIR=$REPO/target cargo check -q 2>&1 | tail -n 30
+   e correggi gli errori.
+5. Genera il patch, rimuovi il worktree e controlla che il patch si applichi:
+   cd $SCRATCH/wt && git add -A && git diff --cached > $SCRATCH/<<nome-breve>>.patch
+   git -C $REPO worktree remove --force $SCRATCH/wt
+   git -C $REPO apply --check $SCRATCH/<<nome-breve>>.patch
+6. Inviami il file con SendUserFile. NON riportare il diff in chat: rispondi solo
+   con il percorso del patch e al massimo 3 righe su cosa cambia.
