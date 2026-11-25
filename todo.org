@@ -5,14 +5,6 @@
 
 --------------------------------------------------
 * Fixes todo
-- [ ] it is possible to change the buffer of the minibuffer
-- [ ] building the completion list can block the editor. it should
-      be a background job that gradually fill it and update it
-      making the already inserted items be selectable. The order
-      of search should be determined by a priority assigned to
-      each cap function
-- [ ] lsp module should be able to specify what type of suggestion
-      is a completion candidate (i.e. variable, method, function ecc.)
 - [ ] lsp should provide also formatting option if available
 - [ ] A menu bar for options (like themes) and one for window management
 

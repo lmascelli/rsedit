@@ -43,6 +43,12 @@ number of seconds, once the buffer has gone that long without changing; nil,
 only when a command asks the server something, the file is saved, or the
 buffer leaves the server. A question always sends them first.")
 
+(defvar lsp-format-tab-size 4
+  "How many columns a tab takes, as `lsp-format-buffer' tells the server.")
+
+(defvar lsp-format-insert-spaces t
+  "Whether `lsp-format-buffer' asks the server to indent with spaces, not tabs.")
+
 (defvar lsp-restart-limit 3
   "How many times in three minutes a server that falls is started again by
 itself. Past that it stays down until `lsp-restart'.")
