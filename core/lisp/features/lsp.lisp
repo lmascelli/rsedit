@@ -43,6 +43,12 @@ number of seconds, once the buffer has gone that long without changing; nil,
 only when a command asks the server something, the file is saved, or the
 buffer leaves the server. A question always sends them first.")
 
+(defvar lsp-format-tab-size 4
+  "How many columns a tab takes, as `lsp-format-buffer' tells the server.")
+
+(defvar lsp-format-insert-spaces t
+  "Whether `lsp-format-buffer' asks the server to indent with spaces, not tabs.")
+
 (defvar lsp-restart-limit 3
   "How many times in three minutes a server that falls is started again by
 itself. Past that it stays down until `lsp-restart'.")
@@ -353,6 +359,7 @@ buffer has the same text; :timed, it is dropped after `lsp-request-timeout';
                    "publishDiagnostics" (make-map "versionSupport" t)
                    "definition" (make-map "linkSupport" t)
                    "references" (make-map)
+                   "formatting" (make-map)
                    "completion" (make-map "completionItem"
                                           (make-map "snippetSupport" 'false)
                                           "completionItemKind"
@@ -1484,6 +1491,24 @@ BUFFER, while point is still there."
   nil)
 
 ;; ---------------------------------------------------------------------------
+;; Formatting
+;; ---------------------------------------------------------------------------
+
+(defun lsp--formatted (server result buffer)
+  "nil, after making in BUFFER the changes of RESULT, SERVER's answer to
+textDocument/formatting, as one undo."
+  (let ((edits (lsp--list result)))
+    (if (null edits)
+        (message "Nothing to format")
+        (let ((replacements (with-current-buffer
+                             buffer (lambda () (lsp--replacements server edits)))))
+          (cond ((stringp replacements)
+                 (message "%s: formatting not made: %s" (lsp--label server) replacements))
+                (t (with-current-buffer buffer (lambda () (replace-regions replacements)))
+                   (lsp--flush-all))))))
+  nil)
+
+;; ---------------------------------------------------------------------------
 ;; The mode and the commands
 ;; ---------------------------------------------------------------------------
 
@@ -1583,6 +1608,26 @@ and the changes elsewhere that go with the one chosen, an import, are made."
                            (lambda (server result) (lsp--completed server result buffer at))
                            :buffer buffer :timed t :replace t))))))
 
+(defcommand lsp-format-buffer () nil
+  "Format this buffer as its language server says, the changes made as one
+undo."
+  (let ((server (lsp--server-here)))
+    (cond ((null server) (message "No language server for this buffer"))
+          ((not (eq (get server 'state) 'ready))
+           (message "%s is not ready" (lsp--label server)))
+          ((not (lsp--true-p (map-elt (get server 'capabilities) "documentFormattingProvider")))
+           (message "%s does not format" (lsp--label server)))
+          ((buffer-read-only-p) (message "%s is read-only" (buffer-file-name)))
+          (t
+           (let ((buffer (current-buffer)))
+             (lsp--request server "textDocument/formatting"
+                           (make-map "textDocument" (make-map "uri" (buffer-get 'lsp-uri))
+                                     "options" (make-map "tabSize" lsp-format-tab-size
+                                                         "insertSpaces"
+                                                         (if lsp-format-insert-spaces t 'false)))
+                           (lambda (server result) (lsp--formatted server result buffer))
+                           :buffer buffer :timed t :replace t))))))
+
 (defcommand lsp-locations-goto () nil
   "Go to the place on the cursor's line of a list the language server gave."
   ;; Counted, not parsed: a path with a colon reads two ways.
@@ -1597,6 +1642,7 @@ and the changes elsewhere that go with the one chosen, an import, are made."
 (define-key 'lsp-mode "C-c a" 'lsp-code-action)
 (define-key 'lsp-mode "C-M-i" 'lsp-complete)
 (define-key 'lsp-mode "M-tab" 'lsp-complete)
+(define-key 'lsp-mode "C-c f" 'lsp-format-buffer)
 
 ;; What a right click offers where a server is attached: the `menus' page.
 (context-menu-add 'lsp-mode "Find Definition" 'lsp-find-definition)
@@ -1610,6 +1656,7 @@ and the changes elsewhere that go with the one chosen, an import, are made."
 (menu-bar-add '("LSP" "Go Back") 'lsp-go-back nil :mode 'lsp-mode)
 (menu-bar-add '("LSP" "Code Action...") 'lsp-code-action nil :mode 'lsp-mode)
 (menu-bar-add '("LSP" "Complete") 'lsp-complete nil :mode 'lsp-mode)
+(menu-bar-add '("LSP" "Format Buffer") 'lsp-format-buffer nil :mode 'lsp-mode)
 (menu-bar-add '("LSP" "--server") nil nil :mode 'lsp-mode)
 (menu-bar-add '("LSP" "Restart Server") 'lsp-restart nil :mode 'lsp-mode)
 (menu-bar-add '("LSP" "Shut Down Server") 'lsp-shutdown nil :mode 'lsp-mode)
