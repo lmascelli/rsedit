@@ -713,6 +713,126 @@ fn a_click_on_a_label_of_the_bar_opens_its_menu_resolved_then() {
     assert_eq!(bar.labels(), ["File", "Help"]);
 }
 
+/// A press of KEY, with no modifier.
+fn key(key: egui::Key) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+/// The ids of the actions of MENU, in order.
+fn action_ids(menu: &rsedit_core::Menu) -> Vec<rsedit_core::MenuItemId> {
+    menu.items
+        .iter()
+        .filter_map(|item| match item {
+            rsedit_core::MenuItem::Action { id, .. } => Some(*id),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_arrows_move_between_the_entries_of_a_popup_and_enter_chooses() {
+    let mut app = app();
+    expression(
+        &app.core,
+        r#"(progn (context-menu-add nil "One" 'undo)
+                  (context-menu-add nil "Two" 'undo))"#,
+    );
+    let area = Rect::from_min_size(Pos2::ZERO, Vec2::new(800., 640.));
+    let request = rsedit_core::MenuRequest {
+        kind: rsedit_core::MenuKind::Context,
+        menu: app.core.state.context_menu(&app.core.env),
+        at: Some((3, 3)),
+    };
+    app.open_requested(request, Grid::new(area, Vec2::new(8., 20.)), area, None);
+    let ids = action_ids(&app.popup.as_ref().expect("open").menu);
+    assert_eq!(ids.len(), 2);
+    let ctx = egui::Context::default();
+    let mut frame = |events| {
+        let mut chosen = None;
+        let _ = ctx.run(
+            egui::RawInput {
+                events,
+                screen_rect: Some(area),
+                ..Default::default()
+            },
+            |ctx| chosen = app.popup.as_mut().expect("open").show(ctx),
+        );
+        chosen
+    };
+    assert_eq!(frame(Vec::new()), None);
+    let down = || vec![key(egui::Key::ArrowDown)];
+    assert_eq!(frame(down()), None, "on the first");
+    assert_eq!(frame(down()), None, "on the second");
+    assert_eq!(frame(vec![key(egui::Key::Enter)]), Some(ids[1]));
+}
+
+#[test]
+fn the_arrows_move_between_the_entries_of_a_menu_of_the_bar() {
+    let mut app = app();
+    expression(
+        &app.core,
+        r#"(progn (menu-bar-add '("File" "Open") 'find-file)
+                  (menu-bar-add '("File" "Save") 'save-buffer))"#,
+    );
+    app.bar_labels = vec!["File".into()];
+    let ctx = egui::Context::default();
+    bar_frame(&mut app, &ctx, Vec::new());
+    let at = app.bar_rects[0].center();
+    let press = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    bar_frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(at), press(true)],
+    );
+    bar_frame(&mut app, &ctx, vec![press(false)]);
+    bar_frame(&mut app, &ctx, Vec::new());
+    let ids = match &app.bar_menu.as_ref().expect("open").items[0] {
+        rsedit_core::MenuItem::Submenu { menu, .. } => action_ids(menu),
+        _ => panic!("File holds a menu"),
+    };
+    assert_eq!(ids.len(), 2);
+    let down = || vec![key(egui::Key::ArrowDown)];
+    assert_eq!(bar_frame(&mut app, &ctx, down()), None, "on Open");
+    assert_eq!(bar_frame(&mut app, &ctx, down()), None, "on Save");
+    assert_eq!(
+        bar_frame(&mut app, &ctx, vec![key(egui::Key::Enter)]),
+        Some(ids[1])
+    );
+}
+
+#[test]
+fn while_a_menu_of_the_bar_is_open_its_keys_do_not_reach_the_buffer() {
+    let mut app = app();
+    expression(&app.core, r#"(insert "abc")"#);
+    let (text, point) = (
+        expression(&app.core, "(buffer-string)"),
+        expression(&app.core, "(point)"),
+    );
+    app.bar_menu = Some(app.core.state.menu_bar(&app.core.env));
+    input(
+        &mut app,
+        vec![
+            key(egui::Key::ArrowLeft),
+            key(egui::Key::Enter),
+            egui::Event::Text("x".into()),
+        ],
+        egui::Modifiers::NONE,
+    );
+    assert_eq!(expression(&app.core, "(buffer-string)"), text);
+    assert_eq!(expression(&app.core, "(point)"), point);
+}
+
 /// Runs one frame of APP in CTX with EVENTS, as `update` does for the menus:
 /// the input, the frame's menus taken, the popup shown.
 fn menu_frame(

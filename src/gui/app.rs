@@ -266,7 +266,7 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
             // An open menu has the keyboard and the buttons: egui closes it on
             // Escape or a click elsewhere, and neither reaches the buffer
             // under it.
-            if self.popup.is_some()
+            if (self.popup.is_some() || self.bar_menu.is_some())
                 && matches!(
                     event,
                     egui::Event::Key { .. }
@@ -531,8 +531,11 @@ impl<'editor, B: BufferTrait> eframe::App for EditorApp<'editor, B> {
                 let area = ui.available_rect_before_wrap();
                 let (_, response) =
                     ui.allocate_exact_size(area.size(), egui::Sense::click_and_drag());
-                // The keyboard is the editor's: its prompts are its buffers.
-                response.request_focus();
+                // The keyboard is the editor's, but an open menu's: its
+                // prompts are its buffers.
+                if self.popup.is_none() && self.bar_menu.is_none() {
+                    response.request_focus();
+                }
                 let font = FontId::monospace(self.font_size);
                 let cell = ctx.fonts_mut(|fonts| {
                     Vec2::new(
