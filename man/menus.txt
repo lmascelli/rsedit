@@ -59,7 +59,10 @@ THE MENU BAR
     whether the bar is shown or not. In the terminal the arrows walk the
     menus: up and down within one, right into a menu inside it or on to the
     next menu of the bar, past the lines between them, left back out or to
-    the menu before. Return or
+    the menu before. In the window left and right close the menu open and
+    open the one before or after it on the bar, past the lines, the first
+    after the last and the last before the first, except while a menu
+    inside is open. Return or
     the space chooses, a letter goes to the next entry it begins, and Esc,
     C-g or F10 close the menus. A click outside them closes them too.
 
