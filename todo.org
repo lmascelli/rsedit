@@ -5,7 +5,6 @@
 
 --------------------------------------------------
 * Fixes todo
-- [ ] lsp should provide also formatting option if available
 - [ ] A menu bar for options (like themes) and one for window management
 
 --------------------------------------------------
