@@ -12,9 +12,11 @@ SYNOPSIS
     (completion-at-point)
     (completion-at-point-choose VALUE)
     (completion-offer START END CANDIDATES &optional ON-CHOSEN)
-    (add-completion-function MODE FUNCTION)
+    (add-completion-function MODE FUNCTION &optional PRIORITY)
     (set-completion-functions MODE FUNCTIONS &key :global)
     (completion-functions &optional MODE)
+    (set-completion-priority FUNCTION PRIORITY)
+    (completion-priority FUNCTION)
     (bounds-of-thing-at-point &optional KIND)
     (buffer-words &optional BUFFER MINIMUM)
     (fuzzy-filter PATTERN CANDIDATES)
@@ -36,6 +38,7 @@ SYNOPSIS
     completion-columns
     completion-buffer-name
     completion-minibuffer-name
+    completion-at-point-wait
     *completion-read-function*
     *completion-filter-function*
     *completion-invalidated-function*
@@ -118,6 +121,11 @@ IN A BUFFER
     The Lisp names and the words of every buffer are offered in any buffer,
     not only in Lisp; `set-completion-functions' takes a source out.
 
+    A slow source does not hold the keys: C-M-i asks its sources itself
+    for `completion-at-point-wait' milliseconds, 30 by default, and leaves
+    those still to be asked to the background, one between each command
+    and the next, while the candidates found so far are on show.
+
     A mode can make its sources the only ones its buffers are completed
     from, with :global nil: the five above are then never asked there, not
     even when the mode's own have nothing to offer. The shell of the eshell
@@ -134,7 +142,14 @@ WRITING A SOURCE
     the candidates afterwards. A source of words takes START and END from
     `bounds-of-thing-at-point', so that it agrees with the others on where
     the word is. `add-completion-function' adds one, for a mode or for every
-    buffer.
+    buffer, with PRIORITY when it is given.
+
+    The sources are asked from the highest priority down, and those of one
+    priority in the order of their lists, a mode's before the global ones.
+    A source never given a priority has 0; the five above have -10 to -50,
+    in the order they are listed, so a mode's own come first.
+    `set-completion-priority' gives a source another, in every list it is
+    or will be in, and `completion-priority' says the one it has.
 
     `capf-file-candidates' is what capf-file-name offers, for a source of
     another kind of text to offer too: the paths a TEXT can be completed
@@ -208,6 +223,15 @@ EXAMPLES
                                 '(("crimson" . "red") ("cyan" . "blue"))
                                 (lambda (item)
                                   (message (completion-description item))))))
+
+    Ask the words of the buffers before the Lisp names:
+
+        (set-completion-priority 'capf-buffer-words -25)
+
+    Wait a tenth of a second for the sources before leaving the rest to
+    the background:
+
+        (setq completion-at-point-wait 100)
 
     Complete the buffers of one mode from its own source alone:
 

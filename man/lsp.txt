@@ -10,6 +10,8 @@ SYNOPSIS
     (lsp-go-back)
     (lsp-code-action)
     (lsp-complete)
+    (lsp-format-buffer)
+    (lsp-format-region)
     (lsp-locations-goto)
     lsp-servers
     lsp-root-function
@@ -186,6 +188,21 @@ COMPLETING
     the one waiting. With a server that does not complete, the message
     says so.
 
+FORMATTING
+    C-c f asks the server to format the whole buffer, as the language's
+    formatter would: rustfmt for rust-analyzer, clang-format for clangd.
+    The server is told to indent with spaces, as the editor does, a Tab
+    as wide as the buffer's: the major mode's tab-width, or else the
+    variable's (see indentation). Its changes are made as one step of
+    undo, C-/ takes them back, and point stays on the text it was on.
+
+    With the region active, C-c f formats only the region, in the same
+    way, as M-x lsp-format-region does, with a server that offers to.
+
+    The answer comes a moment later, and is not made if the buffer has
+    changed by then: format again. With a server that does not format,
+    or in a read-only buffer, the message says so.
+
 WHEN A SERVER STOPS
     `lsp-shutdown' stops the server of the current buffer, asking it to
     first; one that has not gone two seconds later is stopped outright.
@@ -214,6 +231,9 @@ LIMITS
     description, in the order it gives them, and a server that leaves out
     the changes elsewhere until asked about the candidate chosen does not
     make them.
+
+    Formatting is only asked for: there is none as you type, or on a
+    save.
 
     A code action that creates, renames or deletes files is refused
     whole, and so is one that changes a file not on this machine.
@@ -293,6 +313,7 @@ KEYS IN LSP MODE
     C-c a                   lsp-code-action
     C-M-i                   lsp-complete
     M-tab                   lsp-complete
+    C-c f                   lsp-format-buffer
 
 KEYS IN LSP LOCATIONS MODE
     <ret>                   lsp-locations-goto

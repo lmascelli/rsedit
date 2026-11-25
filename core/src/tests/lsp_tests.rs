@@ -5,7 +5,9 @@
 //! the definition at line 0 in a Location, at line 1 in a LocationLink, none
 //! below; two references; code actions that change `a.fake` and `b.fake`,
 //! one to be resolved, one a command that it carries out with applyEdit;
-//! completions, on line 1 with changes elsewhere, on line 2 with a range.
+//! completions, on line 1 with changes elsewhere, on line 2 with a range;
+//! a formatting that puts "fmt " before line 0, of a range "range " before
+//! line 1.
 //! It keeps the document's text as it is told it, rebuilt from the changes
 //! it receives, with columns in bytes.
 //!
@@ -42,7 +44,7 @@ while IFS= read -r line; do
       id=$(printf '%s' "$body" | sed -n 's/^{"id":\([0-9]*\),.*/\1/p')
       case "$body" in
         *'"method":"initialize"'*)
-          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":{\"capabilities\":{\"codeActionProvider\":{\"resolveProvider\":true},\"completionProvider\":{},\"definitionProvider\":true,\"positionEncoding\":\"$encoding\",\"textDocumentSync\":{\"change\":$sync,\"openClose\":true,\"save\":true},\"referencesProvider\":true}}}" ;;
+          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":{\"capabilities\":{\"codeActionProvider\":{\"resolveProvider\":true},\"completionProvider\":{},\"definitionProvider\":true,\"documentFormattingProvider\":true,\"documentRangeFormattingProvider\":true,\"positionEncoding\":\"$encoding\",\"textDocumentSync\":{\"change\":$sync,\"openClose\":true,\"save\":true},\"referencesProvider\":true}}}" ;;
         *'"method":"shutdown"'*)
           send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":null}" ;;
         *'"method":"exit"'*)
@@ -78,6 +80,10 @@ while IFS= read -r line; do
             *) result="[]" ;;
           esac
           send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":$result}" ;;
+        *'"method":"textDocument/formatting"'*)
+          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":[{\"newText\":\"fmt \",\"range\":$(at 0)}]}" ;;
+        *'"method":"textDocument/rangeFormatting"'*)
+          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":[{\"newText\":\"range \",\"range\":$(at 1)}]}" ;;
         *'"method":"textDocument/didOpen"'*|*'"method":"textDocument/didChange"'*)
           printf '%s' "$body" > "$dir/body"
           LC_ALL=C awk -v bodyf="$dir/body" -v textf="$dir/served" -f "$dir/apply.awk"
@@ -1480,5 +1486,79 @@ BEGIN {
             &ctx,
         );
         assert_eq!(contents(&name, &env, &ctx), "x\nfo\n");
+    }
+
+    #[test]
+    fn the_buffer_is_formatted_with_the_tab_width_of_its_mode_as_one_undo() {
+        let sandbox = Sandbox::new("format");
+        let file = sandbox.file("a.fake", "one\ntwo\n");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let name = open(&file, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        run("(put 'fundamental-mode 'tab-width 2) (lsp-format-buffer)", &env, &ctx);
+        logged(
+            &sandbox,
+            &[
+                r#""method":"textDocument/formatting""#,
+                r#""options":{"insertSpaces":true,"tabSize":2}"#,
+            ],
+            &env,
+            &ctx,
+        );
+        holds(&name, "fmt one\ntwo\n", &env, &ctx);
+        run("(undo)", &env, &ctx);
+        assert_eq!(contents(&name, &env, &ctx), "one\ntwo\n");
+    }
+
+    #[test]
+    fn with_the_region_active_only_the_region_is_formatted() {
+        let sandbox = Sandbox::new("format-region");
+        let file = sandbox.file("a.fake", "one\ntwo\nthree\n");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let name = open(&file, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        run("(goto-line 2) (set-mark) (goto-line 3) (lsp-format-buffer)", &env, &ctx);
+        logged(
+            &sandbox,
+            &[
+                r#""method":"textDocument/rangeFormatting""#,
+                r#""range":{"end":{"character":0,"line":2},"start":{"character":0,"line":1}}"#,
+            ],
+            &env,
+            &ctx,
+        );
+        holds(&name, "one\nrange two\nthree\n", &env, &ctx);
+        assert!(!sandbox.log().contains(r#""method":"textDocument/formatting""#));
+    }
+
+    #[test]
+    fn a_server_that_does_not_format_is_not_asked_and_the_message_says_so() {
+        let sandbox = Sandbox::new("format-none");
+        let file = sandbox.file("a.fake", "one\ntwo\nthree\n");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let name = open(&file, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        let server = server(&sandbox);
+        // As if it had not said it formats, whole or in part.
+        run(
+            &format!(
+                r#"(put {server} 'capabilities
+                     (map-insert (map-insert (get {server} 'capabilities)
+                                             "documentFormattingProvider" 'false)
+                                 "documentRangeFormattingProvider" 'false))"#
+            ),
+            &env,
+            &ctx,
+        );
+        run("(lsp-format-buffer)", &env, &ctx);
+        let said = ctx.get_echo_message();
+        assert!(said.ends_with("does not format"), "{said}");
+        run("(goto-line 2) (set-mark) (goto-line 3) (lsp-format-buffer)", &env, &ctx);
+        let said = ctx.get_echo_message();
+        assert!(said.ends_with("does not format a region"), "{said}");
+        let log = sandbox.log();
+        assert!(!log.contains(r#""method":"textDocument/formatting""#));
+        assert!(!log.contains(r#""method":"textDocument/rangeFormatting""#));
+        assert_eq!(contents(&name, &env, &ctx), "one\ntwo\nthree\n");
     }
 }
