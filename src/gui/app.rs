@@ -5,7 +5,7 @@
 //! Design: `doc/architettura-editor.typ, <gui>`.
 use super::Core;
 use super::keys::{character, character_shortcut, mods, special_key};
-use super::menus::{PopupMenu, entries};
+use super::menus::{PopupMenu, beside_in_bar, entries};
 use super::paint::{Grid, colors, paint_view, row};
 use eframe::egui::{self, FontId, Rect, Stroke, Vec2};
 use rsedit_core::{
@@ -113,13 +113,13 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
         area: Rect,
         cursor: Option<Rect>,
     ) {
-        let (menu, beside) = match request.kind {
+        let (menu, beside, bar) = match request.kind {
             MenuKind::Context => {
                 let beside = match request.at {
                     Some((x, y)) => grid.rect(x as isize, y as isize, 1, 1),
                     None => cursor.unwrap_or(Rect::from_min_size(area.min, grid.cell)),
                 };
-                (request.menu, beside)
+                (request.menu, beside, None)
             }
             MenuKind::Bar { open } => {
                 let beside = self
@@ -127,13 +127,15 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
                     .get(open)
                     .copied()
                     .unwrap_or(Rect::from_min_size(area.min, Vec2::ZERO));
+                let bar = Some((request.menu.clone(), open));
                 match request.menu.items.into_iter().nth(open) {
-                    Some(MenuItem::Submenu { menu, .. }) => (menu, beside),
+                    Some(MenuItem::Submenu { menu, .. }) => (menu, beside, bar),
                     Some(action @ MenuItem::Action { .. }) => (
                         Menu {
                             items: vec![action],
                         },
                         beside,
+                        bar,
                     ),
                     _ => return,
                 }
@@ -145,6 +147,7 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
             beside,
             serial: self.popups,
             open: true,
+            bar,
         });
     }
 
@@ -170,6 +173,11 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
         let chosen = popup.show(ctx);
         if !popup.open {
             self.popup = None;
+        } else if let Some((_, open)) = popup.bar
+            && let Some(label) = self.bar_rects.get(open)
+        {
+            // Under the label of the menu it shows, which the arrows change.
+            popup.beside = *label;
         }
         if let Some(id) = chosen {
             self.core.state.run_menu_item(id, &self.core.env);
@@ -184,7 +192,8 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
 
     /// Draws the menu bar in UI, its menus resolved when one opens and
     /// greyed out unless ENABLED, a separator as egui's rule between two
-    /// groups of menus, with the − and + buttons at its right end;
+    /// groups of menus, with the − and + buttons at its right end; the left
+    /// and right arrows close the menu open and open the one beside it;
     /// returns the action chosen in it, if any, and by how many sizes the
     /// buttons asked for the text to change.
     pub(super) fn menu_bar(
@@ -196,6 +205,8 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
         let mut zoom = 0.;
         let mut any_open = false;
         let mut rects = Vec::with_capacity(self.bar_labels.len());
+        let mut popups = Vec::with_capacity(self.bar_labels.len());
+        let mut step = None;
         let core = &self.core;
         let cache = &mut self.bar_menu;
         let labels = &self.bar_labels;
@@ -204,12 +215,13 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
                 for (index, label) in labels.iter().enumerate() {
                     if is_menu_separator(label) {
                         rects.push(ui.separator().rect);
+                        popups.push(None);
                         continue;
                     }
                     let response = ui.menu_button(label.as_str(), |ui| {
                         any_open = true;
                         let bar = cache.get_or_insert_with(|| core.state.menu_bar(&core.env));
-                        match bar.items.get(index) {
+                        let moved = match bar.items.get(index) {
                             Some(MenuItem::Submenu { menu, .. }) => entries(ui, menu, &mut chosen),
                             Some(action @ MenuItem::Action { .. }) => entries(
                                 ui,
@@ -218,10 +230,21 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
                                 },
                                 &mut chosen,
                             ),
-                            _ => {}
+                            _ => 0,
+                        };
+                        if moved != 0 {
+                            step = Some((index, moved));
                         }
                     });
                     rects.push(response.response.rect);
+                    popups.push(Some(egui::Popup::default_response_id(&response.response)));
+                }
+                if let Some((open, moved)) = step {
+                    // egui keeps one popup open: opening this one closes the other.
+                    let next = beside_in_bar(popups.len(), open, moved, |at| popups[at].is_none());
+                    if let Some(id) = popups[next] {
+                        egui::Popup::open_id(ui.ctx(), id);
+                    }
                 }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

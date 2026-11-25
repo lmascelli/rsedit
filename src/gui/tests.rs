@@ -7,6 +7,7 @@
 use super::Core;
 use super::app::EditorApp;
 use super::keys::{character_shortcut, special_key};
+use super::menus::beside_in_bar;
 use super::paint::Grid;
 use eframe::egui::{self, Pos2, Rect, Vec2};
 use rsedit_core::{
@@ -831,6 +832,121 @@ fn while_a_menu_of_the_bar_is_open_its_keys_do_not_reach_the_buffer() {
     );
     assert_eq!(expression(&app.core, "(buffer-string)"), text);
     assert_eq!(expression(&app.core, "(point)"), point);
+}
+
+#[test]
+fn the_menu_beside_one_of_the_bar_passes_over_rules_and_goes_round_at_the_ends() {
+    // File, a rule, Edit, a rule, Help.
+    let rule = |at| at == 1 || at == 3;
+    assert_eq!(beside_in_bar(5, 0, 1, rule), 2);
+    assert_eq!(beside_in_bar(5, 2, 1, rule), 4);
+    assert_eq!(beside_in_bar(5, 4, 1, rule), 0, "past the last, the first");
+    assert_eq!(
+        beside_in_bar(5, 0, -1, rule),
+        4,
+        "before the first, the last"
+    );
+    assert_eq!(beside_in_bar(1, 0, 1, |_| false), 0, "a menu alone stays");
+}
+
+#[test]
+fn the_side_arrows_close_the_menu_of_the_bar_open_and_open_the_one_beside() {
+    let mut app = app();
+    expression(
+        &app.core,
+        r#"(progn (menu-bar-add '("File" "Open") 'find-file)
+                  (menu-bar-add '("Help" "Keys") 'save-buffer))"#,
+    );
+    app.bar_labels = vec!["File".into(), "--".into(), "Help".into()];
+    let ctx = egui::Context::default();
+    bar_frame(&mut app, &ctx, Vec::new());
+    let first_of = |app: &EditorApp<'static, GapBuffer>, at: usize| match &app
+        .bar_menu
+        .as_ref()
+        .expect("open")
+        .items[at]
+    {
+        rsedit_core::MenuItem::Submenu { menu, .. } => action_ids(menu)[0],
+        _ => panic!("a menu"),
+    };
+    for (label, arrow, beside, why) in [
+        (0, egui::Key::ArrowRight, 2, "Help, past the rule"),
+        (2, egui::Key::ArrowRight, 0, "past the last, the first"),
+        (0, egui::Key::ArrowLeft, 2, "before the first, the last"),
+    ] {
+        let at = app.bar_rects[label].center();
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        bar_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(at), press(true)],
+        );
+        bar_frame(&mut app, &ctx, vec![press(false)]);
+        bar_frame(&mut app, &ctx, Vec::new());
+        bar_frame(&mut app, &ctx, vec![key(arrow)]);
+        bar_frame(&mut app, &ctx, Vec::new());
+        bar_frame(&mut app, &ctx, vec![key(egui::Key::ArrowDown)]);
+        let expected = first_of(&app, beside);
+        assert_eq!(
+            bar_frame(&mut app, &ctx, vec![key(egui::Key::Enter)]),
+            Some(expected),
+            "{why}"
+        );
+        bar_frame(&mut app, &ctx, Vec::new());
+    }
+}
+
+#[test]
+fn the_side_arrows_turn_a_menu_of_the_bar_the_keys_open_into_the_one_beside() {
+    let mut app = app();
+    expression(
+        &app.core,
+        r#"(progn (menu-bar-add '("File" "Open") 'find-file)
+                  (menu-bar-add '("Help" "Entry") 'describe-key))"#,
+    );
+    // File, the rule before Help, and Help.
+    let file = Rect::from_min_size(Pos2::new(0., 0.), Vec2::new(30., 18.));
+    let help = Rect::from_min_size(Pos2::new(40., 0.), Vec2::new(30., 18.));
+    app.bar_rects = vec![file, Rect::NOTHING, help];
+    let request = rsedit_core::MenuRequest {
+        kind: rsedit_core::MenuKind::Bar { open: 0 },
+        menu: app.core.state.menu_bar(&app.core.env),
+        at: None,
+    };
+    let area = Rect::from_min_size(Pos2::new(0., 20.), Vec2::new(800., 640.));
+    app.open_requested(request, Grid::new(area, Vec2::new(8., 20.)), area, None);
+    let ctx = egui::Context::default();
+    menu_frame(&mut app, &ctx, Vec::new());
+    for (arrow, labels, beside, why) in [
+        (
+            egui::Key::ArrowRight,
+            ["Entry"],
+            help,
+            "Help, past the rule",
+        ),
+        (
+            egui::Key::ArrowRight,
+            ["Open"],
+            file,
+            "past the last, the first",
+        ),
+        (
+            egui::Key::ArrowLeft,
+            ["Entry"],
+            help,
+            "before the first, the last",
+        ),
+    ] {
+        menu_frame(&mut app, &ctx, vec![key(arrow)]);
+        let popup = app.popup.as_ref().expect("still open");
+        assert_eq!(popup.menu.labels(), labels, "{why}");
+        assert_eq!(popup.beside, beside, "{why}");
+    }
 }
 
 /// Runs one frame of APP in CTX with EVENTS, as `update` does for the menus:
