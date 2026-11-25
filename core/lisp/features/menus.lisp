@@ -1,11 +1,11 @@
 ;;; menus --- the menu bar and the context menu the editor comes with.
 ;;;
-;;; File, Edit, Buffers and Help on the menu bar, the menus of the modes of
-;;; the buffer between Buffers and Help, Undo, Cut, Copy and Paste in the
-;;; context menu of every buffer, F10 for the bar and S-F10 for the context
-;;; menu from the keyboard, and the faces a terminal draws them in. Each mode
-;;; puts its own menus on the bar in its own module, with `menu-bar-add' and
-;;; :mode.
+;;; File, Edit, Options, Buffers, Window and Help on the menu bar, the menus
+;;; of the modes of the buffer between Window and Help, Undo, Cut, Copy and
+;;; Paste in the context menu of every buffer, F10 for the bar and S-F10 for
+;;; the context menu from the keyboard, and the faces a terminal draws them
+;;; in. Each mode puts its own menus on the bar in its own module, with
+;;; `menu-bar-add' and :mode.
 ;;; User manual: the `menus' page.
 ;;; Design: `doc/architettura-editor.typ, <mod-menus>`.
 
@@ -58,6 +58,34 @@
 (menu-bar-add '("Edit" "Toggle Read Only") 'read-only-mode)
 
 ;; ---------------------------------------------------------------------------
+;; Options
+;; ---------------------------------------------------------------------------
+
+(defun menus--theme-entries ()
+  "The entries of the Theme menu: one for each theme installed, the one in
+force marked."
+  (let ((entries nil))
+    (dolist (name (available-themes))
+      (setq entries
+            (cons (list (if (and current-theme (string= name current-theme))
+                            (concat name "  <")
+                            name)
+                        (list 'select-theme name))
+                  entries)))
+    (reverse entries)))
+
+(menu-bar-add-dynamic '("Options" "Theme") 'menus--theme-entries)
+(menu-bar-add '("Options" "Theme" "--reset") nil)
+(menu-bar-add '("Options" "Theme" "No Theme") 'reset-theme)
+(menu-bar-add '("Options" "Theme" "List Themes...") 'theme-list)
+(menu-bar-add '("Options" "--modes") nil)
+(menu-bar-add '("Options" "Line Numbers") 'display-line-numbers-mode)
+(menu-bar-add '("Options" "Highlight Current Line") 'hl-line-mode)
+(menu-bar-add '("Options" "Word Wrap") 'visual-line-mode)
+(menu-bar-add '("Options" "Show Whitespace") 'whitespace-mode)
+(menu-bar-add '("Options" "Auto Fill") 'auto-fill-mode)
+
+;; ---------------------------------------------------------------------------
 ;; Buffers
 ;; ---------------------------------------------------------------------------
 
@@ -77,6 +105,24 @@ the current one marked."
 (menu-bar-add-dynamic "Buffers" 'menus--buffer-entries)
 (menu-bar-add '("Buffers" "--list") nil)
 (menu-bar-add '("Buffers" "List All Buffers") 'buffer-list)
+
+;; ---------------------------------------------------------------------------
+;; Window
+;; ---------------------------------------------------------------------------
+
+(defun menus--several-windows-p ()
+  "Whether the frame holds more than one window, for one to be closed."
+  (> (count-windows) 1))
+
+(menu-bar-add '("Window" "Split Below") 'split-window-below)
+(menu-bar-add '("Window" "Split Right") 'split-window-right)
+(menu-bar-add '("Window" "--focus") nil)
+(menu-bar-add '("Window" "Next Window") 'other-window)
+(menu-bar-add '("Window" "Previous Window") '(other-window -1))
+(menu-bar-add '("Window" "--close") nil)
+(menu-bar-add '("Window" "Close Window") 'delete-window 'menus--several-windows-p)
+(menu-bar-add '("Window" "Close Other Windows") 'delete-other-windows
+              'menus--several-windows-p)
 
 ;; ---------------------------------------------------------------------------
 ;; Help

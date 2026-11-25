@@ -811,7 +811,10 @@ mod tests {
         let (ctx, env) = shipped_editor();
         assert!(!run("menu-bar-mode", &env, &ctx).is_nil());
         let bar = ctx.menu_bar(&env);
-        assert_eq!(labels(&bar), ["File", "Edit", "Buffers", "--", "Help"]);
+        assert_eq!(
+            labels(&bar),
+            ["File", "Edit", "Options", "Buffers", "Window", "--", "Help"]
+        );
         let edit = submenu(&bar, "Edit");
         action(edit, "Cut", false);
         action(edit, "Paste", true);
@@ -825,6 +828,75 @@ mod tests {
         );
         assert_eq!(buffers.last().map(String::as_str), Some("List All Buffers"));
         submenu(submenu(&bar, "Help"), "Describe");
+    }
+
+    #[test]
+    fn a_theme_chosen_from_the_options_menu_is_applied_and_marked() {
+        let (ctx, env) = shipped_editor();
+        let bar = ctx.menu_bar(&env);
+        let themes = labels(submenu(submenu(&bar, "Options"), "Theme"));
+        assert!(themes.iter().any(|label| label == "monochrome"), "{themes:?}");
+        assert_eq!(themes.last().map(String::as_str), Some("List Themes..."));
+        let id = action(submenu(submenu(&bar, "Options"), "Theme"), "monochrome", true);
+        assert!(ctx.run_menu_item(id, &env));
+        assert_eq!(
+            run("current-theme", &env, &ctx),
+            LispExp::string("monochrome".into())
+        );
+        let bar = ctx.menu_bar(&env);
+        let id = action(submenu(submenu(&bar, "Options"), "Theme"), "monochrome  <", true);
+        assert_eq!(called(&ctx, id).as_deref(), Some("select-theme"));
+        let id = action(submenu(submenu(&bar, "Options"), "Theme"), "No Theme", true);
+        assert!(ctx.run_menu_item(id, &env));
+        assert!(run("current-theme", &env, &ctx).is_nil());
+    }
+
+    #[test]
+    fn an_entry_of_the_options_menu_turns_its_mode_on_and_off() {
+        let (ctx, env) = shipped_editor();
+        let on = "(minor-mode-p 'display-line-numbers-mode)";
+        assert!(run(on, &env, &ctx).is_nil());
+        let id = action(submenu(&ctx.menu_bar(&env), "Options"), "Line Numbers", true);
+        assert!(ctx.run_menu_item(id, &env));
+        assert!(!run(on, &env, &ctx).is_nil());
+        let id = action(submenu(&ctx.menu_bar(&env), "Options"), "Line Numbers", true);
+        assert!(ctx.run_menu_item(id, &env));
+        assert!(run(on, &env, &ctx).is_nil());
+    }
+
+    #[test]
+    fn the_window_menu_splits_and_closes_windows() {
+        let (ctx, env) = shipped_editor();
+        let bar = ctx.menu_bar(&env);
+        let window = submenu(&bar, "Window");
+        assert_eq!(keys_of(window, "Split Below"), "C-x 2");
+        assert_eq!(keys_of(window, "Next Window"), "C-x o");
+        action(window, "Close Window", false);
+        action(window, "Close Other Windows", false);
+        let id = action(window, "Split Right", true);
+        assert!(ctx.run_menu_item(id, &env));
+        assert_eq!(run("(count-windows)", &env, &ctx), LispExp::number(2.0));
+        let id = action(submenu(&ctx.menu_bar(&env), "Window"), "Split Below", true);
+        assert!(ctx.run_menu_item(id, &env));
+        assert_eq!(run("(count-windows)", &env, &ctx), LispExp::number(3.0));
+        let before = run("(selected-window)", &env, &ctx);
+        let id = action(submenu(&ctx.menu_bar(&env), "Window"), "Next Window", true);
+        assert!(ctx.run_menu_item(id, &env));
+        assert_ne!(run("(selected-window)", &env, &ctx), before);
+        let id = action(submenu(&ctx.menu_bar(&env), "Window"), "Previous Window", true);
+        assert!(ctx.run_menu_item(id, &env));
+        assert_eq!(run("(selected-window)", &env, &ctx), before);
+        let id = action(submenu(&ctx.menu_bar(&env), "Window"), "Close Window", true);
+        assert!(ctx.run_menu_item(id, &env));
+        assert_eq!(run("(count-windows)", &env, &ctx), LispExp::number(2.0));
+        let id = action(
+            submenu(&ctx.menu_bar(&env), "Window"),
+            "Close Other Windows",
+            true,
+        );
+        assert!(ctx.run_menu_item(id, &env));
+        assert_eq!(run("(count-windows)", &env, &ctx), LispExp::number(1.0));
+        action(submenu(&ctx.menu_bar(&env), "Window"), "Close Window", false);
     }
 
     /// Puts the current buffer in MAJOR, with MINORS on, as their modes
@@ -851,7 +923,8 @@ mod tests {
         assert_eq!(
             labels(&bar),
             [
-                "File", "Edit", "Buffers", "--", "Rust", "--", "LSP", "--", "Help"
+                "File", "Edit", "Options", "Buffers", "Window", "--", "Rust", "--", "LSP",
+                "--", "Help"
             ]
         );
         action(submenu(&bar, "Rust"), "Build", true);
