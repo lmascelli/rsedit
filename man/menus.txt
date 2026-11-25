@@ -29,22 +29,29 @@ DESCRIPTION
     turns `menu-bar-mode' on.
 
 THE MENU BAR
-    It comes with four menus of the editor's own. File opens, saves, closes
+    It comes with six menus of the editor's own. File opens, saves, closes
     and quits; Edit undoes, cuts, copies and pastes, finds and replaces,
-    goes to a line, indents, fills and records keyboard macros; Buffers
-    lists the buffers, the current one marked with <, and ends with the
-    whole buffer list; Help opens the manual and describes functions,
-    variables, keys and modes.
+    goes to a line, indents, fills and records keyboard macros; Options
+    has a Theme menu, which lists the themes installed, the one in force
+    marked with <, then No Theme and the list of themes, and turns line
+    numbers, the current line's highlight, word wrap, the whitespace drawn
+    and auto fill on or off in the buffer; Buffers lists the buffers, the
+    current one marked with <, and ends with the whole buffer list; Window
+    splits the window below or to the right, goes to the next or the
+    previous window, and closes this window or the others, which only
+    while there is more than one; Help opens the manual and describes
+    functions, variables, keys and modes.
 
-    Between Buffers and Help go the menus of the modes of the buffer you
+    Between Window and Help go the menus of the modes of the buffer you
     are in: first those of its major mode, then those of each minor mode on
     in it, in the order they were turned on. A line separates the editor's
     menus, the major mode's, the minor modes' and Help, so that in a Rust
     file with a language server the bar reads
 
-        File  Edit  Buffers  |  Rust  |  LSP  |  Help
+        File  Edit  Options  Buffers  Window  |  Rust  |  LSP  |  Help
 
-    and in a buffer whose modes have no menus, File Edit Buffers | Help.
+    and in a buffer whose modes have no menus, File Edit Options Buffers
+    Window | Help.
     While a prompt is open, the bar keeps the menus of the buffer the
     prompt was opened from.
 
@@ -111,7 +118,7 @@ ADDING ENTRIES
 
     With :mode, menu-bar-add puts the entry in the menus that mode, major
     or minor, puts on the bar of the buffers where it is on, rather than in
-    the editor's own: they go between Buffers and Help. ENABLE may be left
+    the editor's own: they go between Window and Help. ENABLE may be left
     out before the keyword. menu-bar-add-dynamic and menu-bar-remove take
     :mode as well, for the menus of that mode. The mode need not exist yet.
 
@@ -200,4 +207,4 @@ KEYS
     S-<f10>                 context-menu-open
 
 SEE ALSO
-    mouse, keymaps, themes, buffers, lsp, modes, compile, project
+    mouse, keymaps, themes, buffers, windows, lsp, modes, compile, project
