@@ -25,6 +25,10 @@
 (setq *completion--on-choose* nil)
 (setq *completion--window* nil)
 
+;; The window focused when the strip opened, which gets the focus back when
+;; the strip closes with the focus in it, given by C-x o.
+(setq *completion--origin* nil)
+
 ;; The candidates as offered, before any narrowing, so that backspace can
 ;; widen the list again.
 (setq *completion--all-items* nil)
@@ -164,6 +168,7 @@ What `*completion-read-function*' names."
         (setq *completion--anchor* *completion-at-point-start*)
         (setq *completion--pattern* (completion--current-text))
         (buffer-create completion-buffer-name :mode 'completion-mode :role 'completion)
+        (setq *completion--origin* (selected-window))
         (setq *completion--window*
               (display-buffer-at-bottom completion-buffer-name
                                         completion-window-height))
@@ -179,12 +184,18 @@ What `*completion-read-function*' names."
          (cons "C-p" 'completion-previous)
          (cons "<down>" 'completion-next)
          (cons "<up>" 'completion-previous)
+         ;; The strip draws one page at a time, so the scroll keys turn it,
+         ;; from the prompt and from the strip itself alike.
+         (cons "C-v" 'completion-next-page)
+         (cons "M-v" 'completion-previous-page)
+         (cons "<next>" 'completion-next-page)
+         (cons "<prior>" 'completion-previous-page)
          (cons "<ret>" 'completion-choose)
          ;; Tab opened the strip, and a second Tab takes the selection.
          (cons "<tab>" 'completion-choose)
          (cons "<esc>" 'completion-abandon)
          (cons "C-g" 'completion-abandon))
-   "[type to narrow, C-n/C-p to move, RET to choose, ESC to cancel]"
+   "[type to narrow, C-n/C-p to move, C-v/M-v to page, RET to choose, ESC to cancel]"
    ;; Pass unbound keys through, and stay up.
    t))
 
@@ -203,6 +214,10 @@ What `*completion-read-function*' names."
 (defun completion--current-text ()
   "The text the candidates are matched against."
   (cond
+   ;; The focus in the strip: nothing is being typed, and its point is not
+   ;; where the text is.
+   ((equal (current-buffer) completion-buffer-name)
+    (if *completion--pattern* *completion--pattern* ""))
    (*completion--anchor*
     (if (>= (point) *completion--anchor*)
         (buffer-substring *completion--anchor* (point))
@@ -227,6 +242,8 @@ What `*completion-read-function*' names."
 `post-command-hook'."
   (if *completion--window*
       (cond
+       ;; The focus in the strip, moving the selection: nothing was typed.
+       ((equal (current-buffer) completion-buffer-name) nil)
        ;; Backspaced past where the completion began: nothing is being
        ;; completed.
        ((and *completion--anchor* (< (point) *completion--anchor*))
@@ -298,6 +315,28 @@ ITEMS, the candidates it has found so far, while it still asks its sources."
         (completion--highlight)
         (completion--draw))))
 
+(defun completion-next-page ()
+  "Show the next page of candidates, selecting its first, wrapping round at
+the end."
+  (completion--move-page 1))
+
+(defun completion-previous-page ()
+  "Show the previous page of candidates, selecting its first, wrapping round
+at the beginning."
+  (completion--move-page -1))
+
+(defun completion--move-page (step)
+  "Turn the strip by STEP pages, and select the first candidate on the page."
+  (let* ((per-page (completion--per-page))
+         ;; "No matches" is one page, as one page of candidates is.
+         (pages (max 1 (floor (/ (+ (length *completion--items*) per-page -1)
+                                 per-page))))
+         (page (floor (/ *completion--index* per-page)))
+         ;; `+ pages', as in `completion--move'.
+         (next (% (+ page step pages) pages)))
+    (setq *completion--index* (* next per-page))
+    (completion--draw)))
+
 (defun completion-choose ()
   "Take the selected candidate and close the strip; with nothing matching, say
 so and leave it open."
@@ -320,8 +359,14 @@ so and leave it open."
 (defun completion--close ()
   "Take down the strip, its keymap and its state."
   ;; Window, state and keymap, so that no way out leaves the keys captured.
-  (if *completion--window* (delete-window *completion--window*))
+  (let ((focused (and *completion--window*
+                      (equal (selected-window) *completion--window*))))
+    (if *completion--window* (delete-window *completion--window*))
+    ;; Closed from inside, the focus goes back where the completion began,
+    ;; not to whichever window is first.
+    (if (and focused *completion--origin*) (select-window *completion--origin*)))
   (setq *completion--window* nil)
+  (setq *completion--origin* nil)
   (setq *completion--items* nil)
   (setq *completion--all-items* nil)
   (setq *completion--anchor* nil)

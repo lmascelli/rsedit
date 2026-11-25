@@ -940,6 +940,81 @@ mod tests {
         assert_eq!(selected(&env, &ctx), "item4");
     }
 
+    /// `C-v` and `M-v` scroll the strip a page at a time, wrapping round, with
+    /// the focus in the prompt, whose own scroll would do nothing.
+    #[test]
+    fn c_v_and_m_v_turn_the_strip_a_page_at_a_time() {
+        let (ctx, env) = with_module();
+        run(
+            "(setq completion-window-height 2)(setq completion-columns 2)",
+            &env,
+            &ctx,
+        );
+        // Four to a page: three pages, the last holding item8 alone.
+        let names: Vec<String> = (0..9).map(|n| format!("item{n}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        prompt_offering(&refs, &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+        press_ctrl(&ctx, &env, KeyCode::Char('n'));
+        assert_eq!(selected(&env, &ctx), "item1");
+
+        press_ctrl(&ctx, &env, KeyCode::Char('v'));
+        assert_eq!(selected(&env, &ctx), "item4");
+        assert!(!strip(&env, &ctx).contains("item0"), "the page turned");
+        press_ctrl(&ctx, &env, KeyCode::Char('v'));
+        assert_eq!(selected(&env, &ctx), "item8");
+        press_ctrl(&ctx, &env, KeyCode::Char('v'));
+        assert_eq!(
+            selected(&env, &ctx),
+            "item0",
+            "past the last page is the first"
+        );
+
+        let meta_v = KeyEvent {
+            code: KeyCode::Char('v'),
+            modifiers: KeyModifiers {
+                alt: true,
+                ..Default::default()
+            },
+        };
+        ctx.handle_key_event(meta_v.clone(), &env);
+        assert_eq!(
+            selected(&env, &ctx),
+            "item8",
+            "before the first is the last"
+        );
+        assert!(
+            strip(&env, &ctx).contains("item8"),
+            "{:?}",
+            strip(&env, &ctx)
+        );
+        ctx.handle_key_event(meta_v, &env);
+        assert_eq!(selected(&env, &ctx), "item4");
+
+        press(&ctx, &env, KeyCode::PageDown);
+        assert_eq!(selected(&env, &ctx), "item8");
+        press(&ctx, &env, KeyCode::PageUp);
+        assert_eq!(selected(&env, &ctx), "item4");
+
+        // The prompt is left as it was: only the page moved.
+        assert_eq!(minibuffer_text(&env, &ctx), "");
+        press(&ctx, &env, KeyCode::Enter);
+        assert_eq!(minibuffer_text(&env, &ctx), "item4");
+    }
+
+    /// With every candidate on one page, paging keeps to it.
+    #[test]
+    fn paging_a_strip_of_one_page_selects_its_first_candidate() {
+        let (ctx, env) = with_module();
+        prompt_offering(&["alpha", "beta", "gamma"], &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+        press_ctrl(&ctx, &env, KeyCode::Char('n'));
+
+        press_ctrl(&ctx, &env, KeyCode::Char('v'));
+        assert_eq!(selected(&env, &ctx), "alpha");
+        assert!(strip(&env, &ctx).contains("gamma"));
+    }
+
     /// Every cell is padded, past the end of the list too: positions are
     /// computed, not searched for.
     #[test]
@@ -1316,5 +1391,103 @@ mod tests {
         }
         assert_eq!(run("minibuffer-width", &env, &ctx), LispExp::number(40.0));
         assert_eq!(run("minibuffer-height", &env, &ctx), LispExp::number(3.0));
+    }
+
+    /// `C-x o` until the strip has the focus, as it binds in the global map.
+    fn focus_strip(ctx: &Ctx, env: &Arc<Env<Ctx>>) {
+        run(r#"(define-key nil "C-x o" 'other-window)"#, env, ctx);
+        for _ in 0..4 {
+            if ctx.get_current_buffer_name() == "*Completions*" {
+                break;
+            }
+            press_ctrl(ctx, env, KeyCode::Char('x'));
+            press(ctx, env, KeyCode::Char('o'));
+        }
+        assert_eq!(ctx.get_current_buffer_name(), "*Completions*");
+        assert_eq!(
+            text_of(&run(
+                r#"(if (equal (selected-window) *completion--window*) "strip" "elsewhere")"#,
+                env,
+                ctx
+            )),
+            "strip"
+        );
+    }
+
+    /// `C-x o` reaches the strip, its keys work there, and Return gives the
+    /// choice to the prompt and the focus back to it.
+    #[test]
+    fn the_strip_can_be_focused_and_chosen_from() {
+        for (floating, (ctx, env)) in [(false, with_module()), (true, with_floating_prompt())] {
+            prompt_offering(&["alpha", "beta", "gamma"], &env, &ctx);
+            let prompt = ctx.get_focused_window_id();
+            press(&ctx, &env, KeyCode::Tab);
+            focus_strip(&ctx, &env);
+
+            press_ctrl(&ctx, &env, KeyCode::Char('n'));
+            assert_eq!(selected(&env, &ctx), "beta", "floating {floating}");
+            press(&ctx, &env, KeyCode::Enter);
+
+            assert_eq!(ctx.get_focused_window_id(), prompt, "floating {floating}");
+            assert_eq!(ctx.get_current_buffer_name(), "*Minibuffer*");
+            assert_eq!(minibuffer_text(&env, &ctx), "beta", "floating {floating}");
+            assert_eq!(
+                text_of(&run(
+                    r#"(if *completion--window* "open" "closed")"#,
+                    &env,
+                    &ctx
+                )),
+                "closed"
+            );
+        }
+    }
+
+    /// Escape from inside the strip closes it and gives the focus back to the
+    /// prompt, not to whichever window comes first.
+    #[test]
+    fn abandoning_a_focused_strip_gives_the_focus_back_to_the_prompt() {
+        for (floating, (ctx, env)) in [(false, with_module()), (true, with_floating_prompt())] {
+            prompt_offering(&["alpha", "beta"], &env, &ctx);
+            let prompt = ctx.get_focused_window_id();
+            press(&ctx, &env, KeyCode::Tab);
+            focus_strip(&ctx, &env);
+
+            press(&ctx, &env, KeyCode::Esc);
+
+            assert_eq!(ctx.get_focused_window_id(), prompt, "floating {floating}");
+            assert_eq!(ctx.get_current_buffer_name(), "*Minibuffer*");
+            assert_eq!(
+                text_of(&run(
+                    r#"(if *completion--window* "open" "closed")"#,
+                    &env,
+                    &ctx
+                )),
+                "closed"
+            );
+        }
+    }
+
+    /// The strip focused in a buffer's completion is not narrowed by its own
+    /// text, and the choice replaces the word in the buffer.
+    #[test]
+    fn a_focused_strip_completes_in_the_buffer_it_was_opened_for() {
+        let (ctx, env) = completing_in_buffer("ab");
+        let window = ctx.get_focused_window_id();
+        run("(completion-at-point)", &env, &ctx);
+        focus_strip(&ctx, &env);
+        assert!(
+            strip(&env, &ctx).contains("abce"),
+            "{:?}",
+            strip(&env, &ctx)
+        );
+
+        press_ctrl(&ctx, &env, KeyCode::Char('n'));
+        press_ctrl(&ctx, &env, KeyCode::Char('v'));
+        press_ctrl(&ctx, &env, KeyCode::Char('n'));
+        press(&ctx, &env, KeyCode::Enter);
+
+        assert_eq!(scratch(&ctx), "abce");
+        assert_eq!(ctx.get_focused_window_id(), window);
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
     }
 }
