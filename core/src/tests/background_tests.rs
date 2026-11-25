@@ -7,7 +7,7 @@
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
-    use crate::editor::{EditorState, TURN_INTERVAL, create_global_env};
+    use crate::editor::{EditorState, GIVE_BACK_AFTER, TURN_INTERVAL, create_global_env};
     use crate::tests::work_support::{PATIENCE, Steps, exits, scripted, wakes};
     use crate::work::{Exit, Spec, Step};
     use risp::{Env, LispExp, Parser, eval};
@@ -781,6 +781,53 @@ mod tests {
             Ok(false),
             "it was stopped, and its last line had nowhere to go"
         );
+    }
+
+    // ----------------------------------------------------------------
+    // The memory of a buffer closed, given back once it is freed
+    // ----------------------------------------------------------------
+
+    fn filled(ctx: &Ctx, env: &Arc<Env<Ctx>>, name: &str, length: usize) {
+        run(&format!(r#"(buffer-create "{name}")"#), env, ctx);
+        assert!(ctx.append_to_buffer(name, &"x".repeat(length)));
+    }
+
+    #[test]
+    fn closing_a_large_buffer_gives_its_memory_back_between_commands() {
+        let (ctx, env) = editor();
+        filled(&ctx, &env, "*large*", GIVE_BACK_AFTER);
+        assert!(ctx.close_buffer("*large*", &env));
+        assert!(ctx.callbacks_owed(), "the host is told to come round");
+        assert!(ctx.give_back_memory(), "and the allocator is asked");
+        assert!(!ctx.callbacks_owed(), "once");
+        assert!(!ctx.give_back_memory());
+    }
+
+    #[test]
+    fn small_buffers_closed_add_up_before_the_allocator_is_asked() {
+        let (ctx, env) = editor();
+        filled(&ctx, &env, "*half*", GIVE_BACK_AFTER / 2);
+        assert!(ctx.close_buffer("*half*", &env));
+        assert!(!ctx.give_back_memory(), "half is not enough");
+        assert!(!ctx.callbacks_owed(), "and it is not asked about again");
+        filled(&ctx, &env, "*other half*", GIVE_BACK_AFTER / 2);
+        assert!(ctx.close_buffer("*other half*", &env));
+        assert!(ctx.give_back_memory(), "the two together are");
+    }
+
+    #[test]
+    fn a_buffer_closed_and_still_held_counts_once_it_is_freed() {
+        let (ctx, env) = editor();
+        filled(&ctx, &env, "*held*", GIVE_BACK_AFTER);
+        let held = ctx.file_handle("*held*").unwrap();
+        assert!(ctx.close_buffer("*held*", &env));
+        assert!(!ctx.callbacks_owed(), "it is not free yet");
+        assert!(!ctx.give_back_memory());
+        drop(held);
+        assert!(ctx.callbacks_owed(), "the host is told once it is");
+        ctx.tick(&env);
+        assert!(!ctx.callbacks_owed());
+        assert!(!ctx.give_back_memory(), "the tick has asked already");
     }
 
     #[test]

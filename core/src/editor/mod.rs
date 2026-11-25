@@ -83,6 +83,8 @@ mod windows;
 mod work;
 
 pub use boot::{create_global_env, isolate_config_for_tests};
+#[cfg(test)]
+pub(crate) use background::GIVE_BACK_AFTER;
 pub(crate) use directory::{DirectoryScope, scoped_directory};
 pub(crate) use frame::TURN_INTERVAL;
 pub use keys::KEY_CAPTURE_FUNCTION;
@@ -246,6 +248,11 @@ pub struct EditorState<B: BufferTrait> {
     /// Calls that background jobs have asked for and the command thread has
     /// not made yet. See [`background`].
     owed: Arc<RwLock<Vec<background::OwedCallback<B>>>>,
+
+    /// The buffers closed and not yet freed, and how much text those freed
+    /// since the allocator last gave back what it held free. See
+    /// [`EditorState::give_back_memory`].
+    released: Arc<std::sync::Mutex<background::Released<B>>>,
 
     /// Killed text, what a yank put where, and whether the command before this
     /// one did either. See [`KillYank`].

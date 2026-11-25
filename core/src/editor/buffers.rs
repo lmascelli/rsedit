@@ -421,6 +421,7 @@ impl<B: BufferTrait> EditorState<B> {
         // Removing it and settling what is current in one acquisition: between
         // two, another thread could read a current name naming a buffer that
         // had just gone.
+        self.note_released(name);
         let last_buffer = self.buffers(|buffers| buffers.names().len() == 1);
         if let BufferRemoved::Current(successor) = self.buffers_mut(|buffers| buffers.remove(name))
         {

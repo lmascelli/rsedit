@@ -5,6 +5,45 @@
 //! Design: `doc/architettura-editor.typ, <callback-dovute>`.
 use super::*;
 
+/// How much text, in characters, the buffers closed must have freed before
+/// the allocator is asked to give back what it holds free: enough that closing
+/// a prompt asks nothing, little enough that closing a file does.
+pub(crate) const GIVE_BACK_AFTER: usize = 64 * 1024;
+
+/// The buffers closed and not yet freed, each with its length, and how much
+/// text those freed since the allocator was last asked.
+pub(crate) struct Released<B: BufferTrait> {
+    closing: Vec<(std::sync::Weak<RwLock<Buffer<B>>>, usize)>,
+    freed: usize,
+}
+
+impl<B: BufferTrait> Default for Released<B> {
+    fn default() -> Self {
+        Self {
+            closing: Vec::new(),
+            freed: 0,
+        }
+    }
+}
+
+/// Gives the system back the pages the allocator holds free: glibc's
+/// `malloc_trim`, which goes through every arena, the threads' as well as the
+/// main one, and not only the top of the heap.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn trim_heap() {
+    unsafe extern "C" {
+        fn malloc_trim(pad: usize) -> std::ffi::c_int;
+    }
+    // SAFETY: it is handed no pointer, and takes each arena's lock itself.
+    unsafe {
+        malloc_trim(0);
+    }
+}
+
+/// Elsewhere there is no such call, and the allocator is left as it is.
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn trim_heap() {}
+
 /// One call a job has asked for, waiting for the command thread.
 pub(crate) struct OwedCallback<B: BufferTrait> {
     /// The job that asked, by its name and number: the call of one replaced
@@ -46,7 +85,8 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// Returns whether a call is owed: a job's, a file operation's, or a
-    /// process's output waiting for its function.
+    /// process's output waiting for its function; or whether a buffer closed
+    /// has been freed, and its memory may be given back.
     ///
     /// [`Self::next_redraw_in`] asks. A job that has owed its last call has
     /// finished, and nothing else would tell the host that something is still
@@ -54,6 +94,7 @@ impl<B: BufferTrait> EditorState<B> {
     pub fn callbacks_owed(&self) -> bool {
         self.file_io_ready()
             || self.process_output_waiting()
+            || self.released_freed()
             || !self
                 .owed
                 .read()
@@ -119,6 +160,71 @@ impl<B: BufferTrait> EditorState<B> {
         let ran = self.run_owed_callbacks(env);
         let files = self.run_file_io(env);
         let output = self.run_process_output(env);
+        // After the file operations: the last to hold a buffer closed.
+        self.give_back_memory();
         scrolled || ran || files || output
+    }
+
+    /// Records that the buffer NAME is closing. Its memory is freed once the
+    /// last holder lets it go, which may be after the close: a file operation
+    /// it started still holds it.
+    pub(crate) fn note_released(&self, name: &str) {
+        let Some(handle) = self.file_handle(name) else {
+            return;
+        };
+        let length = handle
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .text
+            .len();
+        self.released
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .closing
+            .push((Arc::downgrade(&handle), length));
+    }
+
+    /// Returns whether a buffer closed has been freed since the last
+    /// [`Self::give_back_memory`].
+    fn released_freed(&self) -> bool {
+        self.released
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .closing
+            .iter()
+            .any(|(buffer, _)| buffer.strong_count() == 0)
+    }
+
+    /// Asks the allocator to give the system back the memory it holds free,
+    /// once the buffers closed have freed [`GIVE_BACK_AFTER`] characters of
+    /// text since it was last asked; and returns whether it was asked.
+    ///
+    /// What is freed the allocator keeps for what comes next, so closing a
+    /// buffer frees its memory and the editor's footprint stays. Between
+    /// commands rather than in [`Self::close_buffer`]: what the close leaves
+    /// running may hold the buffer a while yet, and asking holds each arena
+    /// of the allocator for a time that grows with the heap.
+    pub(crate) fn give_back_memory(&self) -> bool {
+        {
+            let mut released = self
+                .released
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut freed = 0;
+            released.closing.retain(|(buffer, length)| {
+                let held = buffer.strong_count() > 0;
+                if !held {
+                    freed += length;
+                }
+                held
+            });
+            released.freed += freed;
+            if released.freed < GIVE_BACK_AFTER {
+                return false;
+            }
+            released.freed = 0;
+        }
+        trim_heap();
+        true
     }
 }

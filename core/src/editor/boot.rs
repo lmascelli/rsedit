@@ -133,6 +133,7 @@ impl<B: BufferTrait> EditorState<B> {
             macros: Arc::new(RwLock::new(Macros::default())),
             command_errors: Arc::new(AtomicUsize::new(0)),
             owed: Arc::new(RwLock::new(Vec::new())),
+            released: Arc::default(),
             kill_yank: Arc::new(RwLock::new(KillYank::default())),
             pending_keys: Arc::new(RwLock::new(Vec::new())),
             runtime: Arc::new(RwLock::new(Runtime::new(Arc::new(FuelMeter::new(

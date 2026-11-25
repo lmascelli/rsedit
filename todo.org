@@ -5,7 +5,12 @@
 
 --------------------------------------------------
 * Fixes todo
-- [ ] The GUI menu is not navigable with arrows
+- [ ] When the GUI menu is open moving left and right with
+      arrows leave the previous menu opened. It should close
+      it and open the menu at his left or right cycling at
+      border.
+- [ ] The minibuffer for completions is not scrollable with
+      ctrl-v meta-v. it should be focusable and scrollable.
 
 --------------------------------------------------
 * Macro todo
