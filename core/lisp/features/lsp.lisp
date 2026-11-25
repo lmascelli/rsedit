@@ -922,6 +922,11 @@ its root is not known yet."
                (put server 'crashes nil)
                (lsp--forget server)
                (lsp--start server))
+             (when (get server 'unused)
+               (put server 'unused nil)
+               (if (eq (get server 'state) 'dead)
+                   (lsp--start server)
+                   (put server 'restart t)))
              server)))))
 
 (defun lsp--attach ()
@@ -1025,7 +1030,7 @@ saved, when the server wants to know."
 (defun lsp--after-command ()
   "nil, after what the last command did has reached the servers: changes sent
 or left to wait as `lsp-send-delay' says, buffers waiting for a root asked for it again, documents whose buffer lost
-lsp-mode with its major mode closed."
+lsp-mode with its major mode closed, servers left with no documents stopped."
   (dolist (buffer lsp--waiting)
     (if (member buffer (all-buffer-names))
         (with-current-buffer buffer (lambda () (lsp--attach)))
@@ -1034,6 +1039,13 @@ lsp-mode with its major mode closed."
     (dolist (document (get server 'documents))
       (unless (minor-mode-p 'lsp-mode (car document))
         (lsp--detach (car document)))))
+  ;; A server nobody uses would go on running, and holding its memory, until
+  ;; the editor exits: the next document at its root starts it again.
+  (dolist (server lsp--servers)
+    (when (and (null (get server 'documents))
+               (memq (get server 'state) '(starting ready)))
+      (put server 'unused t)
+      (lsp--stop server)))
   (lsp--changes-noted))
 
 ;; ---------------------------------------------------------------------------

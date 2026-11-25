@@ -5,7 +5,7 @@
 
 --------------------------------------------------
 * Fixes todo
-- [ ] A menu bar for options (like themes) and one for window management
+- [ ] The GUI menu is not navigable with arrows
 
 --------------------------------------------------
 * Macro todo
@@ -42,7 +42,7 @@ Regole (tutte obbligatorie). $REPO = radice del repo, $SCRATCH = la tua scratchp
    commento o riformattazione non richiesti.
 4. Se "Verifica cargo" è sì, nel worktree:
    CARGO_TARGET_DIR=$REPO/target cargo check -q 2>&1 | tail -n 30
-   e correggi gli errori.
+   e correggi gli errori. E genera test mirati per il fix o la feature aggiunta.
 5. Genera il patch, rimuovi il worktree e controlla che il patch si applichi:
    cd $SCRATCH/wt && git add -A && git diff --cached > $SCRATCH/<<nome-breve>>.patch
    git -C $REPO worktree remove --force $SCRATCH/wt

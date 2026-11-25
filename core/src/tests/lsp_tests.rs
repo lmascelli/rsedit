@@ -1015,6 +1015,31 @@ BEGIN {
     }
 
     #[test]
+    fn a_server_left_with_no_documents_stops_and_the_next_one_starts_it_again() {
+        let sandbox = Sandbox::new("unused");
+        let file = sandbox.file("a.fake", "one\n");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let name = open(&file, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        run(
+            &format!(r#"(close-buffer "{name}") (lsp--after-command)"#),
+            &env,
+            &ctx,
+        );
+        tick_until(
+            &format!("(eq (get {} 'state) 'dead)", server(&sandbox)),
+            &env,
+            &ctx,
+        );
+        logged(&sandbox, &[r#""method":"shutdown""#], &env, &ctx);
+        logged(&sandbox, &[r#""method":"exit""#], &env, &ctx);
+        open(&file, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        assert_eq!(sandbox.log().matches(r#""method":"initialize""#).count(), 2);
+        finding_says(&file, "version 1", &env, &ctx);
+    }
+
+    #[test]
     fn a_question_without_an_answer_is_dropped_after_the_timeout() {
         let sandbox = Sandbox::new("timeout");
         let file = sandbox.file("a.fake", "one\n");
