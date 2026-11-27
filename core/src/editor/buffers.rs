@@ -317,8 +317,9 @@ impl<B: BufferTrait> EditorState<B> {
     ///
     /// A float showing it closes, giving focus back to the window that had it.
     /// Every tiled window showing it shows instead the buffer most recently
-    /// current, or `*scratch*`, and the buffer leaves the table, a fresh
-    /// `*scratch*` taking the place of the last one. The work writing into it
+    /// current but the minibuffer's, or `*scratch*`, and the buffer leaves the
+    /// table, a fresh `*scratch*` taking the place of the last one but the
+    /// minibuffer's. The work writing into it
     /// stops, and its mode's `after-close-hook` runs, `closed-buffer-name` and
     /// `closed-buffer-file` saying which buffer it was. Its auto-save file is
     /// deleted, unless it has unsaved changes, and where point was in its
@@ -422,9 +423,21 @@ impl<B: BufferTrait> EditorState<B> {
         // two, another thread could read a current name naming a buffer that
         // had just gone.
         self.note_released(name);
-        let last_buffer = self.buffers(|buffers| buffers.names().len() == 1);
-        if let BufferRemoved::Current(successor) = self.buffers_mut(|buffers| buffers.remove(name))
-        {
+        // The minibuffer's is not counted: no window can fall back to it, so
+        // with only it left the windows get a fresh `*scratch*`.
+        let last_buffer = self.buffers(|buffers| {
+            buffers.names().iter().all(|other| {
+                other == name || other == crate::feature::minibuffer::PROMPT_BUFFER
+            })
+        });
+        let removed = self.buffers_mut(|buffers| {
+            let removed = buffers.remove(name);
+            if last_buffer && !buffers.contains("*scratch*") {
+                buffers.insert("*scratch*", Buffer::new("*scratch*"));
+            }
+            removed
+        });
+        if let BufferRemoved::Current(successor) = removed {
             // The table picked the most recent survivor. What is current should
             // be what the windows were just pointed at, when that is still
             // there.
@@ -502,10 +515,13 @@ impl<B: BufferTrait> EditorState<B> {
         self.buffers_mut(|buffers| buffers.make_current(name));
     }
 
-    /// Returns the buffer most recently current that is not EXCEPT; `None`
-    /// when there is none. Falling back to `*scratch*` is the caller's choice.
+    /// Returns the buffer most recently current that is not EXCEPT, nor the
+    /// minibuffer's, which no window but the prompt's shows; `None` when there
+    /// is none. Falling back to `*scratch*` is the caller's choice.
     pub(crate) fn most_recent_buffer(&self, except: &str) -> Option<String> {
-        self.buffers(|buffers| buffers.most_recent(except))
+        self.buffers(|buffers| {
+            buffers.most_recent_but(&[except, crate::feature::minibuffer::PROMPT_BUFFER])
+        })
     }
 
     /// Makes NAME the current buffer without showing it, and returns the one

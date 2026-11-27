@@ -231,4 +231,77 @@ mod tests {
         assert_ne!(ctx.get_current_buffer_name(), "first");
         assert!(ctx.has_buffer(&ctx.get_current_buffer_name()));
     }
+
+    // ----------------------------------------------------------------
+    // With a prompt open
+    // ----------------------------------------------------------------
+
+    /// The buffer each tiled window but the prompt's is showing.
+    fn shown_above_the_prompt(ctx: &Ctx) -> Vec<String> {
+        ctx.windows(|windows| {
+            windows
+                .root()
+                .window_ids()
+                .into_iter()
+                .filter(|id| !windows.is_prompt(*id))
+                .filter_map(|id| windows.buffer_of(id))
+                .collect()
+        })
+    }
+
+    #[test]
+    fn the_minibuffer_is_never_the_replacement() {
+        // Focus in the prompt makes `*Minibuffer*` the most recent buffer.
+        let (ctx, env) = editor();
+        run(
+            r#"(buffer-create "other" 'fundamental-mode)
+               (switch-to-buffer "other")
+               (buffer-create "doomed" 'fundamental-mode)
+               (switch-to-buffer "doomed")
+               (minibuffer-read "Test:" nil nil nil)
+               (close-buffer "doomed")"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(shown_above_the_prompt(&ctx), vec!["other".to_string()]);
+        assert_no_dangling(&ctx, &env);
+    }
+
+    #[test]
+    fn with_only_the_minibuffer_left_a_fresh_scratch_is_shown() {
+        let (ctx, env) = editor();
+        run(
+            r#"(buffer-create "only" 'fundamental-mode)
+               (switch-to-buffer "only")
+               (close-buffer "*scratch*")
+               (minibuffer-read "Test:" nil nil nil)
+               (close-buffer "only")"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(shown_above_the_prompt(&ctx), vec!["*scratch*".to_string()]);
+        assert!(ctx.has_buffer("*scratch*"));
+        assert_no_dangling(&ctx, &env);
+        // The prompt still answers, and leaves `*scratch*` current.
+        run("(minibuffer-confirm)", &env, &ctx);
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+        assert_eq!(shown(&ctx, &env), vec!["*scratch*".to_string()]);
+    }
+
+    #[test]
+    fn closing_scratch_under_the_prompt_makes_a_fresh_one() {
+        // From the window above the prompt, with `*scratch*` the last buffer
+        // but the minibuffer's.
+        let (ctx, env) = editor();
+        run(
+            r#"(minibuffer-read "Test:" nil nil nil)
+               (other-window 1)
+               (close-buffer "*scratch*")"#,
+            &env,
+            &ctx,
+        );
+        assert!(ctx.has_buffer("*scratch*"));
+        assert_eq!(shown_above_the_prompt(&ctx), vec!["*scratch*".to_string()]);
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+    }
 }

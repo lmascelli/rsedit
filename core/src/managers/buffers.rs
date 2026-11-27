@@ -121,9 +121,15 @@ impl<B: BufferTrait> Buffers<B> {
     /// EXCEPT, or `None` when there is none: falling back to `*scratch*` is
     /// the caller's choice, not this table's.
     pub fn most_recent(&self, except: &str) -> Option<String> {
+        self.most_recent_but(&[except])
+    }
+
+    /// Returns the most recently current buffer that still exists and is none
+    /// of EXCEPT, or `None` as [`Buffers::most_recent`] does.
+    pub fn most_recent_but(&self, except: &[&str]) -> Option<String> {
         self.recency
             .iter()
-            .find(|name| name.as_str() != except && self.table.contains_key(*name))
+            .find(|name| !except.contains(&name.as_str()) && self.table.contains_key(*name))
             .cloned()
     }
 

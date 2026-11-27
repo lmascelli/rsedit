@@ -98,9 +98,9 @@ KILLING A BUFFER
     wants yes typed in full. A buffer with no file behind it is killed
     without a question. M-x kill-buffer-without-saving asks nothing.
 
-    A window that showed the buffer shows the one you used before it, and
-    a floating window showing it closes. Killing the last buffer leaves a
-    new, empty *scratch*. A command still writing into the buffer, such as
+    A window that showed the buffer shows the one you used before it, never
+    the minibuffer's, and a floating window showing it closes. Killing the
+    last buffer, the minibuffer's aside, leaves a new, empty *scratch*. A command still writing into the buffer, such as
     a shell command, is stopped.
 
 RENAMING A BUFFER

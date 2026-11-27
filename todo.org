@@ -5,8 +5,7 @@
 
 --------------------------------------------------
 * Fixes todo
-- [ ] The minibuffer for completions is not scrollable with
-      ctrl-v meta-v. it should be focusable and scrollable.
+- [ ] Il minibuffer può rimanere l'unica finestra aperta
 
 --------------------------------------------------
 * Macro todo
