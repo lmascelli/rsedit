@@ -4,7 +4,7 @@
 //!
 //! Design: `doc/architettura-editor.typ, <file-su-disco>`.
 use super::*;
-use crate::buffer::coding::{self, Coding};
+use crate::buffer::coding::{self, Coding, Eol};
 use crate::buffer::io_status::{FileIssue, IoCause};
 use crate::jobs::autosave::{auto_save_directory, auto_save_path};
 use crate::primitives::args;
@@ -46,23 +46,29 @@ fn write_buffer_expected<B: BufferTrait>(
     if !before_save(ctx, env, name) {
         return false;
     }
-    let (content, coding, version, stamp, stale) = ctx
+    let (content, coding, eol, version, stamp, stale) = ctx
         .with_buffer(name, |buf| {
             (
                 buf.text.to_string(),
                 buf.coding,
+                buf.eol,
                 buf.version,
                 buf.file_stamp,
                 buf.stale,
             )
         })
         .expect("reserved buffer");
-    let Some(bytes) = encode_for(ctx, &path, &content, coding) else {
+    let Some(bytes) = encode_for(ctx, &path, &content, coding, eol) else {
         return false;
     };
     // Even synchronous scripts get a recovery copy before a potentially slow write.
-    let recovery =
-        ctx.prepare_recovery(&handle, &path, auto_save_directory(env), version, &content);
+    let recovery = ctx.prepare_recovery(
+        &handle,
+        &path,
+        auto_save_directory(env),
+        version,
+        &eol.to_file(&content),
+    );
     if let Err(why) = &recovery {
         ctx.log_diagnostic(&format!("[ERROR] Recovery copy unavailable: {why}"));
     }
@@ -272,16 +278,18 @@ fn say_written<B: BufferTrait>(ctx: &EditorState<B>, path: &str, all_of_it: bool
     ctx.log_diagnostic(&said);
 }
 
-/// Returns CONTENT as CODING writes it to PATH, or `None`, saying why, when
-/// CODING has no bytes for one of its characters: the file is left as it was,
-/// since a character written as something else would not come back.
+/// Returns CONTENT as CODING writes it to PATH, its lines ending in EOL, or
+/// `None`, saying why, when CODING has no bytes for one of its characters: the
+/// file is left as it was, since a character written as something else would
+/// not come back.
 fn encode_for<B: BufferTrait>(
     ctx: &EditorState<B>,
     path: &str,
     content: &str,
     coding: Coding,
+    eol: Eol,
 ) -> Option<Vec<u8>> {
-    match coding::encode(content, coding) {
+    match coding::encode(content, coding, eol) {
         Ok(bytes) => Some(bytes),
         Err(missing) => {
             let why = format!(
@@ -416,11 +424,18 @@ primitive!(find_file, args, env, ctx, {
             // A file that is not UTF-8 opens all the same, and says so: its
             // characters are this coding's guess, and saving writes it back
             // in the same coding.
-            let coding = ctx
-                .with_buffer(&buf_name, |buf| buf.coding)
+            let (coding, at) = ctx
+                .with_buffer(&buf_name, |buf| {
+                    let at = if buf.coding == Coding::Windows1252 {
+                        not_utf8_at(&buf.text.to_string())
+                    } else {
+                        String::new()
+                    };
+                    (buf.coding, at)
+                })
                 .unwrap_or_default();
             if coding == Coding::Windows1252 {
-                said.push(format!("Not UTF-8: read as {}", coding.name()));
+                said.push(format!("Not UTF-8{at}: read as {}", coding.name()));
             }
             // Said on the way in, because nothing else would say it. A
             // recovery copy nobody is told about is a recovery copy nobody
@@ -581,8 +596,15 @@ primitive!(recover_file_adopt, _args, env, ctx, {
             return Ok(ELispExp::nil());
         }
     };
+    // The copy was written with the file's line ends, as a save writes them;
+    // one with no line end keeps the buffer's.
+    let eol = Eol::detect(&text);
+    let text = eol.unwrap_or_default().to_buffer(text);
     ctx.with_current_buffer_mut(|buf| {
         buf.adopt_text(&text);
+        if let Some(eol) = eol {
+            buf.eol = eol;
+        }
         // Modified on purpose. What is in the buffer now is *not* what is in
         // the file, and saying otherwise would let it be quit away silently --
         // which is the exact loss the auto-save file exists to undo.
@@ -614,7 +636,7 @@ primitive!(revert_buffer, _args, env, ctx, {
         return Ok(ELispExp::nil());
     };
     if !modified {
-        return Ok(ELispExp::boolean(reread(ctx, &env, &path)));
+        return Ok(ELispExp::boolean(reread(ctx, &env, &path, None)));
     }
     // There is something to lose, so the answer has to be spelled out. The
     // read happens in the callback, not here -- a question does not return an
@@ -641,21 +663,23 @@ primitive!(revert_buffer_reread, _args, env, ctx, {
     let Some(path) = ctx.with_current_buffer(|buf| buf.file_path.clone()) else {
         return Ok(ELispExp::nil());
     };
-    Ok(ELispExp::boolean(reread(ctx, &env, &path)))
+    Ok(ELispExp::boolean(reread(ctx, &env, &path, None)))
 });
 
-/// Replaces the current buffer's text with what is in PATH and runs
+/// Replaces the current buffer's text with what is in PATH, read in FORCED
+/// when it is given and in the coding the file has otherwise, and runs
 /// [`AFTER_REVERT_HOOK`], with no lock held; answers false, saying why and
-/// running nothing, when the file cannot be read.
+/// running nothing, when the file cannot be read, or not in FORCED.
 fn reread<B: BufferTrait>(
     ctx: &EditorState<B>,
     env: &Arc<Env<EditorState<B>>>,
     path: &str,
+    forced: Option<Coding>,
 ) -> bool {
     let name = ctx.get_current_buffer_name();
     // Read with no lock held, for the reason every other file operation here
     // does it: a slow disk must not stop the threads walking the buffer.
-    let (text, coding, stamp) = match coding::read_stable(path) {
+    let (bytes, stamp) = match coding::read_stable_bytes(path) {
         Ok(read) => read,
         Err(why) => {
             ctx.with_current_buffer_mut(|buf| {
@@ -665,23 +689,138 @@ fn reread<B: BufferTrait>(
             return false;
         }
     };
+    let (text, coding, eol) = match forced {
+        None => coding::decode(&bytes),
+        Some(forced) => match coding::decode_as(&bytes, forced) {
+            Some((text, eol)) => (text, forced, eol),
+            // Not a failure of the file, which reads: of the coding asked for.
+            None => {
+                let at = not_utf8_at(&coding::decode(&bytes).0);
+                ctx.set_echo_message(&format!(
+                    "Cannot read {path} in {}: not UTF-8{at}",
+                    forced.name()
+                ));
+                return false;
+            }
+        },
+    };
+    let at = if forced.is_none() && coding == Coding::Windows1252 {
+        Some(not_utf8_at(&text))
+    } else {
+        None
+    };
     ctx.with_current_buffer_mut(|buf| {
         buf.adopt_text(&text);
         buf.coding = coding;
+        buf.eol = eol;
         buf.file_stamp = Some(stamp);
         buf.forget_data(crate::editor::file_io::ERROR);
     });
-    if coding == Coding::Windows1252 {
+    if let Some(at) = at {
         ctx.set_echo_message(&format!(
-            "Reverted to {path}; not UTF-8: read as {}",
+            "Reverted to {path}; not UTF-8{at}: read as {}",
             coding.name()
         ));
+    } else if forced.is_some() {
+        ctx.set_echo_message(&format!("Reverted to {path} in {}", coding.name()));
     } else {
         ctx.set_echo_message(&format!("Reverted to {path}"));
     }
     ctx.run_buffer_hook(&name, AFTER_REVERT_HOOK, env);
     true
 }
+
+/// Returns where TEXT, read in windows-1252, stops being UTF-8, as the
+/// messages say it: " at line L, column C", or nothing.
+pub(super) fn not_utf8_at(text: &str) -> String {
+    coding::first_invalid_byte(text)
+        .map(|(line, column)| format!(" at line {line}, column {column}"))
+        .unwrap_or_default()
+}
+
+/// Returns the coding ARG names, a string or a symbol, or `None`, saying
+/// which there are, when it names none.
+fn coding_arg<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    arg: Option<&ELispExp<B>>,
+) -> Result<Option<Coding>, EvalError<EditorState<B>>> {
+    let name = match arg {
+        Some(ELispExp::String(name)) | Some(ELispExp::Symbol(name)) => name.to_string(),
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String or Symbol".into(),
+                got: other.cloned().unwrap_or_else(ELispExp::nil),
+            });
+        }
+    };
+    let coding = Coding::named(name.trim());
+    if coding.is_none() {
+        let known: Vec<&str> = Coding::ALL.iter().map(|coding| coding.name()).collect();
+        ctx.set_echo_message(&format!("No coding called {name}: {}", known.join(", ")));
+    }
+    Ok(coding)
+}
+
+pub const REVERT_BUFFER_WITH_CODING_DOC: &str = "(revert-buffer-with-coding CODING): Read the \
+         current buffer's file again in CODING, utf-8, utf-8-with-signature or windows-1252, and \
+         write it in CODING from then on, asking first when there are unsaved changes to lose. \
+         A file that is not UTF-8 is not read in a UTF-8 coding: the echo area says where its \
+         first byte that is not UTF-8 is, and the buffer is left as it was. Run \
+         \"after-revert-hook\" once the text is the file's.\n\n\
+         Example:\n\
+         (revert-buffer-with-coding \"windows-1252\")";
+
+primitive!(revert_buffer_with_coding, args, env, ctx, {
+    let Some(coding) = coding_arg(ctx, args.first())? else {
+        return Ok(ELispExp::nil());
+    };
+    let Some((path, modified)) =
+        ctx.with_current_buffer(|buf| buf.file_path.clone().map(|path| (path, buf.is_modified)))
+    else {
+        ctx.set_echo_message("No file associated with this buffer");
+        return Ok(ELispExp::nil());
+    };
+    if !modified {
+        return Ok(ELispExp::boolean(reread(ctx, &env, &path, Some(coding))));
+    }
+    // As `revert-buffer' asks, with the coding carried to the answer.
+    let on_yes = ELispExp::form(vec![
+        ELispExp::symbol("lambda".into()),
+        ELispExp::nil(),
+        ELispExp::form(vec![
+            ELispExp::symbol("revert-buffer-with-coding--reread".into()),
+            ELispExp::string(coding.name().to_string()),
+        ]),
+    ]);
+    eval(
+        &ELispExp::form(vec![
+            ELispExp::symbol("yes-or-no".into()),
+            ELispExp::string(format!(
+                "Discard your changes and reread {} in {}?",
+                file_name_of(&path),
+                coding.name()
+            )),
+            on_yes,
+        ]),
+        env,
+        ctx,
+    )
+});
+
+pub const REVERT_BUFFER_WITH_CODING_REREAD_DOC: &str = "(revert-buffer-with-coding--reread \
+         CODING): Read the current buffer's file again in CODING with no questions. Not called \
+         directly -- it is what `revert-buffer-with-coding' does once its question has been \
+         answered.";
+
+primitive!(revert_buffer_with_coding_reread, args, env, ctx, {
+    let Some(coding) = coding_arg(ctx, args.first())? else {
+        return Ok(ELispExp::nil());
+    };
+    let Some(path) = ctx.with_current_buffer(|buf| buf.file_path.clone()) else {
+        return Ok(ELispExp::nil());
+    };
+    Ok(ELispExp::boolean(reread(ctx, &env, &path, Some(coding))))
+});
 
 pub const WRITE_FILE_DOC: &str = "(write-file PATH): Write the current buffer to PATH and visit \
          that file from then on; return PATH, or nil when nothing was written. The buffer takes \
@@ -736,9 +875,9 @@ primitive!(write_file, args, env, ctx, {
     }
     // Taken under the lock, written with the lock given back: a slow disk must
     // not stop every other thread reading the buffer.
-    let (content, coding, version) =
-        ctx.with_current_buffer(|buf| (buf.text.to_string(), buf.coding, buf.version));
-    let Some(bytes) = encode_for(ctx, &path, &content, coding) else {
+    let (content, coding, eol, version) = ctx
+        .with_current_buffer(|buf| (buf.text.to_string(), buf.coding, buf.eol, buf.version));
+    let Some(bytes) = encode_for(ctx, &path, &content, coding, eol) else {
         return Ok(ELispExp::nil());
     };
     let source = ctx
@@ -749,7 +888,7 @@ primitive!(write_file, args, env, ctx, {
         &source,
         auto_save_directory(&env),
         version,
-        &content,
+        &eol.to_file(&content),
     );
     if let Err(why) = &recovery {
         ctx.log_diagnostic(&format!("[ERROR] Recovery copy unavailable: {why}"));
@@ -834,6 +973,36 @@ primitive!(set_buffer_file_coding, args, _env, ctx, {
     Ok(ELispExp::string(coding.name().to_string()))
 });
 
+pub const SET_BUFFER_FILE_EOL_DOC: &str = "(set-buffer-file-eol EOL): End the lines of the \
+         current buffer's file with EOL from the next save on, and mark the buffer modified so \
+         that there is a save to make: unix (LF), dos (CRLF) or mac (CR). Return its name, or \
+         nil, and a message, for a name that is none of them.\n\n\
+         Example:\n\
+         (set-buffer-file-eol \"dos\")";
+
+primitive!(set_buffer_file_eol, args, _env, ctx, {
+    let name = match args.first() {
+        Some(ELispExp::String(name)) | Some(ELispExp::Symbol(name)) => name.to_string(),
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String or Symbol".into(),
+                got: other.cloned().unwrap_or_else(ELispExp::nil),
+            });
+        }
+    };
+    let Some(eol) = Eol::named(name.trim()) else {
+        let known: Vec<&str> = Eol::ALL.iter().map(|eol| eol.name()).collect();
+        ctx.set_echo_message(&format!("No line end called {name}: {}", known.join(", ")));
+        return Ok(ELispExp::nil());
+    };
+    ctx.with_current_buffer_mut(|buf| {
+        buf.eol = eol;
+        buf.is_modified = true;
+    });
+    ctx.set_echo_message(&format!("Lines will be written with {} line ends", eol.name()));
+    Ok(ELispExp::string(eol.name().to_string()))
+});
+
 pub const RECENT_FILES_DOC: &str = "(recent-files): Return the files opened with `find-file' \
          or written with `write-file', newest first, as a list of absolute paths: at most \
          `recent-files-length' of them, kept from one run to the next.\n\n\
@@ -883,6 +1052,12 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         &["sCoding (utf-8, utf-8-with-signature, windows-1252): "],
         SET_BUFFER_FILE_CODING_DOC,
     );
+    into.command(
+        "set-buffer-file-eol",
+        set_buffer_file_eol,
+        &["sLine ends (unix, dos, mac): "],
+        SET_BUFFER_FILE_EOL_DOC,
+    );
     into.function(
         "recover-file--adopt",
         recover_file_adopt,
@@ -893,6 +1068,17 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         "revert-buffer--reread",
         revert_buffer_reread,
         REVERT_BUFFER_REREAD_DOC,
+    );
+    into.command(
+        "revert-buffer-with-coding",
+        revert_buffer_with_coding,
+        &["sCoding (utf-8, utf-8-with-signature, windows-1252): "],
+        REVERT_BUFFER_WITH_CODING_DOC,
+    );
+    into.function(
+        "revert-buffer-with-coding--reread",
+        revert_buffer_with_coding_reread,
+        REVERT_BUFFER_WITH_CODING_REREAD_DOC,
     );
     into.command("write-file", write_file, &["fWrite file: "], WRITE_FILE_DOC);
     into.function("recent-files", recent_files, RECENT_FILES_DOC);

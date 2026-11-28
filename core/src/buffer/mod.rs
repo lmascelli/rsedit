@@ -20,7 +20,7 @@ pub mod undo;
 pub mod virtual_text;
 
 pub use buffer_trait::BufferTrait;
-pub use coding::Coding;
+pub use coding::{Coding, Eol};
 pub use disk::{FileStamp, OnDisk};
 pub use mark::Mark;
 pub use markers::Markers;
@@ -48,6 +48,9 @@ pub struct Buffer<B: BufferTrait> {
     /// How the file's bytes are its text: what it was read in, and what it is
     /// written in. UTF-8 for a buffer that has never read a file.
     pub coding: Coding,
+    /// How the file's lines end: what each was read with, and what each "\n"
+    /// is written as. LF for a buffer that has never read a file.
+    pub eol: Eol,
     pub is_modified: bool,
     pub current_mode: String,
     /// This buffer's edit history: recorded changes for undo and redo.
@@ -216,6 +219,7 @@ impl<B: BufferTrait> Buffer<B> {
             file_path: None,
             directory: None,
             coding: Coding::Utf8,
+            eol: Eol::Lf,
             is_modified: false,
             current_mode: "fundamental-mode".into(),
             undo: UndoHistory::default(),
@@ -326,6 +330,7 @@ impl<B: BufferTrait> Buffer<B> {
             file_path: None,
             directory: None,
             coding: Coding::Utf8,
+            eol: Eol::Lf,
             is_modified: false,
             current_mode: "fundamental-mode".into(),
             undo: UndoHistory::default(),

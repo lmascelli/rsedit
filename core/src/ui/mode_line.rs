@@ -22,7 +22,7 @@ use crate::buffer::{Buffer, BufferTrait};
 /// | `%c`   | column, counting from zero as Emacs does     |
 /// | `%p`   | all of it, or how far down the buffer point is |
 /// | `%!`   | the findings about the file, counted by severity |
-/// | `%*`   | `**` when modified, `--` when not            |
+/// | `%*`   | `**` when modified, `--` when not, then `(DOS)` or `(Mac)` when the file's lines do not end in LF |
 /// | `%%`   | a literal per cent                           |
 ///
 /// An unknown escape is shown as it is written.
@@ -68,7 +68,10 @@ pub fn expand_mode_line<B: BufferTrait>(
             Some('c') => out.push_str(&column.to_string()),
             Some('p') => out.push_str(&position_in_buffer(line, lines, height)),
             Some('!') => out.push_str(findings),
-            Some('*') => out.push_str(if buffer.is_modified { "**" } else { "--" }),
+            Some('*') => {
+                out.push_str(if buffer.is_modified { "**" } else { "--" });
+                out.push_str(buffer.eol.mnemonic());
+            }
             Some('%') => out.push('%'),
             Some(other) => {
                 out.push('%');

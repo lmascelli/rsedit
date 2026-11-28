@@ -448,7 +448,8 @@ impl<B: BufferTrait> EditorState<B> {
                 buffer: name.to_string(),
                 source: path.clone(),
                 where_to: auto_save_path(path, directory),
-                text: buf.text.to_string(),
+                // With the file's line ends, as a save would write them.
+                text: buf.eol.to_file(&buf.text.to_string()).into_owned(),
                 version: buf.version,
             })
         })?

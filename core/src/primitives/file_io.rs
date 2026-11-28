@@ -12,7 +12,7 @@ use crate::jobs::autosave::{auto_save_directory, auto_save_path};
 use std::sync::Arc;
 
 enum Read {
-    File(String, crate::buffer::coding::Coding, FileStamp),
+    File(String, crate::buffer::coding::Coding, crate::buffer::Eol, FileStamp),
     Missing,
     Directory,
 }
@@ -26,7 +26,8 @@ fn read(path: &str) -> std::io::Result<Read> {
     if metadata.is_dir() {
         return Ok(Read::Directory);
     }
-    coding::read_stable(path).map(|(text, coding, stamp)| Read::File(text, coding, stamp))
+    coding::read_stable(path)
+        .map(|(text, coding, eol, stamp)| Read::File(text, coding, eol, stamp))
 }
 
 fn visiting<B: BufferTrait>(ctx: &EditorState<B>, path: &str) -> Option<String> {
@@ -137,9 +138,10 @@ primitive!(find_file_async, args, env, ctx, {
                 let name = match candidate {
                     Ok(name) => {
                         let mut buf = match result {
-                            Read::File(text, coding, stamp) => {
+                            Read::File(text, coding, eol, stamp) => {
                                 let mut buf = Buffer::from_text(&name, &text);
                                 buf.coding = coding;
+                                buf.eol = eol;
                                 buf.file_stamp = Some(stamp);
                                 buf
                             }
@@ -174,12 +176,21 @@ primitive!(find_file_async, args, env, ctx, {
                     state.initialize_buffer(&name, true, env);
                 }
                 state.record_visit(&path, env);
-                let coding = state
-                    .with_buffer(&name, |buf| buf.coding)
+                let (coding, at) = state
+                    .with_buffer(&name, |buf| {
+                        // Where, only of a text just read: one edited since
+                        // says nothing of the file.
+                        let at = if created && buf.coding == coding::Coding::Windows1252 {
+                            super::files::not_utf8_at(&buf.text.to_string())
+                        } else {
+                            String::new()
+                        };
+                        (buf.coding, at)
+                    })
                     .unwrap_or_default();
                 let mut message = format!("Opened {path}");
                 if coding == coding::Coding::Windows1252 {
-                    message.push_str("; not UTF-8: read as windows-1252");
+                    message.push_str(&format!("; not UTF-8{at}: read as windows-1252"));
                 }
                 if recovery_exists {
                     message.push_str("; an auto-save copy exists -- M-x recover-file");
@@ -394,7 +405,7 @@ pub(super) fn save_named<B: BufferTrait>(
         let buf = handle
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let bytes = coding::encode(&buf.text.to_string(), buf.coding).map_err(|why| {
+        let bytes = coding::encode(&buf.text.to_string(), buf.coding, buf.eol).map_err(|why| {
             EvalError::RuntimeMessage(format!("Cannot encode file character: {why:?}"))
         })?;
         let same_target = source.as_deref() == Some(path.as_str());
@@ -407,7 +418,7 @@ pub(super) fn save_named<B: BufferTrait>(
             path,
             source,
             text: bytes,
-            recovery_text: buf.text.to_string(),
+            recovery_text: buf.eol.to_file(&buf.text.to_string()).into_owned(),
             version: buf.version,
             stale: same_target && buf.stale,
             confirmed: false,
@@ -484,10 +495,11 @@ fn start_revert<B: BufferTrait>(
                 return;
             }
             match result {
-                Ok(Read::File(text, coding, stamp)) => {
+                Ok(Read::File(text, coding, eol, stamp)) => {
                     state.with_buffer_mut(&name, |buf| {
                         buf.adopt_text(&text);
                         buf.coding = coding;
+                        buf.eol = eol;
                         buf.file_stamp = Some(stamp);
                         buf.forget_data(ERROR);
                     });

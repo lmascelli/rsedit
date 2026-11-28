@@ -414,7 +414,7 @@ pub const READ_FILE_TO_STRING_DOC: &str = "(read-file-to-string PATH): Return th
 primitive!(read_file_to_string, args, _env, ctx, {
     let path = path_arg(ctx, args.first())?;
     match crate::buffer::coding::read_text(&path) {
-        Ok((contents, _)) => Ok(ELispExp::string(contents)),
+        Ok((contents, ..)) => Ok(ELispExp::string(contents)),
         Err(why) => {
             ctx.log_diagnostic(&format!("Cannot read {path}: {why}"));
             Ok(ELispExp::nil())

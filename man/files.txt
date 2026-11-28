@@ -17,9 +17,11 @@ SYNOPSIS
     (write-file PATH)
     (save-some-buffers &optional AFTER)
     (revert-buffer)
+    (revert-buffer-with-coding CODING)
     (recover-file)
     (buffer-file-coding)
     (set-buffer-file-coding CODING)
+    (set-buffer-file-eol EOL)
     (quit)
     (quit-without-saving)
     (y-or-n PROMPT ON-YES &optional ON-NO)
@@ -334,18 +336,31 @@ CODINGS
     A file is read in UTF-8 when it is UTF-8, and in windows-1252 when it
     is not: the coding of older files written on Windows in a western
     language, where è or € is a single byte. Any file opens this way, and
-    the echo area says "Not UTF-8: read as windows-1252". The buffer keeps
-    the coding, and saving writes the file in it, so a file opened and
-    saved unchanged comes back exactly as it was. M-s g searches such a
-    file in the same coding.
+    the echo area says so and where, as in "Not UTF-8 at line 3, column 12:
+    read as windows-1252": the first byte that is not, with the line
+    counted from one and the column from zero. The buffer keeps the coding,
+    and saving writes the file in it, so a file opened and saved unchanged
+    comes back exactly as it was. M-s g searches such a file in the same
+    coding.
 
     A character the coding does not have, such as ā in windows-1252, cannot
     be saved in it: the save is refused, saying which character, and the
     file is left alone. M-x set-buffer-file-coding writes the file in
     another coding from the next save on, utf-8 for any character; M-x
-    buffer-file-coding says which one the buffer has. A UTF-8 file that
-    begins with the signature some Windows programs write is read without
-    it, as utf-8-with-signature, and saved with it again.
+    buffer-file-coding says which one the buffer has, and M-x
+    revert-buffer-with-coding reads the file again in another, for a guess
+    that was wrong; a file that is not UTF-8 is not read in utf-8, and the
+    echo area says where. A UTF-8 file that begins with the signature some
+    Windows programs write is read without it, as utf-8-with-signature, and
+    saved with it again.
+
+    Lines that end in CR LF, as on Windows, or in CR alone, as on the old
+    Macintosh, are read as lines that end in a newline, and saving puts
+    their ends back; the mode line shows (DOS) or (Mac) after the
+    modified flag. The line end most of the first lines have is the one
+    kept, and a CR alone in a CR LF file stays in the text. M-x
+    set-buffer-file-eol writes the lines with another from the next save
+    on: unix, dos or mac.
 
 FILES FROM LISP
     `read-file-to-string' reads a file without making a buffer for it.

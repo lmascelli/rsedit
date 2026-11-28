@@ -56,10 +56,163 @@ impl Coding {
     }
 }
 
-/// Returns BYTES as text, and the coding they were read in: UTF-8 when they
-/// are UTF-8, without its signature when they begin with one, and
-/// Windows-1252 otherwise, which never fails.
-pub fn decode(bytes: &[u8]) -> (String, Coding) {
+/// How a file's lines end. The buffer holds every one of them as "\n": they
+/// are taken off when read and put back when written.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Eol {
+    /// "\n", as on Unix: the text as the buffer holds it, and what every new
+    /// file is written with.
+    #[default]
+    Lf,
+    /// "\r\n", as on Windows.
+    Crlf,
+    /// "\r" alone, as on the Macintosh before OS X.
+    Cr,
+}
+
+/// How many line ends [`Eol::detect`] counts before it decides.
+const SAMPLED_LINES: usize = 100;
+
+impl Eol {
+    /// Every line end, in the order they are offered.
+    pub const ALL: [Eol; 3] = [Eol::Lf, Eol::Crlf, Eol::Cr];
+
+    /// Returns the name Lisp and the messages use, as Emacs has it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Eol::Lf => "unix",
+            Eol::Crlf => "dos",
+            Eol::Cr => "mac",
+        }
+    }
+
+    /// Returns the line end called NAME, ignoring case: its name, or the
+    /// characters it is written with (lf, crlf, cr).
+    pub fn named(name: &str) -> Option<Eol> {
+        Eol::ALL.into_iter().find(|eol| {
+            let written = match eol {
+                Eol::Lf => "lf",
+                Eol::Crlf => "crlf",
+                Eol::Cr => "cr",
+            };
+            eol.name().eq_ignore_ascii_case(name) || written.eq_ignore_ascii_case(name)
+        })
+    }
+
+    /// Returns what the mode line shows: nothing for LF, which is the rule.
+    pub fn mnemonic(self) -> &'static str {
+        match self {
+            Eol::Lf => "",
+            Eol::Crlf => "(DOS)",
+            Eol::Cr => "(Mac)",
+        }
+    }
+
+    /// Returns the line end most of TEXT's first lines have, or `None` when
+    /// it has none. A tie goes to LF, which changes nothing when read, and
+    /// then to CRLF; a CR before an LF is half of a CRLF, not a line end.
+    pub fn detect(text: &str) -> Option<Eol> {
+        let bytes = text.as_bytes();
+        let (mut lf, mut crlf, mut cr) = (0, 0, 0);
+        let mut at = 0;
+        while at < bytes.len() && lf + crlf + cr < SAMPLED_LINES {
+            match bytes[at] {
+                b'\n' => lf += 1,
+                b'\r' if bytes.get(at + 1) == Some(&b'\n') => {
+                    crlf += 1;
+                    at += 1;
+                }
+                b'\r' => cr += 1,
+                _ => {}
+            }
+            at += 1;
+        }
+        if lf + crlf + cr == 0 {
+            None
+        } else if lf >= crlf && lf >= cr {
+            Some(Eol::Lf)
+        } else if crlf >= cr {
+            Some(Eol::Crlf)
+        } else {
+            Some(Eol::Cr)
+        }
+    }
+
+    /// Returns TEXT, read from a file whose lines end this way, with "\n" at
+    /// the end of each line. A CR not before an LF stays in a CRLF file, and an
+    /// LF stays wherever it is: each is written back as this line end.
+    pub fn to_buffer(self, text: String) -> String {
+        match self {
+            Eol::Lf => text,
+            Eol::Crlf => text.replace("\r\n", "\n"),
+            Eol::Cr => text.replace('\r', "\n"),
+        }
+    }
+
+    /// Returns TEXT, as the buffer holds it, with this line end in place of
+    /// each "\n".
+    pub fn to_file(self, text: &str) -> std::borrow::Cow<'_, str> {
+        match self {
+            Eol::Lf => std::borrow::Cow::Borrowed(text),
+            Eol::Crlf => std::borrow::Cow::Owned(text.replace('\n', "\r\n")),
+            Eol::Cr => std::borrow::Cow::Owned(text.replace('\n', "\r")),
+        }
+    }
+}
+
+/// Returns BYTES as text, the coding they were read in and how their lines
+/// end: UTF-8 when they are UTF-8, without its signature when they begin with
+/// one, and Windows-1252 otherwise, which never fails; the line end most of
+/// the first lines have, each "\n" in the text. A binary file is read as LF,
+/// so that its bytes come back where they were.
+pub fn decode(bytes: &[u8]) -> (String, Coding, Eol) {
+    let (text, coding) = characters(bytes);
+    let (text, eol) = line_ends(bytes, text);
+    (text, coding, eol)
+}
+
+/// Returns BYTES as text in CODING, and how their lines end, as [`decode`]
+/// does; `None` when they are not in CODING, which only the two UTF-8
+/// codings can say. A signature is taken off when there is one.
+pub fn decode_as(bytes: &[u8], coding: Coding) -> Option<(String, Eol)> {
+    let text = match coding {
+        Coding::Utf8 => std::str::from_utf8(bytes).ok()?.to_string(),
+        Coding::Utf8WithSignature => {
+            let rest = bytes.strip_prefix(SIGNATURE).unwrap_or(bytes);
+            std::str::from_utf8(rest).ok()?.to_string()
+        }
+        Coding::Windows1252 => bytes.iter().map(|&byte| from_windows_1252(byte)).collect(),
+    };
+    Some(line_ends(bytes, text))
+}
+
+/// Returns TEXT, read from BYTES, with "\n" at the end of each line, and the
+/// line end it had: LF for a binary file, so that its bytes come back where
+/// they were.
+fn line_ends(bytes: &[u8], text: String) -> (String, Eol) {
+    let eol = if looks_binary(bytes) {
+        Eol::Lf
+    } else {
+        Eol::detect(&text).unwrap_or_default()
+    };
+    (eol.to_buffer(text), eol)
+}
+
+/// Returns the line, from one, and the column, from zero, of the first byte
+/// that is not UTF-8 in TEXT as Windows-1252 has read it, a character for each
+/// byte; `None` when there is none. Looked for line by line, since no UTF-8
+/// character has a CR or an LF inside it.
+pub fn first_invalid_byte(text: &str) -> Option<(usize, usize)> {
+    text.split('\n').enumerate().find_map(|(line, characters)| {
+        let bytes = encode(characters, Coding::Windows1252, Eol::Lf).ok()?;
+        let why = std::str::from_utf8(&bytes).err()?;
+        Some((line + 1, why.valid_up_to()))
+    })
+}
+
+/// Returns BYTES as text, and the coding they were read in, as [`decode`]
+/// says.
+fn characters(bytes: &[u8]) -> (String, Coding) {
     if let Some(rest) = bytes.strip_prefix(SIGNATURE)
         && let Ok(text) = std::str::from_utf8(rest)
     {
@@ -74,9 +227,12 @@ pub fn decode(bytes: &[u8]) -> (String, Coding) {
     }
 }
 
-/// Returns TEXT as the bytes CODING gives it, or the first character CODING
-/// has no byte for: written as something else, it would not come back.
-pub fn encode(text: &str, coding: Coding) -> Result<Vec<u8>, char> {
+/// Returns TEXT as the bytes CODING gives it, each "\n" written as EOL, or the
+/// first character CODING has no byte for: written as something else, it would
+/// not come back.
+pub fn encode(text: &str, coding: Coding, eol: Eol) -> Result<Vec<u8>, char> {
+    let text = eol.to_file(text);
+    let text = text.as_ref();
     match coding {
         Coding::Utf8 => Ok(text.as_bytes().to_vec()),
         Coding::Utf8WithSignature => {
@@ -99,19 +255,30 @@ pub fn looks_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(SNIFFED).any(|&byte| byte == 0)
 }
 
-/// Reads the file at PATH as text, and says which coding it was in. Fails
-/// only when the file cannot be read: what is in it always decodes.
-pub fn read_text(path: impl AsRef<Path>) -> std::io::Result<(String, Coding)> {
+/// Reads the file at PATH as text, and says which coding it was in and how
+/// its lines end. Fails only when the file cannot be read: what is in it
+/// always decodes.
+pub fn read_text(path: impl AsRef<Path>) -> std::io::Result<(String, Coding, Eol)> {
     Ok(decode(&std::fs::read(path)?))
 }
 
 /// A snapshot is adopted only when its stamp stayed stable across the read.
-pub(crate) fn read_stable(path: &str) -> std::io::Result<(String, Coding, super::FileStamp)> {
+pub(crate) fn read_stable(
+    path: &str,
+) -> std::io::Result<(String, Coding, Eol, super::FileStamp)> {
+    let (bytes, stamp) = read_stable_bytes(path)?;
+    let (text, coding, eol) = decode(&bytes);
+    Ok((text, coding, eol, stamp))
+}
+
+/// Reads the bytes of the file at PATH, as [`read_stable`] does, to be
+/// decoded by the caller.
+pub(crate) fn read_stable_bytes(path: &str) -> std::io::Result<(Vec<u8>, super::FileStamp)> {
     let before = super::FileStamp::try_of(path)?;
-    let (text, coding) = read_text(path)?;
+    let bytes = std::fs::read(path)?;
     let after = super::FileStamp::try_of(path)?;
     match (before, after) {
-        (Some(before), Some(after)) if before == after => Ok((text, coding, after)),
+        (Some(before), Some(after)) if before == after => Ok((bytes, after)),
         _ => Err(std::io::Error::new(
             std::io::ErrorKind::WouldBlock,
             "file changed while being read; try again",

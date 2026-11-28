@@ -104,6 +104,7 @@ enum Verdict {
     Adopt {
         text: String,
         coding: crate::buffer::Coding,
+        eol: crate::buffer::Eol,
         stamp: Option<FileStamp>,
     },
     /// Say it has diverged, and leave it alone.
@@ -241,10 +242,11 @@ impl<B: BufferTrait> EditorState<B> {
                 // the one there is the one that keeps the buffer safe.
                 OnDisk::Changed if modified => Verdict::Flag,
                 OnDisk::Changed => match crate::buffer::coding::read_stable(&path) {
-                    Ok((_, _, stamp)) if Some(stamp) != found => Verdict::Flag,
-                    Ok((text, coding, stamp)) => Verdict::Adopt {
+                    Ok((_, _, _, stamp)) if Some(stamp) != found => Verdict::Flag,
+                    Ok((text, coding, eol, stamp)) => Verdict::Adopt {
                         text,
                         coding,
+                        eol,
                         // Stamped after the read, so that a file rewritten during
                         // it is caught next turn rather than recorded as seen.
                         stamp: Some(stamp),
@@ -334,10 +336,12 @@ impl<B: BufferTrait> EditorState<B> {
                 Verdict::Adopt {
                     text,
                     coding,
+                    eol,
                     stamp,
                 } => {
                     buf.adopt_text(&text);
                     buf.coding = coding;
+                    buf.eol = eol;
                     buf.file_stamp = stamp;
                     true
                 }

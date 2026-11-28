@@ -36,9 +36,10 @@ impl<B: BufferTrait> EditorState<B> {
     ) -> Option<String> {
         if let Some(file_path) = path {
             match crate::buffer::coding::read_stable(file_path) {
-                Ok((content, coding, stamp)) => {
+                Ok((content, coding, eol, stamp)) => {
                     let mut new_buf = Buffer::from_text(name, &content).with_role(role);
                     new_buf.coding = coding;
+                    new_buf.eol = eol;
                     // A mode asked for wins; otherwise the file's name decides,
                     // which is how a language's mode is ever chosen.
                     new_buf.current_mode = start_mode
