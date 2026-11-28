@@ -49,13 +49,19 @@ under the property keywords of the mode's symbol."
 ;; The interpreter
 ;; ---------------------------------------------------------------------------
 
+(defvar capf-symbols-modes '(risp-mode eshell-mode)
+  "The major modes Lisp is written in, where `capf-symbols' answers. The REPL
+is a risp-mode buffer; eshell asks it only for a line evaluated as Lisp.")
+
 (defun capf-symbols ()
   "Complete the names of the functions, macros and variables there are now,
-each described as which of the three it is."
-  (capf--offer
-   (append (mapcar (lambda (name) (cons name "function")) (all-functions))
-           (append (mapcar (lambda (name) (cons name "macro")) (all-macros))
-                   (mapcar (lambda (name) (cons name "variable")) (all-variables))))))
+each described as which of the three it is, in a mode of
+`capf-symbols-modes'."
+  (if (member (major-mode) capf-symbols-modes)
+      (capf--offer
+       (append (mapcar (lambda (name) (cons name "function")) (all-functions))
+               (append (mapcar (lambda (name) (cons name "macro")) (all-macros))
+                       (mapcar (lambda (name) (cons name "variable")) (all-variables)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Buffers

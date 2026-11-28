@@ -589,6 +589,40 @@ mod tests {
         assert_eq!(run("*got*", &env, &ctx), LispExp::symbol("never".into()));
     }
 
+    /// The region is the offered buffer's: a choice made with another buffer
+    /// current is put nowhere, and the offer still stands in its own.
+    #[test]
+    fn a_choice_is_not_put_in_another_buffer() {
+        let (ctx, env) = plain();
+        typed(&ctx, "ab");
+        run(
+            "(defun present (items choose) nil)\
+             (setq *completion-read-function* 'present)\
+             (buffer-create \"other\")\
+             (with-current-buffer \"other\" (lambda () (insert \"xy\")))",
+            &env,
+            &ctx,
+        );
+        run("(completion-offer 0 2 '(\"abcd\" \"abce\"))", &env, &ctx);
+
+        assert_eq!(
+            run(
+                "(with-current-buffer \"other\" (lambda () (completion-at-point-choose \"abcd\")))",
+                &env,
+                &ctx
+            ),
+            LispExp::nil()
+        );
+        assert_eq!(
+            run("(with-current-buffer \"other\" (lambda () (buffer-string)))", &env, &ctx),
+            LispExp::string("xy".into())
+        );
+        assert_eq!(contents(&ctx), "ab");
+
+        run("(completion-at-point-choose \"abcd\")", &env, &ctx);
+        assert_eq!(contents(&ctx), "abcd");
+    }
+
     #[test]
     fn a_later_completion_does_not_call_the_on_chosen_of_an_earlier_offer() {
         let (ctx, env) = offering();
@@ -1212,11 +1246,27 @@ mod tests {
     #[test]
     fn symbols_are_completed_from_what_the_interpreter_can_resolve() {
         let (ctx, env) = with_sources();
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "risp-mode".into());
         run("(defun zzz-a-real-function () nil)", &env, &ctx);
         typed(&ctx, "zzz-a-real-f");
 
         run("(completion-at-point)", &env, &ctx);
         assert_eq!(contents(&ctx), "zzz-a-real-function");
+    }
+
+    /// The interpreter's names are Lisp's: written in fundamental-mode, a word
+    /// is not offered every function there is.
+    #[test]
+    fn symbols_are_offered_only_where_lisp_is_written() {
+        let (ctx, env) = with_sources();
+        run("(defun zzz-a-real-function () nil)", &env, &ctx);
+        typed(&ctx, "zzz-a-real-f");
+
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "fundamental-mode".into());
+        assert_eq!(run("(capf-symbols)", &env, &ctx), LispExp::nil());
+
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "risp-mode".into());
+        assert_ne!(run("(capf-symbols)", &env, &ctx), LispExp::nil());
     }
 
     #[test]
@@ -1231,6 +1281,7 @@ mod tests {
     #[test]
     fn a_macro_and_a_variable_are_offered_with_what_they_are() {
         let (ctx, env) = with_sources();
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "risp-mode".into());
         run(
             "(setq *seen* nil)\
              (defun present (items choose) (setq *seen* items))\

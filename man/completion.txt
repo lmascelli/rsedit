@@ -41,6 +41,7 @@ SYNOPSIS
     completion-buffer-name
     completion-minibuffer-name
     completion-at-point-wait
+    capf-symbols-modes
     *completion-read-function*
     *completion-filter-function*
     *completion-invalidated-function*
@@ -74,8 +75,11 @@ THE STRIP
 
     Every other key goes to the prompt or the buffer, and the strip follows
     what you type: it narrows as you type, Backspace widens it again, and
-    with nothing left it says No matches until you do. In a buffer,
-    backspacing past the start of the word puts it away. M-p and M-n still
+    with nothing left it says No matches until you do. In a buffer, the
+    cursor leaving the word, back past its start or on past its end, puts
+    it away, and so does the focus going to another window or buffer than
+    the strip's. At a prompt it stays up while the prompt does, its keys
+    taking effect only there and in the strip. M-p and M-n still
     walk the prompt's history while the strip is up. It shows
     `completion-window-height' rows of `completion-columns' candidates, a
     page at a time, with a candidate's description after its name where
@@ -109,7 +113,7 @@ IN A BUFFER
         capf-file-name      a path, when the cursor is in one: /usr/sh
         capf-mode-keywords  the keywords of the buffer's language
         capf-symbols        the names of Lisp functions, macros and
-                            variables
+                            variables, where Lisp is written
         capf-buffer-names   the names of the buffers
         capf-buffer-words   the words, three letters or more, written in
                             any buffer
@@ -122,8 +126,10 @@ IN A BUFFER
     as the candidates all begin with is put in, and the echo area says how
     many there are.
 
-    The Lisp names and the words of every buffer are offered in any buffer,
-    not only in Lisp; `set-completion-functions' takes a source out.
+    The words of every buffer are offered in any buffer, the Lisp names
+    only in the modes of `capf-symbols-modes': risp-mode, which the REPL is
+    in too, and eshell's lines of Lisp. `set-completion-functions' takes a
+    source out.
 
     A slow source does not hold the keys: C-M-i asks its sources itself
     for `completion-at-point-wait' milliseconds, 30 by default, and leaves

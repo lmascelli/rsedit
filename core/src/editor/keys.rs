@@ -143,6 +143,14 @@ impl<B: BufferTrait> EditorState<B> {
             // commands, and this runs after each of them.
             return;
         };
+        // Nor in place of a filter, the completion strip, or a question: the
+        // repeat key would take their keys away while they are still up.
+        if matches!(
+            self.modes(|registry| registry.transient().map(|map| map.on_unbound)),
+            Some(OnUnbound::Pass | OnUnbound::Refuse)
+        ) {
+            return;
+        }
         self.set_transient_keymap(TransientKeymap::repeating(
             key,
             command.expect("a repeat key was found, so there is a command"),

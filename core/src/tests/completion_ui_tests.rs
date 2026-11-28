@@ -1490,4 +1490,147 @@ mod tests {
         assert_eq!(ctx.get_focused_window_id(), window);
         assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
     }
+
+    // ---------------- no strip left without its keys, or keys without it ----------------
+
+    fn strip_state(env: &Arc<Env<Ctx>>, ctx: &Ctx) -> String {
+        text_of(&run(
+            r#"(if *completion--window* "open" "closed")"#,
+            env,
+            ctx,
+        ))
+    }
+
+    fn press_ctrl_x(ctx: &Ctx, env: &Arc<Env<Ctx>>, key: char) {
+        press_ctrl(ctx, env, KeyCode::Char('x'));
+        press(ctx, env, KeyCode::Char(key));
+    }
+
+    /// Undo has a repeat key, whose map would take the place of the strip's:
+    /// the strip stays up with C-n and Return still its own.
+    #[test]
+    fn undo_with_the_strip_open_leaves_it_its_keys() {
+        let (ctx, env) = completing_in_buffer("ab");
+        run(
+            r#"(define-key nil "C-/" 'undo) (define-repeat-key 'undo "u")"#,
+            &env,
+            &ctx,
+        );
+        run("(completion-at-point)", &env, &ctx);
+        press(&ctx, &env, KeyCode::Char('e'));
+
+        press_ctrl(&ctx, &env, KeyCode::Char('/'));
+
+        assert_eq!(scratch(&ctx), "ab");
+        assert_eq!(strip_state(&env, &ctx), "open");
+        press_ctrl(&ctx, &env, KeyCode::Char('n'));
+        assert_eq!(selected(&env, &ctx), "abce");
+        press(&ctx, &env, KeyCode::Enter);
+        assert_eq!(scratch(&ctx), "abce");
+    }
+
+    /// C-x o to another window: what the strip completes is out of sight, and
+    /// the strip goes, keys and all.
+    #[test]
+    fn another_window_closes_a_buffers_strip() {
+        let (ctx, env) = completing_in_buffer("ab");
+        run(
+            r#"(define-key nil "C-x o" 'other-window) (define-repeat-key 'other-window "o")"#,
+            &env,
+            &ctx,
+        );
+        run("(split-window-below)", &env, &ctx);
+        let origin = ctx.get_focused_window_id();
+        run("(completion-at-point)", &env, &ctx);
+        assert_eq!(windows(&ctx), 3, "the strip opened");
+
+        press_ctrl_x(&ctx, &env, 'o');
+
+        assert_ne!(ctx.get_focused_window_id(), origin);
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+        assert_eq!(strip_state(&env, &ctx), "closed");
+        assert_eq!(windows(&ctx), 2);
+        press(&ctx, &env, KeyCode::Enter);
+        assert!(scratch(&ctx).contains('\n'), "got {:?}", scratch(&ctx));
+        assert!(!scratch(&ctx).contains("abc"), "got {:?}", scratch(&ctx));
+    }
+
+    /// C-e past the end of the word: nothing is being completed, and Return
+    /// is a newline again.
+    #[test]
+    fn moving_past_the_word_closes_the_strip() {
+        let (ctx, env) = completing_in_buffer("ab cd");
+        run(
+            r#"(define-key nil "C-e" 'move-end-of-line) (goto-char 2)"#,
+            &env,
+            &ctx,
+        );
+        run("(completion-at-point)", &env, &ctx);
+        assert_eq!(windows(&ctx), 2, "the strip opened");
+
+        press_ctrl(&ctx, &env, KeyCode::Char('e'));
+
+        assert_eq!(strip_state(&env, &ctx), "closed");
+        assert_eq!(windows(&ctx), 1);
+        press(&ctx, &env, KeyCode::Enter);
+        assert_eq!(scratch(&ctx), "ab cd\n");
+    }
+
+    /// C-x 0 in the strip closes its window under it: the rest comes down
+    /// too, the buffer and the keys with it.
+    #[test]
+    fn deleting_the_strips_window_takes_down_the_rest() {
+        let (ctx, env) = completing_in_buffer("ab");
+        run(r#"(define-key nil "C-x 0" 'delete-window)"#, &env, &ctx);
+        run("(completion-at-point)", &env, &ctx);
+        focus_strip(&ctx, &env);
+
+        press_ctrl_x(&ctx, &env, '0');
+
+        assert_eq!(windows(&ctx), 1);
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+        assert_eq!(strip_state(&env, &ctx), "closed");
+        assert_eq!(
+            run(r#"(member "*Completions*" (all-buffer-names))"#, &env, &ctx),
+            LispExp::nil()
+        );
+        press(&ctx, &env, KeyCode::Enter);
+        assert_eq!(scratch(&ctx), "ab\n");
+    }
+
+    /// A prompt's strip waits for the prompt while the focus is elsewhere, as
+    /// in Emacs, but without its keys: Return there is that buffer's. Back at
+    /// the prompt, they are the strip's again.
+    #[test]
+    fn a_prompts_strip_lets_go_of_its_keys_in_another_window() {
+        let (ctx, env) = with_module();
+        run(r#"(define-key nil "C-x o" 'other-window)"#, &env, &ctx);
+        prompt_offering(&["alpha", "beta", "gamma"], &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+        assert_eq!(strip_state(&env, &ctx), "open");
+
+        for _ in 0..4 {
+            if ctx.get_current_buffer_name() == "*scratch*" {
+                break;
+            }
+            press_ctrl_x(&ctx, &env, 'o');
+        }
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+        assert_eq!(strip_state(&env, &ctx), "open");
+        press(&ctx, &env, KeyCode::Enter);
+        assert_eq!(scratch(&ctx), "\n");
+
+        for _ in 0..4 {
+            if ctx.get_current_buffer_name() == "*Minibuffer*" {
+                break;
+            }
+            press_ctrl_x(&ctx, &env, 'o');
+        }
+        assert_eq!(ctx.get_current_buffer_name(), "*Minibuffer*");
+        press_ctrl(&ctx, &env, KeyCode::Char('n'));
+        assert_eq!(selected(&env, &ctx), "beta");
+        press(&ctx, &env, KeyCode::Enter);
+        assert_eq!(minibuffer_text(&env, &ctx), "beta");
+        assert_eq!(strip_state(&env, &ctx), "closed");
+    }
 }

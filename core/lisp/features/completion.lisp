@@ -29,6 +29,15 @@
 ;; the strip closes with the focus in it, given by C-x o.
 (setq *completion--origin* nil)
 
+;; The buffer current then, and how many windows the frame held with the strip
+;; open: another buffer, or a window closed, and the strip closes.
+(setq *completion--origin-buffer* nil)
+(setq *completion--window-count* 0)
+
+;; Whether the strip's keys are installed: a prompt's strip stays up while the
+;; focus is in another window, as in Emacs, but without them.
+(setq *completion--keys* nil)
+
 ;; The candidates as offered, before any narrowing, so that backspace can
 ;; widen the list again.
 (setq *completion--all-items* nil)
@@ -44,6 +53,10 @@
 ;; Set by `completion-at-point' while it calls a presenter, nil otherwise;
 ;; bound here, since reading an unbound variable is an error.
 (setq *completion-at-point-start* nil)
+
+;; What a choice in a buffer replaces, (START END LENGTH BUFFER ...), set by
+;; `completion-at-point' too; bound here for the same reason.
+(setq *completion-at-point-region* nil)
 
 ;; ---------------------------------------------------------------------------
 ;; Items
@@ -169,9 +182,11 @@ What `*completion-read-function*' names."
         (setq *completion--pattern* (completion--current-text))
         (buffer-create completion-buffer-name :mode 'completion-mode :role 'completion)
         (setq *completion--origin* (selected-window))
+        (setq *completion--origin-buffer* (current-buffer))
         (setq *completion--window*
               (display-buffer-at-bottom completion-buffer-name
                                         completion-window-height))
+        (setq *completion--window-count* (count-windows))
         (completion--draw)
         (completion--install-keys)))))
 
@@ -179,6 +194,7 @@ What `*completion-read-function*' names."
   "Bind the keys that move and choose, and let every other key through."
   ;; A filter: typing reaches the text and narrows the list. C-n and C-p, since
   ;; n and p are typed; Escape and C-g close, since nothing else would.
+  (setq *completion--keys* t)
   (set-transient-keymap
    (list (cons "C-n" 'completion-next)
          (cons "C-p" 'completion-previous)
@@ -238,27 +254,63 @@ What `*completion-read-function*' names."
         (setq *completion--items* fresh))))
 
 (defun completion--refresh ()
-  "Narrow the strip again when what is typed has changed. On
-`post-command-hook'."
+  "Narrow the strip again when what is typed has changed, and close it when
+the focus or point has left what it completes. On `post-command-hook'."
   (if *completion--window*
       (cond
+       ;; A window closed, the strip's own by C-x 0 among them.
+       ((not (= (count-windows) *completion--window-count*))
+        (completion--close))
        ;; The focus in the strip, moving the selection: nothing was typed.
-       ((equal (current-buffer) completion-buffer-name) nil)
-       ;; Backspaced past where the completion began: nothing is being
-       ;; completed.
-       ((and *completion--anchor* (< (point) *completion--anchor*))
+       ((equal (current-buffer) completion-buffer-name) (completion--keys-on))
+       ;; Another window, or another buffer in this one: a prompt's strip
+       ;; waits for the prompt without its keys, any other closes.
+       ((not (and (equal (selected-window) *completion--origin*)
+                  (equal (current-buffer) *completion--origin-buffer*)))
+        (if (completion--prompt-open-p)
+            (completion--keys-off)
+            (completion--close)))
+       ;; Backspaced past where the completion began, or moved on past the end
+       ;; of the text: nothing is being completed.
+       ((and *completion--anchor*
+             (or (< (point) *completion--anchor*) (completion--past-end-p)))
         (completion--close))
        ;; A strip opened by calling the presenter directly has no text to
        ;; narrow by: left as it is, not closed.
        ((and (null *completion--anchor*) (null (completion--minibuffer-text)))
         nil)
-       (t (let ((text (completion--current-text)))
-            (if (not (equal text *completion--pattern*))
-                (progn
-                  (setq *completion--pattern* text)
-                  (completion--narrow text)
-                  (setq *completion--index* 0)
-                  (completion--draw))))))))
+       (t (progn
+            (completion--keys-on)
+            (let ((text (completion--current-text)))
+              (if (not (equal text *completion--pattern*))
+                  (progn
+                    (setq *completion--pattern* text)
+                    (completion--narrow text)
+                    (setq *completion--index* 0)
+                    (completion--draw)))))))))
+
+(defun completion--prompt-open-p ()
+  "Whether the strip was opened at a prompt that is still open."
+  (and (equal *completion--origin-buffer* completion-minibuffer-name)
+       (member completion-minibuffer-name (all-buffer-names))))
+
+(defun completion--keys-off ()
+  "Take the strip's keys away, the strip staying up."
+  (if *completion--keys*
+      (progn
+        (setq *completion--keys* nil)
+        (clear-transient-keymap))))
+
+(defun completion--keys-on ()
+  "Give the strip its keys back, if they were taken away."
+  (if (not *completion--keys*) (completion--install-keys)))
+
+(defun completion--past-end-p ()
+  "Whether point is past the end of the text a choice would replace, which
+grows with what is typed into it."
+  (let ((region *completion-at-point-region*))
+    (and region
+         (> (point) (+ (nth 1 region) (- (point-max) (nth 2 region)))))))
 
 (defun completion-reconsider (&optional items)
   "Ask for the candidates again and redraw the strip, when one is open,
@@ -357,23 +409,31 @@ so and leave it open."
   (completion--close))
 
 (defun completion--close ()
-  "Take down the strip, its keymap and its state."
+  "Take down the strip, its buffer, its keymap and its state."
   ;; Window, state and keymap, so that no way out leaves the keys captured.
   (let ((focused (and *completion--window*
                       (equal (selected-window) *completion--window*))))
-    (if *completion--window* (delete-window *completion--window*))
+    ;; Its window may be gone already, closed by C-x 0.
+    (if *completion--window*
+        (condition-case nil (delete-window *completion--window*) (error nil)))
     ;; Closed from inside, the focus goes back where the completion began,
     ;; not to whichever window is first.
     (if (and focused *completion--origin*) (select-window *completion--origin*)))
+  (if (member completion-buffer-name (all-buffer-names))
+      (kill-buffer completion-buffer-name))
   (setq *completion--window* nil)
   (setq *completion--origin* nil)
+  (setq *completion--origin-buffer* nil)
+  (setq *completion--window-count* 0)
   (setq *completion--items* nil)
   (setq *completion--all-items* nil)
   (setq *completion--anchor* nil)
   (setq *completion--pattern* nil)
   (setq *completion--index* 0)
   (setq *completion--on-choose* nil)
-  (clear-transient-keymap))
+  ;; Not when taken away already: the map there now is another's.
+  (if *completion--keys* (clear-transient-keymap))
+  (setq *completion--keys* nil))
 
 ;; ---------------------------------------------------------------------------
 ;; Taking over

@@ -21,11 +21,12 @@ use std::time::{Duration, Instant};
 const START_VAR: &str = "*completion-at-point-start*";
 
 /// The text a choice replaces, between offering the candidates and hearing
-/// which was chosen: `(START END LENGTH)`, LENGTH being how long the buffer
-/// was when they were offered, so that END can follow what is typed in the
-/// meantime, followed by `ON-CHOSEN CANDIDATES` when `completion-offer` was
-/// given a function to call. Bound at the root: the choice comes keystrokes
-/// later, after the command that offered and its caller have returned.
+/// which was chosen: `(START END LENGTH BUFFER)`, LENGTH being how long the
+/// buffer was when they were offered, so that END can follow what is typed in
+/// the meantime, and BUFFER the one they were offered for, followed by
+/// `ON-CHOSEN CANDIDATES` when `completion-offer` was given a function to
+/// call. Bound at the root: the choice comes keystrokes later, after the
+/// command that offered and its caller have returned.
 const REGION_VAR: &str = "*completion-at-point-region*";
 
 /// The job that asks the sources left over, by its name, and the topic that
@@ -768,6 +769,7 @@ fn present<B: BufferTrait>(
         ELispExp::number(start as f64),
         ELispExp::number(end as f64),
         ELispExp::number(length as f64),
+        ELispExp::string(ctx.get_current_buffer_name()),
     ];
     if let Some(on_chosen) = on_chosen {
         recorded.push(on_chosen);
@@ -863,6 +865,11 @@ primitive!(completion_at_point_choose, args, env, ctx, {
         ctx.log_diagnostic("completion-at-point-choose called with no completion in progress");
         return Ok(ELispExp::nil());
     };
+    // START and END are positions in the buffer offered for, not in this one.
+    if region.get(3).and_then(candidate_value) != Some(ctx.get_current_buffer_name()) {
+        ctx.log_diagnostic("completion-at-point-choose called in another buffer");
+        return Ok(ELispExp::nil());
+    }
     // Carried forward over whatever was typed into the word since the
     // candidates were offered -- see REGION_VAR.
     let length = ctx.with_current_buffer(|buf| buf.text.len());
@@ -872,11 +879,11 @@ primitive!(completion_at_point_choose, args, env, ctx, {
     }
     // Consumed before ON-CHOSEN runs, so that it may offer again.
     env.set_root_variable(REGION_VAR.into(), ELispExp::nil());
-    if let Some(on_chosen) = region.get(3).filter(|f| f.is_truthy()) {
+    if let Some(on_chosen) = region.get(4).filter(|f| f.is_truthy()) {
         // The candidate as offered, description and all, when the presenter
         // answered with one of them; what it answered otherwise.
         let offered = region
-            .get(4)
+            .get(5)
             .map(args::list)
             .unwrap_or_default()
             .into_iter()
