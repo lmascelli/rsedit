@@ -7561,9 +7561,12 @@ Che il buffer e il punto siano ancora quelli lo controlla chi chiama.
 
 Il presentatore può scegliere qualche tasto dopo, quando il comando che ha
 offerto è finito. Ciò che la scelta sostituisce sta quindi alla radice
-dell'ambiente, in `*completion-at-point-region*`, come `(START END LENGTH)`, con
-la lunghezza del buffer al momento dell'offerta: ciò che si scrive nel frattempo
-dentro la parola, e che restringe la striscia, sposta la fine della differenza.
+dell'ambiente, in `*completion-at-point-region*`, come
+`(START END LENGTH BUFFER)`, con la lunghezza del buffer al momento dell'offerta:
+ciò che si scrive nel frattempo dentro la parola, e che restringe la striscia,
+sposta la fine della differenza. BUFFER è il buffer dell'offerta, di cui sono le
+posizioni: una scelta che arriva con un altro buffer corrente non si mette da
+nessuna parte, e l'offerta resta valida nel suo.
 `*completion-at-point-start*` dice dove comincia il testo solo mentre il
 presentatore riceve i candidati, ed è come distingue un completamento in un
 buffer da uno in un prompt. `buffer-words` e `bounds-of-thing-at-point` sono i
