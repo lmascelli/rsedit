@@ -191,6 +191,29 @@ impl<B: BufferTrait> EditorState<B> {
         Ok(true)
     }
 
+    /// Unlike `remove_recovery`, this ignores unsaved edits: the copy was
+    /// named after a destination its buffer did not write.
+    pub(crate) fn discard_recovery(
+        &self,
+        handle: &Handle<B>,
+        path: &std::path::Path,
+    ) -> std::io::Result<()> {
+        let _serial = self
+            .file_io
+            .recovery_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match std::fs::remove_file(path) {
+            Err(why) if crate::buffer::io_status::is_missing(&why) => {}
+            result => result?,
+        }
+        handle
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .forget_data(&format!("file-io:recovery:{}", path.display()));
+        Ok(())
+    }
+
     pub(crate) fn file_handle(&self, name: &str) -> Option<Handle<B>> {
         self.buffers(|buffers| buffers.handle(name))
     }

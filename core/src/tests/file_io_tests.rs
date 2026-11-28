@@ -909,3 +909,108 @@ fn declining_a_changed_visited_file_keeps_the_conflict() {
     assert!(ctx.with_current_buffer(|buf| buf.stale));
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "external update");
 }
+
+fn fileless(ctx: &Ctx, env: &Arc<Env<Ctx>>) {
+    run(ctx, env, "(buffer-create \"notes\") (switch-to-buffer \"notes\") (insert \"mine\")");
+}
+
+fn offers_recovery(ctx: &Ctx, env: &Arc<Env<Ctx>>, path: &str) -> bool {
+    call(ctx, env, "find-file-async", vec![ELispExp::string(path.into())]);
+    settle(ctx, env);
+    ctx.get_echo_message().contains("auto-save copy exists")
+}
+
+#[test]
+fn declined_write_file_from_a_buffer_without_file_leaves_no_copy_for_the_destination() {
+    let files = Files::new();
+    let other = files.path("other.txt");
+    std::fs::write(&other, "theirs").unwrap();
+    let (ctx, env) = files.editor();
+    fileless(&ctx, &env);
+    call(&ctx, &env, "write-file-async", vec![ELispExp::string(other.clone())]);
+    settle(&ctx, &env);
+    assert!(prompt(&ctx, &env).contains("exists; overwrite?"), "{:?}", prompt(&ctx, &env));
+    press(&ctx, &env, KeyCode::Char('n'));
+    assert_eq!(ctx.get_echo_message(), "Not saved");
+    assert!(!files.copy(&other).exists());
+    assert!(!offers_recovery(&ctx, &env, &other));
+    assert_eq!(std::fs::read_to_string(&other).unwrap(), "theirs");
+}
+
+#[test]
+fn declining_again_after_the_destination_changed_removes_the_prepared_copy() {
+    let files = Files::new();
+    let other = files.path("other.txt");
+    std::fs::write(&other, "theirs").unwrap();
+    let (ctx, env) = files.editor();
+    fileless(&ctx, &env);
+    call(&ctx, &env, "write-file-async", vec![ELispExp::string(other.clone())]);
+    settle(&ctx, &env);
+    std::fs::write(&other, "theirs, changed meanwhile").unwrap();
+    yes(&ctx, &env);
+    settle(&ctx, &env);
+    assert!(prompt(&ctx, &env).contains("exists; overwrite?"), "{:?}", prompt(&ctx, &env));
+    assert!(!files.copy(&other).exists());
+    press(&ctx, &env, KeyCode::Char('n'));
+    assert!(!files.copy(&other).exists());
+    assert!(!offers_recovery(&ctx, &env, &other));
+}
+
+#[test]
+fn failed_write_file_from_a_buffer_without_file_leaves_no_copy_for_the_destination() {
+    let files = Files::new();
+    let parent_file = files.path("not-a-directory");
+    std::fs::write(&parent_file, "x").unwrap();
+    let target = format!("{parent_file}/new");
+    let (ctx, env) = files.editor();
+    fileless(&ctx, &env);
+    call(&ctx, &env, "write-file-async", vec![ELispExp::string(target.clone())]);
+    settle(&ctx, &env);
+    assert!(ctx.get_echo_message().contains("Cannot save"));
+    assert_eq!(
+        ctx.with_current_buffer(|buf| (buf.file_path.clone(), buf.is_modified)),
+        (None, true)
+    );
+    assert!(!files.copy(&target).exists());
+}
+
+#[test]
+fn declined_write_file_from_a_visited_file_keeps_only_the_source_copy() {
+    let files = Files::new();
+    let path = files.file();
+    let other = files.path("other.txt");
+    std::fs::write(&other, "theirs").unwrap();
+    let (ctx, env) = files.editor();
+    open(&ctx, &env, &path);
+    run(&ctx, &env, "(insert \"mine\")");
+    call(&ctx, &env, "write-file-async", vec![ELispExp::string(other.clone())]);
+    settle(&ctx, &env);
+    press(&ctx, &env, KeyCode::Char('n'));
+    assert_eq!(std::fs::read_to_string(files.copy(&path)).unwrap(), "mineold");
+    assert!(!files.copy(&other).exists());
+}
+
+#[test]
+fn written_buffer_without_file_drops_its_copy_as_before() {
+    let files = Files::new();
+    let other = files.path("other.txt");
+    let fresh = files.path("fresh.txt");
+    std::fs::write(&other, "theirs").unwrap();
+    let (ctx, env) = files.editor();
+    fileless(&ctx, &env);
+    call(&ctx, &env, "write-file-async", vec![ELispExp::string(other.clone())]);
+    settle(&ctx, &env);
+    yes(&ctx, &env);
+    settle(&ctx, &env);
+    assert_eq!(std::fs::read_to_string(&other).unwrap(), "mine");
+    assert!(!files.copy(&other).exists());
+    run(&ctx, &env, "(buffer-create \"more\") (switch-to-buffer \"more\") (insert \"more\")");
+    call(&ctx, &env, "write-file-async", vec![ELispExp::string(fresh.clone())]);
+    settle(&ctx, &env);
+    assert_eq!(std::fs::read_to_string(&fresh).unwrap(), "more");
+    assert!(!files.copy(&fresh).exists());
+    assert_eq!(
+        ctx.with_current_buffer(|buf| (buf.file_path.clone(), buf.is_modified)),
+        (Some(fresh), false)
+    );
+}

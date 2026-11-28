@@ -225,18 +225,39 @@ fn start_save<B: BufferTrait>(
     let accepted = ctx.start_file_io(
         Lane::Write, format!("file:{target}"), "Saving", Some(origin), file_io::timeout(env),
         move || {
+            // A buffer without a file names its copy after the destination:
+            // none is made before an existing destination may be replaced.
+            let fileless = work.source.is_none();
+            if fileless && !work.confirmed {
+                match FileStamp::try_of(&work.path) {
+                    Ok(None) => {}
+                    found => {
+                        let result = found.map_err(WriteFailure::Io).and_then(|found| Err(WriteFailure::Conflict(found)));
+                        return (result, Ok(None), None);
+                    }
+                }
+            }
             // A local recovery copy precedes the remote write. A cache error
             // is reported, never redirected to the remote file's directory.
             let recovery = recovery_worker.prepare_recovery(&recovery_handle,
-                work.source.as_deref().unwrap_or(&work.path), work.recovery.clone(), work.version, &work.recovery_text);
+                work.source.as_deref().unwrap_or(&work.path), work.recovery.clone(), work.version, &work.recovery_text).map(Some);
             let result = if work.stale && !work.confirmed {
                 FileStamp::try_of(&work.path).map_err(WriteFailure::Io).and_then(|found| Err(WriteFailure::Conflict(found)))
             } else {
                 disk::write_checked(&work.path, &work.text, work.expected)
             };
-            (result, recovery)
+            // A refused or failed write leaves no copy under that name.
+            let mut kept = None;
+            if fileless && result.is_err() && let Ok(Some(copy)) = &recovery
+                && let Err(why) = recovery_worker.discard_recovery(&recovery_handle, copy) {
+                kept = Some(format!("{}: {}", copy.display(), FileIssue::from_io(&why)));
+            }
+            (result, recovery, kept)
         },
-        move |state, env, (result, recovery)| {
+        move |state, env, (result, recovery, kept)| {
+            if let Some(why) = &kept {
+                state.log_diagnostic(&format!("[ERROR] Auto-save copy not removed: {why}"));
+            }
             let Some(name) = state.file_handle_name(&handle) else {
                 state.log_diagnostic(&format!("[WARNING] File operation finished after buffer removal: {}", save.path));
                 return;
@@ -269,7 +290,7 @@ fn start_save<B: BufferTrait>(
                         if changed_path { buf.directory = None; }
                     });
                     let all = super::files::mark_written(state, &name, save.version, Some(stamp));
-                    if all && let Ok(copy) = recovery { state.queue_recovery_cleanup(handle.clone(), copy, save.version, file_io::timeout(env)); }
+                    if all && let Ok(Some(copy)) = recovery { state.queue_recovery_cleanup(handle.clone(), copy, save.version, file_io::timeout(env)); }
                     if new_name != name { state.rename_buffer_running_hook(&name, &new_name, env); }
                     if changed_path {
                         if let Some(mode) = state.auto_mode_for(&save.path) { state.change_major_mode(&new_name, &mode, env); }
