@@ -100,8 +100,9 @@ KILLING A BUFFER
 
     A window that showed the buffer shows the one you used before it, never
     the minibuffer's, and a floating window showing it closes. Killing the
-    last buffer, the minibuffer's aside, leaves a new, empty *scratch*. A command still writing into the buffer, such as
-    a shell command, is stopped.
+    last buffer, the minibuffer's aside, leaves a new, empty *scratch*. A
+    command still writing into the buffer, such as a shell command, is
+    stopped.
 
 RENAMING A BUFFER
     M-x rename-buffer asks for a new name for the buffer you are in. A

@@ -74,8 +74,7 @@ THE REFERENCE
 
 IF YOU ONLY REMEMBER ONE THING
     C-g gets you out. A search you have finished with, a half-typed key
-    sequence, a selection you want rid of -- C-g, and you are back. A prompt
-    you did not mean to open is the exception, for now: Escape closes it.
+    sequence, a selection you want rid of -- C-g, and you are back.
 
 SEE ALSO
     first-steps, rsedit, getting-help

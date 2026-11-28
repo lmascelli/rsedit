@@ -30,6 +30,8 @@ SYNOPSIS
     (completion-description ITEM)
     (completion-next)
     (completion-previous)
+    (completion-next-page)
+    (completion-previous-page)
     (completion-choose)
     (completion-abandon)
     (completion-reconsider)
@@ -60,6 +62,8 @@ THE STRIP
         <tab>           at a prompt, show the candidates
         C-n  <down>     select the next one
         C-p  <up>       select the one before
+        C-v  <next>     the page after
+        M-v  <prior>    the page before
         <ret>  <tab>    take the one selected
         <esc>  C-g      put the strip away
 
