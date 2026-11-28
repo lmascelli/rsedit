@@ -69,9 +69,41 @@ mod tests {
     }
 
     #[test]
-    fn a_long_line_is_left_to_the_front_end_to_cut() {
+    fn a_line_wider_than_the_frame_goes_on_in_the_rows_under_it() {
+        let long = format!("{}{}{}", "a".repeat(W), "b".repeat(W), "c".repeat(5));
+        assert_eq!(
+            echo_rows(&long, 6, W),
+            vec!["a".repeat(W), "b".repeat(W), "c".repeat(5)]
+        );
+        assert_eq!(
+            echo_rows(&"x".repeat(W), 6, W),
+            vec!["x".repeat(W)],
+            "a line as wide as the frame is one row"
+        );
+        assert_eq!(
+            echo_rows(&format!("short\n{}", "y".repeat(W + 1)), 6, W),
+            vec!["short".to_string(), "y".repeat(W), "y".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_wide_character_is_not_cut_in_two_by_a_break() {
+        assert_eq!(echo_rows("ab中c", 6, 3), vec!["ab", "中c"]);
+    }
+
+    #[test]
+    fn an_unmeasured_frame_wraps_nothing() {
         let long = "x".repeat(W * 2);
-        assert_eq!(echo_rows(&long, 6, W), vec![long.clone()]);
+        assert_eq!(echo_rows(&long, 6, 0), vec![long.clone()]);
+    }
+
+    #[test]
+    fn rows_wrapped_past_the_limit_are_counted_on_the_last_row() {
+        let rows = echo_rows(&"z".repeat(W * 5), 3, W);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0], "z".repeat(W));
+        assert_eq!(rows[2], format!("{} [+2 lines]", "z".repeat(W - 11)));
+        assert!(rows.iter().all(|row| cells(row) <= W), "{rows:?}");
     }
 
     #[test]
@@ -94,10 +126,12 @@ mod tests {
 
     #[test]
     fn the_count_stays_in_sight_at_the_end_of_a_long_last_row() {
+        // The long line is five rows of twenty, and the four of them past
+        // the first, with "third", are what is left out.
         let long = "y".repeat(100);
         let rows = echo_rows(&format!("first\n{long}\nthird"), 2, 20);
         assert_eq!(rows[0], "first");
-        assert_eq!(rows[1], format!("{} [+1 line]", "y".repeat(10)));
+        assert_eq!(rows[1], format!("{} [+5 lines]", "y".repeat(9)));
         assert_eq!(cells(&rows[1]), 20);
     }
 
@@ -134,6 +168,32 @@ mod tests {
         assert_eq!(frame.echo_height(), 3);
         assert_eq!(frame.echo_top(), H - 3);
         assert_eq!(windows_end(&frame), H - 3);
+    }
+
+    #[test]
+    fn a_message_wider_than_the_frame_takes_a_row_for_each_part() {
+        let (ctx, env) = editor();
+        let long = "m".repeat(W + 20);
+        ctx.set_echo_message(&long);
+        let frame = ctx.snapshot(&env, W, H);
+        assert_eq!(frame.echo_area, vec!["m".repeat(W), "m".repeat(20)]);
+        assert_eq!(frame.echo_top(), H - 2);
+        assert_eq!(windows_end(&frame), H - 2);
+    }
+
+    #[test]
+    fn a_wrapped_message_stops_at_max_echo_area_height() {
+        let (ctx, env) = editor();
+        run("(setq max-echo-area-height 2)", &env, &ctx);
+        ctx.set_echo_message(&"m".repeat(W * 4));
+        let frame = ctx.snapshot(&env, W, H);
+        assert_eq!(frame.echo_area.len(), 2);
+        assert!(
+            frame.echo_area[1].ends_with(" [+2 lines]"),
+            "{:?}",
+            frame.echo_area
+        );
+        assert_eq!(windows_end(&frame), H - 2);
     }
 
     #[test]

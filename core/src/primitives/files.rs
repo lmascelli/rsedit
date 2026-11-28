@@ -525,6 +525,16 @@ primitive!(save_buffer_overwrite, _args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
+/// Returns how a question names the file at PATH: by its name, which the
+/// buffer asked about is called after, so that the path does not take the
+/// answer's room; PATH itself when it has none.
+fn file_name_of(path: &str) -> String {
+    std::path::Path::new(path).file_name().map_or_else(
+        || path.to_string(),
+        |name| name.to_string_lossy().to_string(),
+    )
+}
+
 pub const RECOVER_FILE_DOC: &str = "(recover-file): Put the auto-saved copy of the current \
          buffer's file into the buffer, after asking, and leave it unsaved: saving keeps it, and \
          `revert-buffer' goes back to the file.";
@@ -544,8 +554,8 @@ primitive!(recover_file, _args, env, ctx, {
         &ELispExp::form(vec![
             ELispExp::symbol("yes-or-no".into()),
             ELispExp::string(format!(
-                "Replace this buffer with the auto-saved {}?",
-                copy.display()
+                "Replace this buffer with the auto-saved copy of {}?",
+                file_name_of(&path)
             )),
             args::quoted(ELispExp::symbol("recover-file--adopt".into())),
         ]),
@@ -612,7 +622,10 @@ primitive!(revert_buffer, _args, env, ctx, {
     eval(
         &ELispExp::form(vec![
             ELispExp::symbol("yes-or-no".into()),
-            ELispExp::string(format!("Discard your changes and reread {path}?")),
+            ELispExp::string(format!(
+                "Discard your changes and reread {}?",
+                file_name_of(&path)
+            )),
             args::quoted(ELispExp::symbol("revert-buffer--reread".into())),
         ]),
         env,

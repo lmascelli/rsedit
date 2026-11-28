@@ -619,17 +619,21 @@ mod tests {
     #[test]
     fn the_windows_above_give_up_the_space() {
         let (ctx, env) = with_module();
-        let before = ctx.snapshot(&env, W, H).views[0].rect.height;
+        let before = ctx.snapshot(&env, W, H);
         prompt_offering(&["alpha", "beta"], &env, &ctx);
         run("(setq completion-window-height 5)", &env, &ctx);
 
         press(&ctx, &env, KeyCode::Tab);
 
-        // The strip's five rows, and the minibuffer's own.
-        let after = ctx.snapshot(&env, W, H).views[0].rect.height;
+        // The strip's five rows, the minibuffer's own, and those the strip's
+        // keys, wrapped in the echo area, take past the row it had.
+        let after = ctx.snapshot(&env, W, H);
         assert_eq!(
-            after,
-            before - 5 - crate::editor::DEFAULT_MINIBUFFER_LINES as usize
+            after.views[0].rect.height,
+            before.views[0].rect.height
+                - 5
+                - crate::editor::DEFAULT_MINIBUFFER_LINES as usize
+                - (after.echo_height() - before.echo_height())
         );
     }
 
@@ -1183,7 +1187,8 @@ mod tests {
         prompt_offering(&["alpha", "beta", "gamma"], &env, &ctx);
         press(&ctx, &env, KeyCode::Tab);
 
-        let frame = ctx.snapshot(&env, 40, 12);
+        // Wide enough for the strip's keys to be one row of the echo area.
+        let frame = ctx.snapshot(&env, 80, 12);
         assert!(
             !shared_rows(&frame).is_empty(),
             "this size is chosen because they *do* collide; if they no longer \

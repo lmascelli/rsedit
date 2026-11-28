@@ -318,17 +318,21 @@ for deletion stay flagged."
     (reverse found)))
 
 (defun dired--delete-question (paths)
-  "The question deleting PATHS asks, which says what would go with them."
+  "The question deleting PATHS asks, which says what would go with them: one
+by its name, which the listing shows the directory of, more by their count."
   ;; Settled with the wording: the answer is to the question shown.
-  (let ((full (dired--full-directories paths)))
+  (let ((full (dired--full-directories paths))
+        (spoken (if (= (length paths) 1)
+                    (file-name-nondirectory (directory-file-name (car paths)))
+                    (dired--file-count paths))))
     (cond
      ((and (= (length paths) 1) full)
       (format "Recursively delete %s (%s entries)?"
-              (car paths) (directory-entry-count (car paths))))
+              spoken (directory-entry-count (car paths))))
      (full
       (format "Delete %s, %s of them directories with everything in them?"
-              (dired--file-count paths) (length full)))
-     (t (format "Delete %s?" (dired--file-count paths))))))
+              spoken (length full)))
+     (t (format "Delete %s?" spoken)))))
 
 (defun dired--delete (paths)
   "Ask, then delete PATHS, directories with everything in them."

@@ -458,6 +458,36 @@ mod tests {
         assert!(ctx.with_current_buffer(|buf| buf.is_modified));
     }
 
+    /// Where the copy is kept says nothing the question needs, and takes the
+    /// answer's columns.
+    #[test]
+    fn the_recovery_question_names_the_file_not_where_its_copy_is() {
+        let sandbox = Sandbox::new("recover-question");
+        let path = sandbox.file("a.txt", "on disk");
+        let saves = sandbox.0.join("saves");
+        std::fs::create_dir_all(&saves).expect("the copies' directory");
+        let saves = saves.display().to_string();
+        let copy = auto_save_path(&path, Some(saves.as_str()));
+        std::fs::write(&copy, "rescued").expect("planting one");
+        let (ctx, env) = editor();
+        env.set_variable("auto-save-directory".into(), LispExp::string(saves.clone()));
+        open(&path, &env, &ctx);
+
+        run("(recover-file)", &env, &ctx);
+
+        let asked = ctx
+            .snapshot(&env, 80, 24)
+            .views
+            .into_iter()
+            .find(|view| view.buffer_name == "*Minibuffer*")
+            .and_then(|view| view.title)
+            .expect("a question");
+        assert_eq!(
+            asked,
+            "Replace this buffer with the auto-saved copy of a.txt? (yes or no)"
+        );
+    }
+
     #[test]
     fn declining_the_recovery_leaves_the_buffer_as_it_was() {
         let sandbox = Sandbox::new("recover-no");

@@ -422,12 +422,10 @@ mod tests {
             .expect("the minibuffer must be titled with its prompt")
     }
 
-    /// A prompt has to say who is waiting on the answer.
-    ///
-    /// Reading `Find file:` on its own gives no clue that `find-file` asked, or
-    /// that a command is running at all.
+    /// A prompt says what it asks, and no more: the name of the command that
+    /// asked would take columns from the answer.
     #[test]
-    fn an_argument_prompt_names_the_command_that_asked() {
+    fn an_argument_prompt_is_the_argument_s_own() {
         let (ctx, env) = bare();
         eval_str(
             r#"(progn (defun probe-cmd (p) p)
@@ -441,7 +439,7 @@ mod tests {
         assert_eq!(prompt_title(&ctx, &env), "M-x", "M-x labels itself");
 
         type_and_confirm(&ctx, &env, "probe-cmd");
-        assert_eq!(prompt_title(&ctx, &env), "probe-cmd - Find file: ");
+        assert_eq!(prompt_title(&ctx, &env), "Find file: ");
     }
 
     /// With more than one argument the prompt also says which one, so two
@@ -459,10 +457,10 @@ mod tests {
 
         ctx.handle_key_event(meta('x'), &env);
         type_and_confirm(&ctx, &env, "probe-cmd");
-        assert_eq!(prompt_title(&ctx, &env), "probe-cmd (1/2) - Replace: ");
+        assert_eq!(prompt_title(&ctx, &env), "(1/2) Replace: ");
 
         type_and_confirm(&ctx, &env, "x");
-        assert_eq!(prompt_title(&ctx, &env), "probe-cmd (2/2) - With: ");
+        assert_eq!(prompt_title(&ctx, &env), "(2/2) With: ");
     }
 
     /// `minibuffer-read` called straight from Lisp -- as M-: does -- has no

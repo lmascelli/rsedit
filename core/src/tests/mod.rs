@@ -93,6 +93,7 @@ mod prefix_key_tests;
 mod primitive_shape_tests;
 mod process_tests;
 mod project_tests;
+mod prompt_layout_tests;
 mod quit_safety_tests;
 mod raw_string_tests;
 mod rectangle_tests;

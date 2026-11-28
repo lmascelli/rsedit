@@ -212,22 +212,20 @@ fn prompt_for<B: BufferTrait>(
     )
 }
 
-/// Returns the title of the prompt for SPEC: the pending command's name, its
-/// place among the arguments when there is more than one, then SPEC's prompt.
+/// Returns the title of the prompt for SPEC: SPEC's prompt, after the place
+/// of the argument among the pending command's when there is more than one.
+/// The command's name is left out, since the prompt says what it asks and
+/// the columns it would take are the answer's.
 ///
 /// ```text
-///   find-file - Find file:
-///   query-replace (2/2) - With:
+///   Find file:
+///   (2/2) With:
 /// ```
-///
-/// With no command pending, as when Lisp calls `minibuffer-read` itself, the
-/// prompt alone.
 fn argument_title<B: BufferTrait>(spec: &ArgSpec, ctx: &EditorState<B>) -> String {
     let prompt = spec.prompt();
     match ctx.pending_progress() {
-        Some((name, at, total)) if total > 1 => format!("{name} ({at}/{total}) - {prompt}"),
-        Some((name, _, _)) => format!("{name} - {prompt}"),
-        None => prompt.to_string(),
+        Some((_, at, total)) if total > 1 => format!("({at}/{total}) {prompt}"),
+        _ => prompt.to_string(),
     }
 }
 

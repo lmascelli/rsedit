@@ -562,18 +562,50 @@ fn sign_cells<B: BufferTrait>(
         .collect()
 }
 
+/// The columns a minibuffer window keeps for the answer however long the
+/// question is, so that what is typed can be seen; half the window when it
+/// is narrower than twice as many.
+const MIN_ANSWER_COLUMNS: usize = 20;
+
 /// Returns how many columns the question PROMPT takes in front of the answer
 /// in a minibuffer window WIDTH columns wide: all of it, and one column more
-/// when it does not end in a blank, but never so many that no column is left
-/// for the answer.
+/// when it does not end in a blank, but never so many that fewer than
+/// [`MIN_ANSWER_COLUMNS`] are left for the answer, or half of WIDTH in a
+/// narrow window, and one at least. A question that does not fit is shortened
+/// in the middle by [`prompt_cells`].
 fn prompt_columns(prompt: &str, width: usize) -> usize {
     let wanted = cells(prompt) + usize::from(!prompt.ends_with(char::is_whitespace));
-    wanted.min(width.saturating_sub(1))
+    let answer = MIN_ANSWER_COLUMNS.min(width / 2).max(1);
+    wanted.min(width.saturating_sub(answer))
+}
+
+/// Returns PROMPT as it fits in WIDTH columns: whole when it does, else its
+/// beginning and its end with `…` where the middle was, so that the question
+/// keeps what it asks and how to answer it -- the `(yes or no)` that ends
+/// it. The blank [`prompt_columns`] counts after a PROMPT that does not end
+/// in one is left out of WIDTH.
+fn shorten_prompt(prompt: &str, width: usize) -> String {
+    let total = cells(prompt);
+    if total <= width {
+        return prompt.to_string();
+    }
+    let room = width.saturating_sub(usize::from(!prompt.ends_with(char::is_whitespace)));
+    if room < 3 {
+        return cut(prompt, 0, room);
+    }
+    let head = (room - 1) / 2;
+    let tail = room - 1 - head;
+    format!(
+        "{}…{}",
+        cut(prompt, 0, head),
+        cut(prompt, total - tail, tail)
+    )
 }
 
 /// Returns the gutter of a minibuffer window: PROMPT on the row of the first
-/// line, when the view starts there, and blanks on the others, WIDTH columns
-/// each, for ROWS rows from FIRST_LINE.
+/// line, when the view starts there, shortened by [`shorten_prompt`] when it
+/// is wider, and blanks on the others, WIDTH columns each, for ROWS rows from
+/// FIRST_LINE.
 fn prompt_cells(prompt: &str, width: usize, first_line: usize, rows: usize) -> Vec<GutterCell> {
     if width == 0 {
         return Vec::new();
@@ -581,7 +613,7 @@ fn prompt_cells(prompt: &str, width: usize, first_line: usize, rows: usize) -> V
     (0..rows)
         .map(|row| {
             let text = if first_line + row == 0 {
-                let shown = cut(prompt, 0, width);
+                let shown = shorten_prompt(prompt, width);
                 let pad = width.saturating_sub(cells(&shown));
                 format!("{shown}{}", " ".repeat(pad))
             } else {

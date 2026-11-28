@@ -744,6 +744,61 @@ mod tests {
         assert!(file.exists(), "nothing should be gone before the answer");
     }
 
+    /// The listing says which directory the file is in, so the question
+    /// names it alone: a long path would leave the answer no room in an
+    /// 80-column frame.
+    #[test]
+    fn deleting_a_file_deep_down_asks_whole_with_room_to_answer() {
+        let sandbox = Sandbox::new("delete-deep-path");
+        let deep = "a-directory-with-a-long-name/and-another-one-under-it/and-a-third";
+        sandbox.file(&format!("{deep}/doomed.txt"), "");
+        let directory = sandbox.path().join(deep);
+        assert!(directory.display().to_string().len() > 80);
+        let (ctx, env) = setup();
+        run(
+            &format!(r#"(dired "{}/")"#, directory.display()),
+            &env,
+            &ctx,
+        );
+        goto_entry("doomed.txt", &env, &ctx);
+
+        run("(dired-delete-file)", &env, &ctx);
+
+        let asked = prompt_title(&ctx);
+        assert_eq!(asked, "Delete doomed.txt? (yes or no)");
+        let view = ctx
+            .snapshot(&env, 80, 24)
+            .views
+            .into_iter()
+            .find(|view| view.buffer_name == "*Minibuffer*")
+            .expect("the question's window");
+        assert!(
+            view.gutter[0].text.starts_with(&asked),
+            "{:?}",
+            view.gutter[0].text
+        );
+        assert!(
+            view.rect.width >= 20,
+            "the answer has {} columns",
+            view.rect.width
+        );
+    }
+
+    #[test]
+    fn a_full_directory_is_named_without_its_path_too() {
+        let sandbox = Sandbox::new("delete-deep-name");
+        sandbox.file("tree/a.txt", "");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "tree/", &env, &ctx);
+
+        run("(dired-delete-file)", &env, &ctx);
+
+        assert_eq!(
+            prompt_title(&ctx),
+            "Recursively delete tree (1 entries)? (yes or no)"
+        );
+    }
+
     #[test]
     fn answering_yes_deletes_the_file_and_the_listing_loses_it() {
         let sandbox = Sandbox::new("delete-yes");

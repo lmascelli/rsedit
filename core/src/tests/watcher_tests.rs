@@ -430,6 +430,26 @@ mod tests {
     }
 
     #[test]
+    fn the_revert_question_names_the_file_not_its_path() {
+        let sandbox = Sandbox::new("revert-question");
+        let path = sandbox.file("a.txt", "before");
+        let (ctx, env) = editor();
+        open(&path, &env, &ctx);
+        run("(insert \"mine \")", &env, &ctx);
+
+        run("(revert-buffer)", &env, &ctx);
+
+        let asked = ctx
+            .snapshot(&env, 80, 24)
+            .views
+            .into_iter()
+            .find(|view| view.buffer_name == "*Minibuffer*")
+            .and_then(|view| view.title)
+            .expect("a question");
+        assert_eq!(asked, "Discard your changes and reread a.txt? (yes or no)");
+    }
+
+    #[test]
     fn a_revert_declined_runs_no_hook_and_one_accepted_runs_it() {
         let sandbox = Sandbox::new("revert-hook-asked");
         let path = sandbox.file("a.txt", "before");
