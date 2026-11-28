@@ -255,6 +255,52 @@ mod tests {
     }
 
     #[test]
+    fn the_count_before_c_x_e_is_not_handed_to_the_first_key() {
+        // C-u 3 is how many times to play the macro, not an argument to the
+        // first key in it: three x, not three and then two more.
+        let (ctx, env) = editor();
+        with_text("", &ctx);
+        press("C-x ( x C-x )", &env, &ctx);
+        assert_eq!(text(&ctx), "x");
+        press("C-u 3 C-x e", &env, &ctx);
+        assert_eq!(text(&ctx), "xxxx", "the recording's x and three more");
+    }
+
+    #[test]
+    fn the_count_before_c_x_e_moves_a_motion_macro_that_many_times() {
+        let (ctx, env) = editor();
+        with_text("abcdefghij", &ctx);
+        press("C-x ( C-f C-x )", &env, &ctx);
+        assert_eq!(run("(point)", &env, &ctx), LispExp::number(1.0));
+        press("C-u 3 C-x e", &env, &ctx);
+        assert_eq!(run("(point)", &env, &ctx), LispExp::number(4.0));
+    }
+
+    #[test]
+    fn a_bare_e_after_c_x_e_plays_it_again() {
+        let (ctx, env) = editor();
+        with_text("", &ctx);
+        press("C-x ( x C-x )", &env, &ctx);
+        press("C-x e", &env, &ctx);
+        assert_eq!(text(&ctx), "xx");
+        press("e e", &env, &ctx);
+        assert_eq!(text(&ctx), "xxxx", "each e plays it once more");
+        press("C-f e", &env, &ctx);
+        assert_eq!(text(&ctx), "xxxxe", "after another key, e is a letter");
+    }
+
+    #[test]
+    fn an_e_in_the_macro_is_a_letter() {
+        // The repeat key is for the key after C-x e, not for the keys the
+        // replay presses: a macro that types e types it.
+        let (ctx, env) = editor();
+        with_text("", &ctx);
+        press("C-x ( x e C-x )", &env, &ctx);
+        press("C-u 2 C-x e", &env, &ctx);
+        assert_eq!(text(&ctx), "xexexe");
+    }
+
+    #[test]
     fn replayed_keys_are_not_recorded_again() {
         // A macro that calls a macro records the call, not its expansion,
         // which would double the body. Through a named macro: `C-x e` would
@@ -502,5 +548,15 @@ mod tests {
         );
         press("C-x )", &env, &ctx);
         assert!(run("(kmacro-recording-p)", &env, &ctx).is_nil());
+    }
+
+    #[test]
+    fn the_end_of_a_recording_counts_its_keys_in_english() {
+        let (ctx, env) = editor();
+        with_text("hello", &ctx);
+        press("C-x ( C-f C-x )", &env, &ctx);
+        assert_eq!(ctx.get_echo_message(), "Recorded 1 key");
+        press("C-x ( C-f C-f C-x )", &env, &ctx);
+        assert_eq!(ctx.get_echo_message(), "Recorded 2 keys");
     }
 }

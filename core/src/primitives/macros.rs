@@ -42,7 +42,8 @@ primitive!(kmacro_end_macro, _args, _env, ctx, {
             Ok(ELispExp::nil())
         }
         Some(keys) => {
-            ctx.set_echo_message(&format!("Recorded {} keys", keys.len()));
+            let plural = if keys.len() == 1 { "" } else { "s" };
+            ctx.set_echo_message(&format!("Recorded {} key{plural}", keys.len()));
             Ok(ELispExp::number(keys.len() as f64))
         }
     }

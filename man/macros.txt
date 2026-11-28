@@ -27,6 +27,9 @@ RECORDING AND PLAYING
         C-x e           stop, if recording, and play the macro
         C-u N C-x e     play it N times
 
+    After C-x e, a plain e plays the macro again, and goes on doing so
+    until another key is pressed.
+
     C-x ) after nothing has been pressed keeps the macro you had. M-x
     kmacro-cancel-macro throws a recording away; what its keys did stays
     done, and undo takes it back.

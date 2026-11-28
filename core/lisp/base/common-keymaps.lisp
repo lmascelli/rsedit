@@ -134,10 +134,12 @@
 (define-key nil "M-;" 'comment-dwim)
 (define-key nil "C-x C-;" 'comment-line)
 
-;; Keyboard macros: the `macros' manual page.
+;; Keyboard macros: the `macros' manual page. After C-x e, a bare e plays it
+;; again.
 (define-key nil "C-x (" 'kmacro-start-macro)
 (define-key nil "C-x )" 'kmacro-end-macro)
 (define-key nil "C-x e" 'kmacro-end-and-call-macro)
+(define-repeat-key 'kmacro-end-and-call-macro "e")
 (define-key nil "C-x C-k C-i" 'kmacro-insert-counter)
 (define-key nil "C-x C-k C-c" 'kmacro-set-counter)
 

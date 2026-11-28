@@ -63,6 +63,10 @@ impl<B: BufferTrait> EditorState<B> {
             self.set_echo_message("Keyboard macro is nested too deeply");
             return 0;
         }
+        // The count that asked for the repetitions is still waiting for a
+        // command: the first key would take it too, and C-u 3 C-x e over a
+        // macro of one x insert five.
+        self.abandon_pending_input();
         let mut done = 0;
         for _ in 0..count {
             // A stamp of its own for each repetition, held for the whole of
