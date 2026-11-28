@@ -103,7 +103,11 @@ fn report_write_failure<B: BufferTrait>(
     let conflict = matches!(&why, WriteFailure::Conflict(_));
     let reason = match why {
         WriteFailure::Conflict(_) => {
-            ctx.with_buffer_mut(name, |buf| buf.stale = true);
+            ctx.with_buffer_mut(name, |buf| {
+                if buf.file_path.as_deref() == Some(path) {
+                    buf.stale = true;
+                }
+            });
             FileIssue::new(
                 IoCause::Other,
                 "file changed or disappeared; save again to confirm",
@@ -494,6 +498,7 @@ primitive!(save_buffer, _args, env, ctx, {
                     );
                 }
             }),
+            None,
         );
     }
     write_buffer(ctx, &env, &name);

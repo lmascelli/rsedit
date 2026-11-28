@@ -283,7 +283,8 @@ fn start_save<B: BufferTrait>(
                     after(state, env, &callback, &[ELispExp::t()]);
                 }
                 Err(WriteFailure::Conflict(found)) => {
-                    {
+                    let visited = save.source.as_deref() == Some(save.path.as_str());
+                    if visited {
                         let mut buf = handle.write().unwrap_or_else(std::sync::PoisonError::into_inner);
                         buf.stale = true; buf.forget_data(ERROR);
                     }
@@ -302,8 +303,12 @@ fn start_save<B: BufferTrait>(
                         if valid { start_save(state, env, handle, retry, callback); }
                         else { state.set_echo_message("Buffer changed while confirmation was pending; save again"); }
                     });
-                    if let Err(why) = ask_confirmation(state, env, key,
-                        format!("{path} changed or disappeared. Overwrite/recreate it?"), action) {
+                    let prompt = if visited {
+                        format!("{path} changed or disappeared. Overwrite/recreate it?")
+                    } else {
+                        format!("File {path} exists; overwrite?")
+                    };
+                    if let Err(why) = ask_confirmation(state, env, key, prompt, action, Some("Not saved")) {
                         state.log_diagnostic(&format!("[ERROR] save confirmation: {why:?}"));
                     }
                 }
@@ -536,6 +541,7 @@ primitive!(revert_buffer_async, _args, env, ctx, {
                     );
                 }
             }),
+            None,
         );
     }
     Ok(ELispExp::boolean(start_revert(
@@ -553,10 +559,14 @@ primitive!(file_save_confirm, args, env, ctx, {
 });
 
 pub const CANCEL_DOC: &str =
-    "(file-save--cancel ID): Forget a cancelled file confirmation. Private callback.";
+    "(file-save--cancel ID &optional MESSAGE): Forget a cancelled file confirmation and show \
+    MESSAGE, if given. Private callback.";
 primitive!(file_save_cancel, args, _env, ctx, {
     if let Some(ELispExp::Number(id)) = args.first() {
         ctx.cancel_file_confirmation(*id as u64);
+    }
+    if let Some(ELispExp::String(message)) = args.get(1) {
+        ctx.set_echo_message(message);
     }
     Ok(ELispExp::nil())
 });
@@ -567,26 +577,26 @@ pub(super) fn ask_confirmation<B: BufferTrait>(
     key: String,
     prompt: String,
     action: Completion<B>,
+    refused: Option<&str>,
 ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
     let id = ctx.remember_file_confirmation(key, action);
-    let answer = |function: &str| {
+    let answer = |function: &str, message: Option<&str>| {
+        let mut call = vec![ELispExp::symbol(function.into()), ELispExp::number(id as f64)];
+        call.extend(message.map(|message| ELispExp::string(message.to_string())));
         ELispExp::lambda(risp::Lambda {
             params: Vec::new(),
             optionals: Vec::new(),
             rest: None,
             env: env.clone(),
             doc: None,
-            body: vec![ELispExp::form(vec![
-                ELispExp::symbol(function.into()),
-                ELispExp::number(id as f64),
-            ])],
+            body: vec![ELispExp::form(call)],
         })
     };
     super::ask::yes_or_no(
         &[
             ELispExp::string(prompt),
-            answer("file-save--confirm"),
-            answer("file-save--cancel"),
+            answer("file-save--confirm", None),
+            answer("file-save--cancel", refused),
         ],
         env.clone(),
         ctx,

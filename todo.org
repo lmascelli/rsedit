@@ -5,7 +5,9 @@
 
 --------------------------------------------------
 * Fixes todo
-- [ ] Il minibuffer può rimanere l'unica finestra aperta
+- [ ] aggiungere la primitiva save-excursion
+- [ ] aggiungere la primitiva string-trim
+- [ ] aggiungere la primitiva join
 
 --------------------------------------------------
 * Macro todo

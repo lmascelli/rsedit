@@ -797,3 +797,115 @@ fn status_commands_work_while_io_is_pending_without_starting_another_operation()
     tx.send(()).unwrap();
     settle(&ctx, &env);
 }
+
+fn press(ctx: &Ctx, env: &Arc<Env<Ctx>>, code: KeyCode) {
+    ctx.handle_key_event(
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::default(),
+        },
+        env,
+    );
+}
+
+fn prompt(ctx: &Ctx, env: &Arc<Env<Ctx>>) -> String {
+    ctx.snapshot(env, 400, 24).prompt
+}
+
+#[test]
+fn declined_write_file_over_an_existing_file_leaves_the_visited_file_saveable() {
+    let files = Files::new();
+    let path = files.file();
+    let other = files.path("other.txt");
+    std::fs::write(&other, "theirs").unwrap();
+    let (ctx, env) = files.editor();
+    open(&ctx, &env, &path);
+    run(&ctx, &env, "(insert \"mine\")");
+    call(&ctx, &env, "write-file-async", vec![ELispExp::string(other.clone())]);
+    settle(&ctx, &env);
+    assert!(
+        prompt(&ctx, &env).contains(&format!("File {other} exists; overwrite? (y or n)")),
+        "{:?}",
+        prompt(&ctx, &env)
+    );
+    press(&ctx, &env, KeyCode::Char('n'));
+    assert_eq!(ctx.get_echo_message(), "Not saved");
+    assert_eq!(std::fs::read_to_string(&other).unwrap(), "theirs");
+    assert_eq!(
+        ctx.with_current_buffer(|buf| (buf.file_path.clone(), buf.stale)),
+        (Some(path.clone()), false)
+    );
+    assert!(!ctx.with_current_buffer(|buf| buf.file_io_status()).contains("[File conflict]"));
+    call(&ctx, &env, "save-buffer-async", vec![]);
+    settle(&ctx, &env);
+    assert!(!prompt(&ctx, &env).contains("overwrite"), "{:?}", prompt(&ctx, &env));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "mineold");
+    assert!(ctx.with_current_buffer(|buf| !buf.is_modified && !buf.stale));
+}
+
+#[test]
+fn write_file_over_an_existing_file_asks_yes_or_no_and_says_not_saved() {
+    let files = Files::new();
+    let path = files.file();
+    let other = files.path("other.txt");
+    std::fs::write(&other, "theirs").unwrap();
+    let (ctx, env) = files.editor();
+    env.set_variable("use-short-answers".into(), ELispExp::nil());
+    open(&ctx, &env, &path);
+    call(&ctx, &env, "write-file-async", vec![ELispExp::string(other.clone())]);
+    settle(&ctx, &env);
+    let typed = ctx
+        .snapshot(&env, 400, 24)
+        .views
+        .iter()
+        .find_map(|view| view.title.clone())
+        .unwrap_or_default();
+    assert!(
+        typed.contains(&format!("File {other} exists; overwrite? (yes or no)")),
+        "{typed:?}"
+    );
+    for key in [KeyCode::Char('n'), KeyCode::Char('o'), KeyCode::Enter] {
+        press(&ctx, &env, key);
+    }
+    assert_eq!(ctx.get_echo_message(), "Not saved");
+    assert_eq!(std::fs::read_to_string(&other).unwrap(), "theirs");
+    assert!(!ctx.with_current_buffer(|buf| buf.stale));
+}
+
+#[test]
+fn confirmed_write_file_overwrites_the_existing_destination() {
+    let files = Files::new();
+    let path = files.file();
+    let other = files.path("other.txt");
+    std::fs::write(&other, "theirs").unwrap();
+    let (ctx, env) = files.editor();
+    open(&ctx, &env, &path);
+    run(&ctx, &env, "(insert \"mine\")");
+    call(&ctx, &env, "write-file-async", vec![ELispExp::string(other.clone())]);
+    settle(&ctx, &env);
+    yes(&ctx, &env);
+    settle(&ctx, &env);
+    assert_eq!(std::fs::read_to_string(&other).unwrap(), "mineold");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+    assert_eq!(
+        ctx.with_current_buffer(|buf| (buf.file_path.clone(), buf.is_modified, buf.stale)),
+        (Some(other), false, false)
+    );
+}
+
+#[test]
+fn declining_a_changed_visited_file_keeps_the_conflict() {
+    let files = Files::new();
+    let path = files.file();
+    let (ctx, env) = files.editor();
+    open(&ctx, &env, &path);
+    run(&ctx, &env, "(insert \"mine\")");
+    std::fs::write(&path, "external update").unwrap();
+    call(&ctx, &env, "save-buffer-async", vec![]);
+    settle(&ctx, &env);
+    assert!(prompt(&ctx, &env).contains("changed or disappeared"), "{:?}", prompt(&ctx, &env));
+    press(&ctx, &env, KeyCode::Char('n'));
+    assert_eq!(ctx.get_echo_message(), "Not saved");
+    assert!(ctx.with_current_buffer(|buf| buf.stale));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "external update");
+}
