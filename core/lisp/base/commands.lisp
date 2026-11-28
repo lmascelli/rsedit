@@ -183,6 +183,46 @@ Example:
          (progn ,@body)
        (set-match-data save-match-data--saved))))
 
+(defmacro save-excursion (&rest body)
+  "Run BODY, then put point back where it was in the buffer that was current,
+and answer what BODY answers.
+
+For a function that moves point to read or change the text somewhere else,
+and should leave the cursor where the person typing left it. Point is kept as
+a marker, so it moves with the text BODY edits: text inserted or deleted
+before it carries it along, and it comes back to the same character, not to
+the same number. Text inserted exactly at point goes after it.
+
+Point is put back however BODY ends, an error included. Only point is: a
+buffer BODY switches to stays the one shown, and the mark stays where BODY
+left it. In a buffer BODY kills or renames, nothing is put back.
+
+Example:
+  (save-excursion
+    (goto-char (point-min))
+    (insert \";; Generated, do not edit.\\n\"))"
+  ;; No gensym in this Lisp, as for `save-match-data': the buffer and the
+  ;; marker live under names nobody's BODY is going to use. A marker is looked
+  ;; for in the current buffer, hence `with-current-buffer'. The buffer is
+  ;; looked for first: a BODY that kills its own buffer has done nothing
+  ;; wrong, and an error on the way out would make one of it. (When BODY
+  ;; fails, `unwind-protect' keeps BODY's error and only logs the other.) A
+  ;; buffer made again under the same name does not hold the marker, and
+  ;; `marker-position' says nil there. `(&rest ignored)', not `()': the empty
+  ;; list a backquote builds is nil.
+  `(let ((save-excursion--buffer (current-buffer))
+         (save-excursion--marker (make-marker (point))))
+     (unwind-protect
+         (progn ,@body)
+       (when (member save-excursion--buffer (all-buffer-names))
+         (with-current-buffer save-excursion--buffer
+           (lambda (&rest ignored)
+             (let ((save-excursion--at
+                    (marker-position save-excursion--marker)))
+               (when save-excursion--at
+                 (goto-char save-excursion--at)
+                 (delete-marker save-excursion--marker)))))))))
+
 (defmacro with-eval-after-load (feature &rest body)
   "Run BODY once FEATURE is loaded: now, if it is already, or else when it is
 provided. FEATURE is evaluated, so a symbol is quoted. `eval-after-load' is

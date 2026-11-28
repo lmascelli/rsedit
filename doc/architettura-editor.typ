@@ -8313,6 +8313,25 @@ Il registro dei comandi, la raccolta degli argomenti e `M-x` sono in Rust
   è `nil`, che `defun` e `lambda` non accettano come lista dei parametri: le
   funzioni senza argomenti che `define-globalized-minor-mode` e
   `with-eval-after-load` espandono prendono un `&rest` che non leggono.
++ *`save-excursion` tiene il punto in un marker, non in un numero.* Il corpo
+  di solito modifica il testo: una posizione salvata come numero sbaglia di
+  tanto quanto il corpo ha inserito o tolto prima del punto, il marker no.
+  Il marker non avanza, come in Emacs: il testo inserito proprio sul punto
+  gli resta dopo. Si toglie all'uscita, perché ogni marker si sposta a ogni
+  modifica del suo buffer.
++ *Solo il punto torna, non il buffer corrente.* In Emacs `save-excursion`
+  rimette anche il buffer corrente. Qui un buffer è corrente in modo
+  duraturo solo quando è mostrato (`switch-to-buffer`; `with-current-buffer`
+  si rimette a posto da sé), e rimettere il vecchio annullerebbe ciò che il
+  corpo ha mostrato. Il punto torna nel buffer giusto con
+  `with-current-buffer`, perché un marker si cerca nel buffer corrente.
++ *All'uscita il buffer si cerca prima di tornarci.* Un corpo che chiude il
+  proprio buffer non ha sbagliato niente, e `with-current-buffer` su un nome
+  che non c'è più farebbe un errore della sua uscita; quando invece il corpo
+  fallisce, `unwind-protect` tiene il suo errore e scrive l'altro nel log.
+  Un buffer rifatto con lo stesso nome non ha il marker: `marker-position`
+  lì dice `nil` e non si tocca niente. Un buffer rinominato dal corpo non si
+  ritrova, e il punto resta dove il corpo l'ha lasciato.  
 
 === `debug` <mod-debug>
 

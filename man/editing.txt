@@ -49,6 +49,7 @@ SYNOPSIS
     (delete-backward-char)
     (delete-region FROM TO)
     (replace-regions REPLACEMENTS)
+    (save-excursion BODY...)
 
     (electric-pair-mode &optional ARG)
     (global-electric-pair-mode &optional ARG)
@@ -437,6 +438,32 @@ SEVERAL REPLACEMENTS AT ONCE
     that reaches outside the buffer, or a read-only buffer are an error,
     and then nothing has changed. Two that only touch are fine.
 
+GOING AND COMING BACK
+    `save-excursion' runs its body and then puts point back where it was,
+    however the body ends, an error included, and answers what the body
+    answers. It is for code that goes somewhere else to read or change
+    the text, and should leave the cursor where the person typing left
+    it:
+
+        (save-excursion
+          (goto-char (point-min))
+          (insert ";; Generated, do not edit.\n"))
+
+    Point is kept as a marker, as the `markers' page describes, so it
+    moves with the text the body edits. Text inserted or deleted before it
+    carries it along, and it comes back to the same character, not to the
+    same number: above, it comes back after the new line, on the text it
+    was on. Text inserted exactly at point goes after it. Inside a span
+    `replace-regions' replaces, it goes to the start of the span, as point
+    itself does.
+
+    Only point is put back, in the buffer that was current. A buffer the
+    body switches to stays the one shown, and the mark stays where the
+    body left it. Emacs puts the current buffer back as well; here a
+    buffer is current for good only when it is shown, and putting the old
+    one back would undo what the body showed. In a buffer the body kills
+    or renames, nothing is put back.
+
 WATCHING EDITS
     `track-changes-begin' starts watching the edits to the buffer, and
     `track-changes-end' stops and says what they changed, as
@@ -500,10 +527,13 @@ EXAMPLES
 
     Do something at the end of the buffer and come back:
 
-        (let ((here (point)))
+        (save-excursion
           (goto-char (point-max))
-          (insert "\n;; end\n")
-          (goto-char here))
+          (insert "\n;; end\n"))
+
+    The first line of the buffer, leaving point where it is:
+
+        (save-excursion (goto-char 0) (current-line))
 
     Pair brackets in C as well, but not quotes:
 

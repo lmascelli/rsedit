@@ -61,6 +61,7 @@ WHERE POINT IS
         line-column-to-position   a line and such a column as a position
         string-line-column        a string's newlines and the column of its
                                   end, in such a unit
+        save-excursion            run code, then put point back where it was
         hl-line-mode              highlight point's whole logical line
         global-hl-line-mode       the same, in every buffer
 

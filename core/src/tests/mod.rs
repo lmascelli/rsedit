@@ -105,6 +105,7 @@ mod results_tests;
 mod risp_mode_tests;
 mod risp_repl_tests;
 mod role_configuration_tests;
+mod save_excursion_tests;
 mod scan_cache_tests;
 mod scan_tests;
 mod scroll_conservatively_tests;
