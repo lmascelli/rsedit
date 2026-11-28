@@ -1901,8 +1901,10 @@ una catena, e lo stato tra un anello e l'altro sta nella pila dei
 inizia (`capture_invocation`), non quando l'ultimo argomento arriva, e risponde
 agli argomenti `p`, `P` e `r` di tutta la catena.
 
-Il titolo del prompt dice chi sta chiedendo: `find-file - Find file:` o, con più
-argomenti, `query-replace (2/2) - With:`. Il prompt viene aperto chiamando
+Il titolo del prompt è la domanda dell'argomento (`argument_title`):
+`Find file:` o, con più argomenti, `(2/2) With:`. Il nome del comando non
+c'è: la domanda dice già che cosa chiede, e le colonne che il nome
+prenderebbe sono della risposta. Il prompt viene aperto chiamando
 `minibuffer-read` per nome, così un minibuffer alternativo serve anche gli
 argomenti dei comandi. Annullare il prompt (`command_arg_cancel`) toglie il
 comando dalla pila: un elenco di argomenti incompleto non arriva mai a un
@@ -1977,7 +1979,10 @@ frame e alta `minibuffer-lines` righe (1), in fondo, sopra l'area dei
 messaggi, come in Emacs. Il testo che si sta cercando o modificando resta
 così in vista sopra il prompt. La domanda non è un titolo: sta nel margine
 della finestra, al posto dei numeri di riga (`prompt_columns`,
-`prompt_cells`, @composizione), e la risposta comincia dopo. Un valore senza
+`prompt_cells`, @composizione), e la risposta comincia dopo. Alla risposta
+restano almeno 20 colonne, o metà finestra se è più stretta: una domanda più
+lunga si accorcia al centro con `…` e tiene la coda, il `(yes or no)` che dice
+come rispondere. Un valore senza
 senso in `minibuffer-lines` vale 1 (`sized`): un prompt si apre sempre.
 Chiudere il buffer chiude la finestra e ridà il focus a quella che lo aveva.
 Il prompt flottante al centro del frame è un'altra funzione, in Lisp,
@@ -5668,10 +5673,10 @@ compongono dopo, ognuna nel suo rettangolo, senza margine né riga di stato.
 L'area messaggi ha una riga per ogni linea di ciò che dice. `echo_rows(testo,
 limite, larghezza)` divide il testo a ogni `\n` (e a ogni `\r\n`); il `\n`
 finale chiude l'ultima linea e non ne apre un'altra, e un testo vuoto è una
-riga vuota. Una linea più larga del frame resta intera: la taglia il
-front-end, come quando l'area era una riga sola. Con più linee del limite si
-mostrano le prime, e l'ultima si accorcia quanto basta per finire con quante
-ne mancano, `[+12 lines]`, sempre visibile.
+riga vuota. Una linea più larga del frame va a capo nelle righe sotto,
+divisa fra due caratteri, così che uno largo non si spezzi (`wrap`). Con più
+righe del limite si mostrano le prime, e l'ultima si accorcia quanto basta
+per finire con quante ne mancano, `[+12 lines]`, sempre visibile.
 
 Il limite è `echo_area_limit` (`editor/settings.rs`), letto da
 `max-echo-area-height` prima di ogni lock: un numero sotto 1 è quella parte
@@ -6451,9 +6456,9 @@ egui, come dice @gui.
   front-end disegnano `echo_area` com'è, e un terzo front-end non ripete la
   regola. Il tetto, un quarto del frame come in Emacs, evita che un'uscita
   lunga si prenda lo schermo; ciò che non entra si conta sull'ultima riga, e
-  con `message` resta nel log (`C-h e`). Le linee lunghe non vanno a capo:
-  una riga sola che cresce a ogni messaggio lungo farebbe saltare le finestre
-  più spesso di quanto aiuti.
+  con `message` resta nel log (`C-h e`). Anche le linee lunghe vanno a capo,
+  dentro lo stesso tetto: tagliata dal front-end, una domanda dell'area
+  messaggi perdeva la coda, che è dove dice come rispondere.
 + *Le flottanti non hanno margine né riga di stato.* Una flottante è un prompt
   o una striscia di scelte, poche righe lette e chiuse: numerarle non dice
   nulla, e il bordo dice già che cosa sono.
